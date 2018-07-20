@@ -1,0 +1,3 @@
+config RTX_SETTING
+	tristate "Retronix Setting Data"
+

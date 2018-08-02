@@ -2,7 +2,7 @@
 
 set -e
 #### Cross compiler ####################################################
-#CROSS_COMPILE_PATH=/opt/cross
+CROSS_COMPILE_PATH=/opt/cross
 #CROSS_COMPILE_PATH=/media/ubuntu-1404/home/artie/JOB/Android_Source/Android_6
 
 #### Target OS #########################################################
@@ -128,7 +128,7 @@ if [ "${IS_ANDROID_BUILD}" == "yes" ] ; then
 fi
 
 KERNEL_DTB=${KERNEL_PROJECT_CONFIG}
-KERNEL_PROJECT_CONFIG=rtxconfig/${KERNEL_PROJECT_CONFIG}_defconfig
+KERNEL_PROJECT_CONFIG=rtx/configs/${KERNEL_PROJECT_CONFIG}_defconfig
 
 ########################################################################
 case "${TARGET_SOC}" in

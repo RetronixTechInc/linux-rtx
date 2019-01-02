@@ -23,9 +23,9 @@
 #include <linux/pinctrl/pinctrl.h>
 #include <linux/slab.h>
 #include <linux/gpio/machine.h>
+#include <linux/init.h>
 #include <linux/platform_device.h>
-#include <linux/delay.h>
-#include <linux/gpio.h>
+
 #include "gpiolib.h"
 
 static int of_gpiochip_match_node_and_xlate(struct gpio_chip *chip, void *data)
@@ -541,17 +541,18 @@ void of_gpiochip_remove(struct gpio_chip *chip)
 	of_node_put(chip->of_node);
 }
 
+#ifdef CONFIG_GPIO_SYSFS
+
 static struct of_device_id gpio_export_ids[] = {
 	{ .compatible = "gpio-export" },
 	{ /* sentinel */ }
 };
 
-static int of_gpio_export_probe(struct platform_device *pdev)
+static int __init of_gpio_export_probe(struct platform_device *pdev)
 {
 	struct device_node *np = pdev->dev.of_node;
 	struct device_node *cnp;
 	u32 val;
-	u32 delay;
 	int nb = 0;
 
 	for_each_child_of_node(np, cnp) {
@@ -562,35 +563,28 @@ static int of_gpio_export_probe(struct platform_device *pdev)
 		int i;
 
 		of_property_read_string(cnp, "gpio-export,name", &name);
-
 		if (!name)
 			max_gpio = of_gpio_count(cnp);
 
 		for (i = 0; i < max_gpio; i++) {
-			gpio = of_get_gpio(cnp, i);
-			if (devm_gpio_request(&pdev->dev, gpio, name ? name : of_node_full_name(cnp)))
-				continue;
+			unsigned flags = 0;
+			enum of_gpio_flags of_flags;
+
+			gpio = of_get_gpio_flags(cnp, i, &of_flags);
+
+			if (of_flags == OF_GPIO_ACTIVE_LOW)
+				flags |= GPIOF_ACTIVE_LOW;
 
 			if (!of_property_read_u32(cnp, "gpio-export,output", &val))
-			{
-				if (!of_property_read_u32(cnp, "gpio-export,delay", &delay))
-				{
-					gpio_direction_output(gpio, !val);
-					msleep( delay ) ;
-				}
-				gpio_direction_output(gpio, val);
-			}
+				flags |= val ? GPIOF_OUT_INIT_HIGH : GPIOF_OUT_INIT_LOW;
 			else
-			{
-				gpio_direction_input(gpio);
-			}
+				flags |= GPIOF_IN;
+
+			if (devm_gpio_request_one(&pdev->dev, gpio, flags, name ? name : of_node_full_name(np)))
+				continue;
 
 			dmc = of_property_read_bool(cnp, "gpio-export,direction_may_change");
-			
-			dev_info(&pdev->dev, "%s(%d) gpio exported\n", name ? name : of_node_full_name(cnp),gpio);
-			
-			gpiod_export(gpio, dmc);
-			
+			gpio_export_with_name(gpio, dmc, name);
 			nb++;
 		}
 	}
@@ -613,3 +607,5 @@ static int __init of_gpio_export_init(void)
 	return platform_driver_probe(&gpio_export_driver, of_gpio_export_probe);
 }
 device_initcall(of_gpio_export_init);
+
+#endif

@@ -606,6 +606,8 @@ int __gpiod_export(struct gpio_desc *desc, bool direction_may_change)
 	offset = gpio_chip_hwgpio(desc);
 	if (chip->names && chip->names[offset])
 		ioname = chip->names[offset];
+//	if (name)
+//		ioname = name;
 
 	dev = device_create_with_groups(&gpio_class, &gdev->dev,
 					MKDEV(0, 0), data, gpio_groups,
@@ -633,7 +635,6 @@ int gpiod_export(struct gpio_desc *desc, bool direction_may_change)
 {
 	return __gpiod_export(desc, direction_may_change);
 }
-EXPORT_SYMBOL_GPL(gpiod_export);
 
 static int match_export(struct device *dev, const void *desc)
 {

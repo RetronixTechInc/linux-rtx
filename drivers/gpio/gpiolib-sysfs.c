@@ -544,7 +544,7 @@ static struct class gpio_class = {
  *
  * Returns zero on success, else an error.
  */
-int gpiod_export(struct gpio_desc *desc, bool direction_may_change)
+int __gpiod_export(struct gpio_desc *desc, bool direction_may_change)
 {
 	struct gpio_chip	*chip;
 	struct gpio_device	*gdev;
@@ -626,6 +626,12 @@ err_unlock:
 	mutex_unlock(&sysfs_lock);
 	gpiod_dbg(desc, "%s: status %d\n", __func__, status);
 	return status;
+}
+EXPORT_SYMBOL_GPL(__gpiod_export);
+
+int gpiod_export(struct gpio_desc *desc, bool direction_may_change)
+{
+	return __gpiod_export(desc, direction_may_change);
 }
 EXPORT_SYMBOL_GPL(gpiod_export);
 

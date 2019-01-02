@@ -1409,6 +1409,8 @@ static const struct hid_device_id mt_devices[] = {
 		MT_USB_DEVICE(USB_VENDOR_ID_PANASONIC,
 			USB_DEVICE_ID_PANABOARD_UBT880) },
 
+	{ HID_USB_DEVICE(0x58f, 0x511b) },
+
 	/* Novatek Panel */
 	{ .driver_data = MT_CLS_NSMU,
 		MT_USB_DEVICE(USB_VENDOR_ID_NOVATEK,

@@ -32,6 +32,7 @@
 #include <linux/of_gpio.h>
 #include <linux/of_irq.h>
 #include <linux/spinlock.h>
+#define GPIO_POWER	(196)
 
 struct gpio_button_data {
 	const struct gpio_keys_button *button;
@@ -392,7 +393,18 @@ static void gpio_keys_gpio_work_func(struct work_struct *work)
 static irqreturn_t gpio_keys_gpio_isr(int irq, void *dev_id)
 {
 	struct gpio_button_data *bdata = dev_id;
+	int i;
 
+#ifdef CONFIG_MACH_ADVANTECH_GF08
+    	printk( KERN_INFO "gpio_keys gf08_poweroff.\n" ) ;
+ 
+        for(i=0;; i++){
+            gpio_set_value(GPIO_POWER, 0);
+            udelay(500);
+            gpio_set_value(GPIO_POWER, 1);
+            udelay(500);
+        }
+#endif	
 	BUG_ON(irq != bdata->irq);
 
 	if (bdata->button->wakeup)
@@ -529,7 +541,7 @@ static int gpio_keys_setup_key(struct platform_device *pdev,
 		INIT_DELAYED_WORK(&bdata->work, gpio_keys_gpio_work_func);
 
 		isr = gpio_keys_gpio_isr;
-		irqflags = IRQF_TRIGGER_RISING | IRQF_TRIGGER_FALLING;
+		irqflags = IRQF_TRIGGER_RISING ;
 
 	} else {
 		if (!button->irq) {

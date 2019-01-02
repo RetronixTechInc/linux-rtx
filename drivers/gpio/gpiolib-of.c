@@ -23,7 +23,9 @@
 #include <linux/pinctrl/pinctrl.h>
 #include <linux/slab.h>
 #include <linux/gpio/machine.h>
-
+#include <linux/platform_device.h>
+#include <linux/delay.h>
+#include <linux/gpio.h>
 #include "gpiolib.h"
 
 static int of_gpiochip_match_node_and_xlate(struct gpio_chip *chip, void *data)
@@ -538,3 +540,76 @@ void of_gpiochip_remove(struct gpio_chip *chip)
 	gpiochip_remove_pin_ranges(chip);
 	of_node_put(chip->of_node);
 }
+
+static struct of_device_id gpio_export_ids[] = {
+	{ .compatible = "gpio-export" },
+	{ /* sentinel */ }
+};
+
+static int of_gpio_export_probe(struct platform_device *pdev)
+{
+	struct device_node *np = pdev->dev.of_node;
+	struct device_node *cnp;
+	u32 val;
+	u32 delay;
+	int nb = 0;
+
+	for_each_child_of_node(np, cnp) {
+		const char *name = NULL;
+		int gpio;
+		bool dmc;
+		int max_gpio = 1;
+		int i;
+
+		of_property_read_string(cnp, "gpio-export,name", &name);
+
+		if (!name)
+			max_gpio = of_gpio_count(cnp);
+
+		for (i = 0; i < max_gpio; i++) {
+			gpio = of_get_gpio(cnp, i);
+			if (devm_gpio_request(&pdev->dev, gpio, name ? name : of_node_full_name(cnp)))
+				continue;
+
+			if (!of_property_read_u32(cnp, "gpio-export,output", &val))
+			{
+				if (!of_property_read_u32(cnp, "gpio-export,delay", &delay))
+				{
+					gpio_direction_output(gpio, !val);
+					msleep( delay ) ;
+				}
+				gpio_direction_output(gpio, val);
+			}
+			else
+			{
+				gpio_direction_input(gpio);
+			}
+
+			dmc = of_property_read_bool(cnp, "gpio-export,direction_may_change");
+			
+			dev_info(&pdev->dev, "%s(%d) gpio exported\n", name ? name : of_node_full_name(cnp),gpio);
+			
+			gpiod_export(gpio, dmc);
+			
+			nb++;
+		}
+	}
+
+	dev_info(&pdev->dev, "%d gpio(s) exported\n", nb);
+
+	return 0;
+}
+
+static struct platform_driver gpio_export_driver = {
+	.driver		= {
+		.name		= "gpio-export",
+		.owner	= THIS_MODULE,
+		.of_match_table	= of_match_ptr(gpio_export_ids),
+	},
+};
+
+static int __init of_gpio_export_init(void)
+{
+	return platform_driver_probe(&gpio_export_driver, of_gpio_export_probe);
+}
+device_initcall(of_gpio_export_init);

@@ -525,4 +525,7 @@ config SABRESD_MAX8903
          sabresd board.The driver supports controlling charger and battery
          based on the status of charger connections with interrupt handlers.
 
+config MACH_ADVANTECH_GF08
+	tristate "GF08 for ADVANTECH"
+
 endif # POWER_SUPPLY

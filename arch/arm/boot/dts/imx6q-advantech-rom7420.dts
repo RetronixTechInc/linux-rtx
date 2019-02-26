@@ -146,7 +146,7 @@
 			/*gpio-export,name = "current_gpio5";*/
 			gpio-export,output = <1>;
 			gpio-export,direction_may_change ;
-			gpios = <&gpio2 25 1>;
+			gpios = <&gpio2 25 0>;
 		};
 
 		/* current_gpio6 = <&gpio2 23 0>; 55 */
@@ -154,7 +154,7 @@
 			/*gpio-export,name = "current_gpio6";*/
 			gpio-export,output = <1>;
 			gpio-export,direction_may_change ;
-			gpios = <&gpio2 23 1>;
+			gpios = <&gpio2 23 0>;
 		};
 		
 		/* current_gpio7 = <&gpio2 24 0>; 56 */
@@ -162,7 +162,7 @@
 			/*gpio-export,name = "current_gpio7";*/
 			gpio-export,output = <1>;
 			gpio-export,direction_may_change ;
-			gpios = <&gpio2 24 1>;
+			gpios = <&gpio2 24 0>;
 		};
 
 		/* current_gpio8 = <&gpio5 2 0>; 130 */
@@ -170,7 +170,7 @@
 			/*gpio-export,name = "current_gpio8";*/
 			gpio-export,output = <1>;
 			gpio-export,direction_may_change ;
-			gpios = <&gpio5 2 1>;
+			gpios = <&gpio5 2 0>;
 		};
 		
 
@@ -215,29 +215,11 @@
 		mux-ext-port = <3>;
 	};
 
-	sound-hdmi {
-		compatible = "fsl,imx6q-audio-hdmi",
-			         "fsl,imx-audio-hdmi";
-		model = "imx-audio-hdmi";
-		hdmi-controller = <&hdmi_audio>;
-	};
-
 	lvds_display: fb@0 {
 		compatible = "fsl,mxc_sdc_fb";
 		disp_dev = "ldb";
 		interface_pix_fmt = "RGB666";
 		default_bpp = <16>;
-		int_clk = <0>;
-		late_init = <0>;
-		status = "okay";
-	};
-	
-	hdmi_display: fb@2 {
-		compatible = "fsl,mxc_sdc_fb";
-		disp_dev = "hdmi";
-		interface_pix_fmt = "RGB24";
-		mode_str ="1920x1080M@60";
-		default_bpp = <32>;
 		int_clk = <0>;
 		late_init = <0>;
 		status = "okay";
@@ -343,38 +325,16 @@
 	pinctrl-0 = <&pinctrl_enet_4>;
 	phy-mode = "rgmii";
 	phy-reset-gpios = <&gpio1 25 0>;
-	phy-reset-fall-duration = <1>;
-	phy-reset-rise-duration = <20>;
-	phy-reset-boot-on;
 	status = "okay";
 };
 
-&hdmi_audio {
-	status = "okay";
-};
 
 &gpc {
 	fsl,ldo-bypass = <1>; /* use ldo-bypass, u-boot will check it and configure */
 	fsl,wdog-reset = <2>; /* watchdog select of reset source */
 };
 
-&hdmi_cec {
-	pinctrl-names = "default";
-	pinctrl-0 = <&pinctrl_hdmi_cec_2>;
-	status = "okay";
-};
 
-&hdmi_core {
-	ipu_id = <0>;
-	disp_id = <1>;
-	status = "okay";
-};
-
-&hdmi_video {
-	fsl,phy_reg_vlev = <0x0294>;
-	fsl,phy_reg_cksymtx = <0x800d>;
-	status = "okay";
-};
 
 &i2c1 {
 	clock-frequency = <100000>;
@@ -403,11 +363,6 @@
 	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl_i2c2_2>;
 	status = "okay";
-
-	hdmi_edid: edid@50 {
-		compatible = "fsl,imx6-hdmi-i2c";
-		reg = <0x50>;
-	};
 
 };
 

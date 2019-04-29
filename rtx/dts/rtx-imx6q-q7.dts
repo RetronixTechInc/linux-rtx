@@ -263,7 +263,7 @@
 		compatible = "fsl,imx6q-rtx-q7-sgtl5000",
 			     "fsl,imx-audio-sgtl5000";
 		model = "imx6q-rtx-q7-sgtl5000";
-		cpu-dai = <&ssi1>;
+		ssi-controller = <&ssi1>;
 		audio-codec = <&codec>;
 		audio-routing =
 			"MIC_IN", "Mic Jack",
@@ -274,6 +274,7 @@
 		mux-ext-port = <3>;
 		hp-det-gpios = <&gpio7 8 1>;
 		mic-det-gpios = <&gpio1 9 1>;
+		amp-ena-gpios = <&gpio4 10 1>;
 	};
 
 	sound-hdmi {

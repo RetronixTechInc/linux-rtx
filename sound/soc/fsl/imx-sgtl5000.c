@@ -12,10 +12,16 @@
 
 #include <linux/module.h>
 #include <linux/of.h>
+#include <linux/of_gpio.h>
 #include <linux/of_platform.h>
 #include <linux/i2c.h>
 #include <linux/clk.h>
 #include <sound/soc.h>
+#include <sound/jack.h>
+#include <sound/control.h>
+#include <sound/pcm_params.h>
+#include <sound/soc-dapm.h>
+#include <linux/gpio.h>
 
 #include "../codecs/sgtl5000.h"
 #include "imx-audmux.h"
@@ -30,6 +36,170 @@ struct imx_sgtl5000_data {
 	struct clk *codec_clk;
 	unsigned int clk_frequency;
 };
+
+struct imx_priv {
+	enum of_gpio_flags hp_active_low;
+	enum of_gpio_flags mic_active_low;
+	bool is_headset_jack;
+	int amp_gpio;
+	struct snd_kcontrol *headphone_kctl;
+	struct platform_device *pdev;
+	struct platform_device *asrc_pdev;
+	struct snd_card *snd_card;
+};
+
+static struct imx_priv card_priv;
+
+static struct snd_soc_jack imx_hp_jack;
+static struct snd_soc_jack_pin imx_hp_jack_pin = {
+	.pin = "Headphone Jack",
+	.mask = SND_JACK_HEADPHONE,
+};
+static struct snd_soc_jack_gpio imx_hp_jack_gpio = {
+	.name = "headphone detect",
+	.report = SND_JACK_HEADPHONE,
+	.debounce_time = 250,
+	.invert = 0,
+};
+
+static struct snd_soc_jack imx_mic_jack;
+static struct snd_soc_jack_pin imx_mic_jack_pins = {
+	.pin = "Mic Jack",
+	.mask = SND_JACK_MICROPHONE,
+};
+static struct snd_soc_jack_gpio imx_mic_jack_gpio = {
+	.name = "mic detect",
+	.report = SND_JACK_MICROPHONE,
+	.debounce_time = 250,
+	.invert = 0,
+};
+
+static int hp_jack_status_check(void *data)
+{
+	struct imx_priv *priv = &card_priv;
+	struct snd_soc_jack *jack = data;
+	struct snd_soc_dapm_context *dapm = &jack->card->dapm;
+	int hp_status, ret;
+
+	hp_status = gpio_get_value(imx_hp_jack_gpio.gpio);
+
+	if (hp_status != priv->hp_active_low) {
+		snd_soc_dapm_disable_pin(dapm, "Ext Spk");
+		if (priv->is_headset_jack) {
+			snd_soc_dapm_enable_pin(dapm, "Mic Jack");
+			snd_soc_dapm_disable_pin(dapm, "Main MIC");
+		}
+		ret = imx_hp_jack_gpio.report;
+		snd_kctl_jack_report(priv->snd_card, priv->headphone_kctl, 1);
+	} else {
+		snd_soc_dapm_enable_pin(dapm, "Ext Spk");
+		if (priv->is_headset_jack) {
+			snd_soc_dapm_disable_pin(dapm, "Mic Jack");
+			snd_soc_dapm_enable_pin(dapm, "Main MIC");
+		}
+		ret = 0;
+		snd_kctl_jack_report(priv->snd_card, priv->headphone_kctl, 0);
+	}
+
+	return ret;
+}
+
+static int mic_jack_status_check(void *data)
+{
+	struct imx_priv *priv = &card_priv;
+	struct snd_soc_jack *jack = data;
+	struct snd_soc_dapm_context *dapm = &jack->card->dapm;
+	int mic_status, ret;
+
+	mic_status = gpio_get_value(imx_mic_jack_gpio.gpio);
+
+	if (mic_status != priv->mic_active_low) {
+		snd_soc_dapm_disable_pin(dapm, "Main MIC");
+		ret = imx_mic_jack_gpio.report;
+	} else {
+		snd_soc_dapm_enable_pin(dapm, "Main MIC");
+		ret = 0;
+	}
+
+	return ret;
+}
+
+static int spk_amp_event(struct snd_soc_dapm_widget *w,
+			 struct snd_kcontrol *kcontrol, int event)
+{
+	struct imx_priv *priv = &card_priv;
+
+	if (!gpio_is_valid(priv->amp_gpio))
+		return 0;
+
+	if (SND_SOC_DAPM_EVENT_ON(event))
+		gpio_set_value( priv->amp_gpio , 1 ) ;
+	else
+		gpio_set_value( priv->amp_gpio , 0 ) ;
+
+	return 0;
+}
+
+static const struct snd_soc_dapm_widget imx_sgtl5000_dapm_widgets[] = {
+	SND_SOC_DAPM_HP("Headphone Jack", NULL),
+	SND_SOC_DAPM_SPK("Ext Spk", spk_amp_event),
+	SND_SOC_DAPM_MIC("Mic Jack", NULL),
+	SND_SOC_DAPM_MIC("Main MIC", NULL),
+	SND_SOC_DAPM_LINE("Line In Jack", NULL),
+	SND_SOC_DAPM_SPK("Line Out Jack", NULL),
+};
+
+static int imx_sqtl5000_jack_init(struct snd_soc_card *card,
+		struct snd_soc_jack *jack, struct snd_soc_jack_pin *pin,
+		struct snd_soc_jack_gpio *gpio)
+{
+	int ret;
+
+	ret = snd_soc_card_jack_new(card, pin->pin, pin->mask, jack, pin, 1);
+	if (ret) {
+		return ret;
+	}
+
+	ret = snd_soc_jack_add_gpios(jack, 1, gpio);
+	if (ret)
+		return ret;
+
+	return 0;
+}
+
+static ssize_t show_headphone(struct device_driver *dev, char *buf)
+{
+	struct imx_priv *priv = &card_priv;
+	int hp_status;
+
+	/* Check if headphone is plugged in */
+	hp_status = gpio_get_value(imx_hp_jack_gpio.gpio);
+
+	if (hp_status != priv->hp_active_low)
+		strcpy(buf, "Headphone\n");
+	else
+		strcpy(buf, "Speaker\n");
+
+	return strlen(buf);
+}
+
+static ssize_t show_micphone(struct device_driver *dev, char *buf)
+{
+	struct imx_priv *priv = &card_priv;
+	int mic_status;
+
+	/* Check if headphone is plugged in */
+	mic_status = gpio_get_value(imx_mic_jack_gpio.gpio);
+
+	if (mic_status != priv->mic_active_low)
+		strcpy(buf, "Mic Jack\n");
+	else
+		strcpy(buf, "Main MIC\n");
+
+	return strlen(buf);
+}
+static DRIVER_ATTR(headphone, S_IRUGO | S_IWUSR, show_headphone, NULL);
+static DRIVER_ATTR(micphone, S_IRUGO | S_IWUSR, show_micphone, NULL);
 
 static int imx_sgtl5000_dai_init(struct snd_soc_pcm_runtime *rtd)
 {
@@ -47,13 +217,7 @@ static int imx_sgtl5000_dai_init(struct snd_soc_pcm_runtime *rtd)
 	return 0;
 }
 
-static const struct snd_soc_dapm_widget imx_sgtl5000_dapm_widgets[] = {
-	SND_SOC_DAPM_MIC("Mic Jack", NULL),
-	SND_SOC_DAPM_LINE("Line In Jack", NULL),
-	SND_SOC_DAPM_HP("Headphone Jack", NULL),
-	SND_SOC_DAPM_SPK("Line Out Jack", NULL),
-	SND_SOC_DAPM_SPK("Ext Spk", NULL),
-};
+
 
 static int imx_sgtl5000_probe(struct platform_device *pdev)
 {
@@ -62,8 +226,10 @@ static int imx_sgtl5000_probe(struct platform_device *pdev)
 	struct platform_device *ssi_pdev;
 	struct i2c_client *codec_dev;
 	struct imx_sgtl5000_data *data = NULL;
+	struct imx_priv *priv = &card_priv;
 	int int_port, ext_port;
 	int ret;
+	int gpio;
 
 	ret = of_property_read_u32(np, "mux-int-port", &int_port);
 	if (ret) {
@@ -135,6 +301,22 @@ static int imx_sgtl5000_probe(struct platform_device *pdev)
 
 	data->clk_frequency = clk_get_rate(data->codec_clk);
 
+    /* gpio for amp on/off */
+    gpio = of_get_named_gpio( pdev->dev.of_node , "amp-ena-gpios" , 0 ) ;
+    if ( gpio_is_valid( gpio ) )
+    {
+        priv->amp_gpio = gpio ;
+        if ( devm_gpio_request( &pdev->dev , priv->amp_gpio , "amp-gpio" ) == 0 )
+       {
+            gpio_set_value( priv->amp_gpio , 0 ) ;
+        } 
+        else 
+        {
+            printk( KERN_ERR "cannot request gpio for Amp enable\n" ) ;
+            priv->amp_gpio = 0 ;
+        }
+    }
+
 	data->dai.name = "HiFi";
 	data->dai.stream_name = "HiFi";
 	data->dai.codec_dai_name = "sgtl5000";
@@ -160,12 +342,67 @@ static int imx_sgtl5000_probe(struct platform_device *pdev)
 
 	platform_set_drvdata(pdev, &data->card);
 	snd_soc_card_set_drvdata(&data->card, data);
-
 	ret = devm_snd_soc_register_card(&pdev->dev, &data->card);
 	if (ret) {
 		dev_err(&pdev->dev, "snd_soc_register_card failed (%d)\n", ret);
 		goto fail;
 	}
+
+	priv->snd_card = data->card.snd_card;
+
+	imx_hp_jack_gpio.gpio = of_get_named_gpio_flags(pdev->dev.of_node,
+			"hp-det-gpios", 0, &priv->hp_active_low);
+
+	imx_mic_jack_gpio.gpio = of_get_named_gpio_flags(pdev->dev.of_node,
+			"mic-det-gpios", 0, &priv->mic_active_low);
+
+	if (gpio_is_valid(imx_hp_jack_gpio.gpio) &&
+	    gpio_is_valid(imx_mic_jack_gpio.gpio) &&
+	    imx_hp_jack_gpio.gpio == imx_mic_jack_gpio.gpio)
+		priv->is_headset_jack = true;
+
+	if (gpio_is_valid(imx_hp_jack_gpio.gpio)) {
+		priv->headphone_kctl = snd_kctl_jack_new("Headphone", NULL);
+		ret = snd_ctl_add(priv->snd_card, priv->headphone_kctl);
+		if (ret)
+			dev_warn(&pdev->dev, "failed to create headphone jack kctl\n");
+
+		if (priv->is_headset_jack) {
+			imx_hp_jack_pin.mask |= SND_JACK_MICROPHONE;
+			imx_hp_jack_gpio.report |= SND_JACK_MICROPHONE;
+		}
+		imx_hp_jack_gpio.jack_status_check = hp_jack_status_check;
+		imx_hp_jack_gpio.data = &imx_hp_jack;
+		ret = imx_sqtl5000_jack_init(&data->card, &imx_hp_jack,
+					   &imx_hp_jack_pin, &imx_hp_jack_gpio);
+		if (ret) {
+			dev_warn(&pdev->dev, "hp jack init failed (%d)\n", ret);
+			goto out;
+		}
+
+		ret = driver_create_file(pdev->dev.driver, &driver_attr_headphone);
+		if (ret)
+			dev_warn(&pdev->dev, "create hp attr failed (%d)\n", ret);
+	}
+
+	if (gpio_is_valid(imx_mic_jack_gpio.gpio)) {
+		if (!priv->is_headset_jack) {
+			imx_mic_jack_gpio.jack_status_check = mic_jack_status_check;
+			imx_mic_jack_gpio.data = &imx_mic_jack;
+			ret = imx_sqtl5000_jack_init(&data->card, &imx_mic_jack,
+					&imx_mic_jack_pins, &imx_mic_jack_gpio);
+			if (ret) {
+				dev_warn(&pdev->dev, "mic jack init failed (%d)\n", ret);
+				goto out;
+			}
+		}
+		ret = driver_create_file(pdev->dev.driver, &driver_attr_micphone);
+		if (ret)
+			dev_warn(&pdev->dev, "create mic attr failed (%d)\n", ret);
+	}
+
+out:
+	ret = 0;
 
 	of_node_put(ssi_np);
 	of_node_put(codec_np);
@@ -186,6 +423,8 @@ static int imx_sgtl5000_remove(struct platform_device *pdev)
 	struct snd_soc_card *card = platform_get_drvdata(pdev);
 	struct imx_sgtl5000_data *data = snd_soc_card_get_drvdata(card);
 
+	driver_remove_file(pdev->dev.driver, &driver_attr_micphone);
+	driver_remove_file(pdev->dev.driver, &driver_attr_headphone);
 	clk_put(data->codec_clk);
 
 	return 0;

@@ -2,69 +2,109 @@
 
 set -e
 #### Cross compiler ####################################################
-CROSS_COMPILE_PATH=/opt/cross
-#CROSS_COMPILE_PATH=/media/ubuntu-1404/home/artie/JOB/Android_Source/Android_6
+[ -d /opt/freescale/usr/local ] && CROSS_COMPILE_PATH=/opt/freescale/usr/local
+[ -d /home/artie/JOB-Area/Android ] && CROSS_COMPILE_PATH=/home/artie/JOB-Area/Android
+[ -d /media/tom/ext2t/freescale/cross-compile ] && CROSS_COMPILE_PATH=/media/tom/ext2t/freescale/cross-compile
 
-#### Target OS #########################################################
-#TARGET_OS="Debian-8.5hf"
-#TARGET_OS="Ubuntu-16.04hf"
-#TARGET_OS="Android-6x"
+if [ -z $CROSS_COMPILE_PATH ];then
+CROSS_COMPILE_PATH=/opt/cross
+fi
+
+#Check CROSS_COMPILE_PATH
+if [ -z "${CROSS_COMPILE_PATH}" ] ; then
+	echo "Please set the cross compiler path."
+	exit 1
+fi
+
+#### Define the CROSS COMPILE TOOL #########################################################
+#CROSS_COMPILE_TOOL=rtx-gcc-4.9.3-glibc-2.19-hf-32bits/bin/arm-linux-gnueabihf-
+#CROSS_COMPILE_TOOL=rtx-gcc-5.3.0-glibc-2.23-hf/arm-rtx-linux-gnueabihf/bin/arm-rtx-linux-gnueabihf-
+#CROSS_COMPILE_TOOL=rtx-gcc-4.9.3-glibc-2.19-hf-64bits/arm-rtx-linux-gnueabihf/bin/arm-rtx-linux-gnueabihf-
+CROSS_COMPILE_TOOL=rtx-gcc-6.3.0-glibc-2.25-hf-32bits/bin/arm-rtx-linux-gnueabihf-
+#CROSS_COMPILE_TOOL=
+
+#Check CROSS_COMPILE_TOOL
+if [ -z $CROSS_COMPILE_TOOL ];then
+    echo "Please set the CROSS_COMPILE_TOOL."
+    exit 1
+fi
+
+#### Default Define ####################################################
+IS_ANDROID_BUILD="no"
+BUILD_GPU_VIV_DRIVER_MODULE="no"
+
+if [ "${IS_ANDROID_BUILD}" == "yes" ] ; then
+    BUILD_GPU_VIV_DRIVER_MODULE="no"
+fi
 
 #### Target Customer Project ###########################################
 #TARGET_CUSTOMER="RTX-A6"
 #TARGET_CUSTOMER="RTX-A6Plus"
 #TARGET_CUSTOMER="RTX-Q7"
 #TARGET_CUSTOMER="RTX-PITX-B10"
-#TARGET_CUSTOMER="RTX-PITX-B21"
+TARGET_CUSTOMER="RTX-PITX-B21"
 #TARGET_CUSTOMER="ADLINK-ABB"
 #TARGET_CUSTOMER="AcBel-VPP"
+#TARGET_BOARD="PITX-AOPEN"
+#TARGET_BOARD="ROM-7420"
 
-#### Default Define ####################################################
-BUILD_GPU_VIV_DRIVER_MODULE="no"
-IS_ANDROID_BUILD="no"
-
-if [ -z "${CROSS_COMPILE_PATH}" ] ; then
-	echo "Please set the cross compiler path."
-	exit 1
-fi
 ########################################################################
 case "${TARGET_CUSTOMER}" in
 	"RTX-A6")
-		TARGET_BOARD="a6"
+        TARGET_VENDER="rtx"
 		TARGET_SOC="imx6q"
+		TARGET_BOARD="a6"
 		TARGET_SUBBOARD=""
 		;;
 	"RTX-A6Plus")
-		TARGET_BOARD="a6plus"
+        TARGET_VENDER="rtx"
 		TARGET_SOC="imx6q"
+		TARGET_BOARD="a6plus"
 		TARGET_SUBBOARD=""
 		;;
 	"RTX-Q7")
-		TARGET_BOARD="q7"
+        TARGET_VENDER="rtx"
 		TARGET_SOC="imx6q"
+		TARGET_BOARD="q7"
 		TARGET_SUBBOARD=""
 		;;
 	"RTX-PITX-B10")
-		TARGET_BOARD="pitx-b10"
+        TARGET_VENDER="rtx"
 		TARGET_SOC="imx6q"
+		TARGET_BOARD="pitx-b10"
 		TARGET_SUBBOARD=""
 		;;
 	"RTX-PITX-B21")
-		TARGET_BOARD="pitx-b21"
+        TARGET_VENDER="rtx"
 		TARGET_SOC="imx6q"
+		TARGET_BOARD="pitx-b21"
 		TARGET_SUBBOARD=""
 		;;
 	"ADLINK-ABB")
-		TARGET_BOARD="adlink"
+        TARGET_VENDER="rtx"
 		TARGET_SOC="imx6dl"
+		TARGET_BOARD="adlink"
 		TARGET_SUBBOARD="abb"
 		;;
 	"AcBel-VPP")
-		TARGET_BOARD="pitx-b10"
+        TARGET_VENDER="rtx"
 		TARGET_SOC="imx6q"
+		TARGET_BOARD="pitx-b10"
 		TARGET_SUBBOARD="acbel-vpp"
 		;;
-	*)
+	"PITX-AOPEN" )
+        TARGET_VENDER="rtx"
+		TARGET_SOC="imx6q"
+		TARGET_BOARD="pitx-b21"
+		TARGET_SUBBOARD="aopen"
+		;;
+	"ROM-7420" )
+        TARGET_VENDER="imx6q"
+		TARGET_SOC="advantech"
+		TARGET_BOARD="rom7420"
+		TARGET_SUBBOARD=""
+		;;
+    *)
 		echo "Please set the target customer."
 		exit 1
 		;;
@@ -76,30 +116,7 @@ OUT=${TOP}/out
 
 ########################################################################
 export ARCH=arm
-
-case "${TARGET_OS}" in
-	"Debian-8.5hf")
-		# Debian 8.4/8.5
-		echo "Build Kernel for Debian 8.4/8.5 hf"
-		export CROSS_COMPILE=${CROSS_COMPILE_PATH}/rtx-gcc-4.9.3-glibc-2.19-hf-32bits/bin/arm-linux-gnueabihf-
-		;;
-	"Ubuntu-16.04hf")
-		# Ubuntu 16.04
-		echo "Build Kernel for Ubuntu 16.04 hf"
-		export CROSS_COMPILE=${CROSS_COMPILE_PATH}/rtx-gcc-5.3.0-glibc-2.23-hf/arm-rtx-linux-gnueabihf/bin/arm-rtx-linux-gnueabihf-
-		;;
-	"Android-6x")
-		# Android 6.x
-		echo "Build Kernel for Android 6.x"
-		export CROSS_COMPILE=${CROSS_COMPILE_PATH}/android/arm-eabi-4.8/bin/arm-eabi-
-		#export CROSS_COMPILE=${CROSS_COMPILE_PATH}/prebuilts/gcc/linux-x86/arm/arm-eabi-4.8/bin/arm-eabi-
-		IS_ANDROID_BUILD="yes"
-		;;
-	*)
-		echo "Please set the target OS."
-		exit 1
-		;;
-esac
+export CROSS_COMPILE=${CROSS_COMPILE_PATH}/${CROSS_COMPILE_TOOL}
 
 ########################################################################
 if [ ${IS_ANDROID_BUILD} == "yes" ] ; then
@@ -109,7 +126,9 @@ else
 fi
 
 ########################################################################
-KERNEL_PROJECT_CONFIG="rtx"
+if [ ! "${TARGET_VENDER}" == "" ] ; then
+	KERNEL_PROJECT_CONFIG=${TARGET_VENDER}
+fi
 
 if [ ! "${TARGET_SOC}" == "" ] ; then
 	KERNEL_PROJECT_CONFIG=${KERNEL_PROJECT_CONFIG}-${TARGET_SOC}
@@ -230,18 +249,18 @@ function build_imx_firmware()
 {
 	case "${TARGET_SOC}" in
 		"imx6q")
-			if [ ! -d imx6-libs ] ; then
+			if [ ! -d rtx/imx6-libs ] ; then
 				break ;
 			fi
-			if [ ! -f imx6-libs/firmware-imx-5.4.bin ] ; then
+			if [ ! -f rtx/imx6-libs/firmware-imx-5.4.bin ] ; then
 				break ;
 			fi
 			if [ -d .tmp_build ] ; then
 				rm -rf .tmp_build
 			fi
 			mkdir -p .tmp_build
-
-			cp imx6-libs/firmware-imx-5.4.bin .tmp_build/.
+			
+			cp rtx/imx6-libs/firmware-imx-5.4.bin .tmp_build/.
 			cd .tmp_build
 			chmod +x firmware-imx-5.4.bin
 			./firmware-imx-5.4.bin --auto-accept --force
@@ -259,21 +278,21 @@ function build_gpu_viv_module()
 		case "${TARGET_SOC}" in
 			"imx6q")
 				cd ${TOP}
-
-				if [ ! -d imx6-libs ] ; then
-					break ;
-				fi
-				if [ ! -f imx6-libs/kernel-module-imx-gpu-viv-6.2.2.p0.tar.gz ] ; then
-					break ;
-				fi
-				if [ ! -d .tmp_build ] ; then
-					mkdir -p .tmp_build
-				fi
 				
+				if [ ! -d rtx/imx6-libs ] ; then
+					break ;
+				fi
+				if [ ! -f rtx/imx6-libs/kernel-module-imx-gpu-viv-6.2.2.p0.tar.gz ] ; then
+					break ;
+				fi
+				if [ -d .tmp_build ] ; then
+					rm -rf .tmp_build
+				fi
+				mkdir -p .tmp_build
 				cd .tmp_build
 				
 				if [ ! -f .extract ] ; then
-					tar xzvf ${TOP}/imx6-libs/kernel-module-imx-gpu-viv-6.2.2.p0.tar.gz
+					tar xzvf ${TOP}/rtx/imx6-libs/kernel-module-imx-gpu-viv-6.2.2.p0.tar.gz
 					touch .extract
 				fi
 				cd kernel-module-imx-gpu-viv-6.2.2.p0
@@ -295,18 +314,19 @@ build_dir
 case "${1}" in
 	"info")
 		echo "CROSS_COMPILE_PATH          = ${CROSS_COMPILE_PATH}"
+		echo "CROSS_COMPILE_TOOL          = ${CROSS_COMPILE_TOOL}"
 		echo "CROSS_COMPILE               = ${CROSS_COMPILE}"
-		echo "TARGET_OS                   = ${TARGET_OS}"
 		echo "TARGET_CUSTOMER             = ${TARGET_CUSTOMER}"
-		echo "BUILD_GPU_VIV_DRIVER_MODULE = ${BUILD_GPU_VIV_DRIVER_MODULE}"
-		echo "IS_ANDROID_BUILD            = ${IS_ANDROID_BUILD}"
-		echo "TARGET_BOARD                = ${TARGET_BOARD}"
+		echo "TARGET_VENDER               = ${TARGET_VENDER}"
 		echo "TARGET_SOC                  = ${TARGET_SOC}"
+		echo "TARGET_BOARD                = ${TARGET_BOARD}"
 		echo "TARGET_SUBBOARD             = ${TARGET_SUBBOARD}"
 		echo "KERNEL_PROJECT_CONFIG       = ${KERNEL_PROJECT_CONFIG}"
+		echo "KERNEL_DTB                  = ${KERNEL_DTB}"
+		echo "IS_ANDROID_BUILD            = ${IS_ANDROID_BUILD}"
+		echo "BUILD_GPU_VIV_DRIVER_MODULE = ${BUILD_GPU_VIV_DRIVER_MODULE}"
 		echo "KERNEL_VERSION              = ${KERNEL_VERSION}"
 		echo "KERNEL_DEFAULT_CONFIG       = ${KERNEL_DEFAULT_CONFIG}"
-		echo "KERNEL_DTB                  = ${KERNEL_DTB}"
 		echo "KERNEL_LOADADDR             = ${KERNEL_LOADADDR}"
 		;;
 	"all")

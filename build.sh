@@ -45,42 +45,44 @@ fi
 TARGET_CUSTOMER="RTX-PITX-B21"
 #TARGET_CUSTOMER="ADLINK-ABB"
 #TARGET_CUSTOMER="AcBel-VPP"
-#TARGET_BOARD="PITX-AOPEN"
-#TARGET_BOARD="ROM-7420"
+#TARGET_CUSTOMER="PITX-AOPEN"
+#TARGET_CUSTOMER="ROM-7420"
+#TARGET_CUSTOMER="PITX-CSE-JP"
+#TARGET_CUSTOMER="PITX-OHGA-JP"
 
 ########################################################################
 case "${TARGET_CUSTOMER}" in
-	"RTX-A6")
+    "RTX-A6")
         TARGET_VENDER="rtx"
 		TARGET_SOC="imx6q"
 		TARGET_BOARD="a6"
 		TARGET_SUBBOARD=""
 		;;
-	"RTX-A6Plus")
+    "RTX-A6Plus")
         TARGET_VENDER="rtx"
 		TARGET_SOC="imx6q"
 		TARGET_BOARD="a6plus"
 		TARGET_SUBBOARD=""
 		;;
-	"RTX-Q7")
+    "RTX-Q7")
         TARGET_VENDER="rtx"
 		TARGET_SOC="imx6q"
 		TARGET_BOARD="q7"
 		TARGET_SUBBOARD=""
 		;;
-	"RTX-PITX-B10")
+    "RTX-PITX-B10")
         TARGET_VENDER="rtx"
 		TARGET_SOC="imx6q"
 		TARGET_BOARD="pitx-b10"
 		TARGET_SUBBOARD=""
 		;;
-	"RTX-PITX-B21")
+    "RTX-PITX-B21")
         TARGET_VENDER="rtx"
 		TARGET_SOC="imx6q"
 		TARGET_BOARD="pitx-b21"
 		TARGET_SUBBOARD=""
 		;;
-	"ADLINK-ABB")
+    "ADLINK-ABB")
         TARGET_VENDER="rtx"
 		TARGET_SOC="imx6dl"
 		TARGET_BOARD="adlink"
@@ -98,11 +100,23 @@ case "${TARGET_CUSTOMER}" in
 		TARGET_BOARD="pitx-b21"
 		TARGET_SUBBOARD="aopen"
 		;;
-	"ROM-7420" )
-        TARGET_VENDER="imx6q"
-		TARGET_SOC="advantech"
+    "ROM-7420" )
+        TARGET_VENDER="advantech"
+		TARGET_SOC="imx6q"
 		TARGET_BOARD="rom7420"
 		TARGET_SUBBOARD=""
+		;;
+	"PITX-CSE-JP" )
+        TARGET_VENDER="rtx"
+		TARGET_SOC="imx6q"
+		TARGET_BOARD="pitx-b21"
+		TARGET_SUBBOARD="cse-jp"
+		;;
+	"PITX-OHGA-JP" )
+        TARGET_VENDER="rtx"
+		TARGET_SOC="imx6q"
+		TARGET_BOARD="pitx-b21"
+		TARGET_SUBBOARD="ohga-jp"
 		;;
     *)
 		echo "Please set the target customer."
@@ -148,6 +162,23 @@ fi
 
 KERNEL_DTB=${KERNEL_PROJECT_CONFIG}
 KERNEL_PROJECT_CONFIG=rtx/configs/${KERNEL_PROJECT_CONFIG}_defconfig
+
+cd ${TOP}/arch/arm/boot/dts/
+KERNEL_DTB_DTS=${KERNEL_DTB}.dts
+KERNEL_DTB_DTSI=${KERNEL_DTB}-iomux.dtsi
+KERNEL_SOC_DTSI=${TARGET_VENDER}-${TARGET_SOC}-soc.dtsi
+if [ ! -f "${KERNEL_DTB_DTS}" ] ; then
+	ln -s ../../../../rtx/dts/${KERNEL_DTB_DTS} ${KERNEL_DTB_DTS}
+fi
+
+if [ ! -f "${KERNEL_DTB_DTSI}" ] ; then
+	ln -s ../../../../rtx/dts/${KERNEL_DTB_DTSI} ${KERNEL_DTB_DTSI}
+fi
+
+if [ ! -f "${KERNEL_SOC_DTSI}" ] ; then
+	ln -s ../../../../rtx/dts/${KERNEL_SOC_DTSI} ${KERNEL_SOC_DTSI}
+fi
+cd -
 
 ########################################################################
 case "${TARGET_SOC}" in

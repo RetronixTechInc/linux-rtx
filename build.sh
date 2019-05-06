@@ -7,7 +7,7 @@ set -e
 [ -d /media/tom/ext2t/freescale/cross-compile ] && CROSS_COMPILE_PATH=/media/tom/ext2t/freescale/cross-compile
 
 if [ -z $CROSS_COMPILE_PATH ];then
-CROSS_COMPILE_PATH=/opt/cross
+	CROSS_COMPILE_PATH=/opt/cross
 fi
 
 #Check CROSS_COMPILE_PATH
@@ -19,8 +19,8 @@ fi
 #### Define the CROSS COMPILE TOOL #########################################################
 #CROSS_COMPILE_TOOL=rtx-gcc-4.9.3-glibc-2.19-hf-32bits/bin/arm-linux-gnueabihf-
 #CROSS_COMPILE_TOOL=rtx-gcc-4.9.3-glibc-2.19-hf-64bits/arm-rtx-linux-gnueabihf/bin/arm-rtx-linux-gnueabihf-
-#CROSS_COMPILE_TOOL=rtx-gcc-5.3.0-glibc-2.23-hf/arm-rtx-linux-gnueabihf/bin/arm-rtx-linux-gnueabihf-
-CROSS_COMPILE_TOOL=rtx-gcc-6.3.0-glibc-2.25-hf-32bits/bin/arm-rtx-linux-gnueabihf-
+CROSS_COMPILE_TOOL=rtx-gcc-5.3.0-glibc-2.23-hf/arm-rtx-linux-gnueabihf/bin/arm-rtx-linux-gnueabihf-
+#CROSS_COMPILE_TOOL=rtx-gcc-6.3.0-glibc-2.25-hf-32bits/bin/arm-rtx-linux-gnueabihf-
 #CROSS_COMPILE_TOOL=
 
 #Check CROSS_COMPILE_TOOL
@@ -31,7 +31,7 @@ fi
 
 #### Default Define ####################################################
 IS_ANDROID_BUILD="no"
-BUILD_GPU_VIV_DRIVER_MODULE="yes"
+BUILD_GPU_VIV_DRIVER_MODULE="no"
 
 if [ "${IS_ANDROID_BUILD}" == "yes" ] ; then
     BUILD_GPU_VIV_DRIVER_MODULE="no"
@@ -39,10 +39,10 @@ fi
 
 #### Target Customer Project ###########################################
 #TARGET_CUSTOMER="RTX-A6"
-#TARGET_CUSTOMER="RTX-A6Plus"
+TARGET_CUSTOMER="RTX-A6Plus"
 #TARGET_CUSTOMER="RTX-Q7"
 #TARGET_CUSTOMER="RTX-PITX-B10"
-TARGET_CUSTOMER="RTX-PITX-B21"
+#TARGET_CUSTOMER="RTX-PITX-B21"
 #TARGET_CUSTOMER="ADLINK-ABB"
 #TARGET_CUSTOMER="AcBel-VPP"
 #TARGET_CUSTOMER="PITX-AOPEN"
@@ -52,68 +52,68 @@ TARGET_CUSTOMER="RTX-PITX-B21"
 
 ########################################################################
 case "${TARGET_CUSTOMER}" in
-    "RTX-A6")
-        TARGET_VENDER="rtx"
+	"RTX-A6")
+		TARGET_VENDER="rtx"
 		TARGET_SOC="imx6q"
 		TARGET_BOARD="a6"
 		TARGET_SUBBOARD=""
 		;;
-    "RTX-A6Plus")
-        TARGET_VENDER="rtx"
+	"RTX-A6Plus")
+		TARGET_VENDER="rtx"
 		TARGET_SOC="imx6q"
 		TARGET_BOARD="a6plus"
 		TARGET_SUBBOARD=""
 		;;
-    "RTX-Q7")
-        TARGET_VENDER="rtx"
+	"RTX-Q7")
+		TARGET_VENDER="rtx"
 		TARGET_SOC="imx6q"
 		TARGET_BOARD="q7"
 		TARGET_SUBBOARD=""
 		;;
-    "RTX-PITX-B10")
-        TARGET_VENDER="rtx"
+	"RTX-PITX-B10")
+		TARGET_VENDER="rtx"
 		TARGET_SOC="imx6q"
 		TARGET_BOARD="pitx-b10"
 		TARGET_SUBBOARD=""
 		;;
-    "RTX-PITX-B21")
-        TARGET_VENDER="rtx"
+	"RTX-PITX-B21")
+		TARGET_VENDER="rtx"
 		TARGET_SOC="imx6q"
 		TARGET_BOARD="pitx-b21"
 		TARGET_SUBBOARD=""
 		;;
-    "ADLINK-ABB")
-        TARGET_VENDER="rtx"
+	"ADLINK-ABB")
+		TARGET_VENDER="rtx"
 		TARGET_SOC="imx6dl"
 		TARGET_BOARD="adlink"
 		TARGET_SUBBOARD="abb"
 		;;
 	"AcBel-VPP")
-        TARGET_VENDER="rtx"
+		TARGET_VENDER="rtx"
 		TARGET_SOC="imx6q"
 		TARGET_BOARD="pitx-b10"
 		TARGET_SUBBOARD="acbel-vpp"
 		;;
 	"PITX-AOPEN" )
-        TARGET_VENDER="rtx"
+		TARGET_VENDER="rtx"
 		TARGET_SOC="imx6q"
 		TARGET_BOARD="pitx-b21"
 		TARGET_SUBBOARD="aopen"
 		;;
-    "ROM-7420" )
-        TARGET_VENDER="advantech"
+	"ROM-7420" )
+		TARGET_VENDER="advantech"
 		TARGET_SOC="imx6q"
 		TARGET_BOARD="rom7420"
 		TARGET_SUBBOARD=""
 		;;
 	"PITX-CSE-JP" )
-        TARGET_VENDER="rtx"
+		TARGET_VENDER="rtx"
 		TARGET_SOC="imx6q"
 		TARGET_BOARD="pitx-b21"
 		TARGET_SUBBOARD="cse-jp"
 		;;
 	"PITX-OHGA-JP" )
-        TARGET_VENDER="rtx"
+		TARGET_VENDER="rtx"
 		TARGET_SOC="imx6q"
 		TARGET_BOARD="pitx-b21"
 		TARGET_SUBBOARD="ohga-jp"
@@ -253,6 +253,7 @@ function build_kernel()
 		cp -f arch/arm/boot/uImage out/.
 		if [ ! -z "${KERNEL_VERSION}" ] ; then
 			cp -f arch/arm/boot/uImage out/uImage-${KERNEL_VERSION}-${NOW_DATE}
+			cp -f arch/arm/boot/uImage out/uImage-${KERNEL_VERSION}
 		fi
 	fi
 
@@ -261,6 +262,7 @@ function build_kernel()
 		cp arch/arm/boot/dts/${KERNEL_DTB}.dtb out/.
 		if [ ! -z "${KERNEL_VERSION}" ] ; then
 			cp arch/arm/boot/dts/${KERNEL_DTB}.dtb out/${KERNEL_DTB}-${KERNEL_VERSION}-${NOW_DATE}.dtb
+			cp arch/arm/boot/dts/${KERNEL_DTB}.dtb out/${KERNEL_DTB}-${KERNEL_VERSION}.dtb
 		fi
 	fi
 }
@@ -272,6 +274,7 @@ function build_dtb()
 		cp arch/arm/boot/dts/${KERNEL_DTB}.dtb out/.
 		if [ ! -z "${KERNEL_VERSION}" ] ; then
 			cp arch/arm/boot/dts/${KERNEL_DTB}.dtb out/${KERNEL_DTB}-${KERNEL_VERSION}-${NOW_DATE}.dtb
+			cp arch/arm/boot/dts/${KERNEL_DTB}.dtb out/${KERNEL_DTB}-${KERNEL_VERSION}.dtb
 		fi
 	fi
 }
@@ -290,7 +293,7 @@ function build_imx_firmware()
 				rm -rf .tmp_build
 			fi
 			mkdir -p .tmp_build
-			
+
 			cp rtx/imx6-libs/firmware-imx-5.4.bin .tmp_build/.
 			cd .tmp_build
 			chmod +x firmware-imx-5.4.bin
@@ -309,7 +312,7 @@ function build_gpu_viv_module()
 		case "${TARGET_SOC}" in
 			"imx6q")
 				cd ${TOP}
-				
+
 				if [ ! -d rtx/imx6-libs ] ; then
 					break ;
 				fi
@@ -321,7 +324,7 @@ function build_gpu_viv_module()
 				fi
 				mkdir -p .tmp_build
 				cd .tmp_build
-				
+
 				if [ ! -f .extract ] ; then
 					tar xzvf ${TOP}/rtx/imx6-libs/kernel-module-imx-gpu-viv-6.2.2.p0.tar.gz
 					touch .extract
@@ -378,6 +381,7 @@ case "${1}" in
 
 		cd out
 		tar czvf lib.tar.gz lib
+		cp lib.tar.gz lib-${KERNEL_VERSION}.tar.gz
 		cd lib/modules
 		MODULE_PATH_NAME=`ls`
 		cd ${MODULE_PATH_NAME}
@@ -385,6 +389,7 @@ case "${1}" in
 		rm -f build
 		cd ..
 		tar czvf ../../modules.tar.gz *
+		cp ../../modules.tar.gz ../../modules-${KERNEL_VERSION}.tar.gz
 		cd ../..
 		cd ..
 		;;
@@ -479,7 +484,7 @@ case "${1}" in
 		fi
 		;;
 	*)
-		echo "${0} [all/config/menuconfig/saveconfig/uImage/modules/install/clean/disclean/rootfs]"
+		echo "${0} [all/config/menuconfig/saveconfig/uImage/modules/install/clean/distclean/rootfs]"
 		exit 1
 		;;
 esac

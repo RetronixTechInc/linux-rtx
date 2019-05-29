@@ -254,6 +254,7 @@ function build_kernel()
 		if [ ! -z "${KERNEL_VERSION}" ] ; then
 			cp -f arch/arm/boot/uImage out/uImage-${KERNEL_VERSION}-${NOW_DATE}
 			cp -f arch/arm/boot/uImage out/uImage-${KERNEL_VERSION}
+			cp -f arch/arm/boot/uImage out/uImage-recovery
 		fi
 	fi
 
@@ -263,6 +264,7 @@ function build_kernel()
 		if [ ! -z "${KERNEL_VERSION}" ] ; then
 			cp arch/arm/boot/dts/${KERNEL_DTB}.dtb out/${KERNEL_DTB}-${KERNEL_VERSION}-${NOW_DATE}.dtb
 			cp arch/arm/boot/dts/${KERNEL_DTB}.dtb out/${KERNEL_DTB}-${KERNEL_VERSION}.dtb
+			cp arch/arm/boot/dts/${KERNEL_DTB}.dtb out/recovery.dtb
 		fi
 	fi
 }
@@ -275,6 +277,7 @@ function build_dtb()
 		if [ ! -z "${KERNEL_VERSION}" ] ; then
 			cp arch/arm/boot/dts/${KERNEL_DTB}.dtb out/${KERNEL_DTB}-${KERNEL_VERSION}-${NOW_DATE}.dtb
 			cp arch/arm/boot/dts/${KERNEL_DTB}.dtb out/${KERNEL_DTB}-${KERNEL_VERSION}.dtb
+			cp arch/arm/boot/dts/${KERNEL_DTB}.dtb out/recovery.dtb
 		fi
 	fi
 }

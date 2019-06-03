@@ -238,8 +238,8 @@
 	mxcfb2: fb@1 {
 		compatible = "fsl,mxc_sdc_fb";
 		disp_dev = "ldb";
-		interface_pix_fmt = "RGB666";
-		default_bpp = <16>;
+		interface_pix_fmt = "RGB24";
+		default_bpp = <32>;
 		int_clk = <0>;
 		late_init = <0>;
 		status = "okay";
@@ -536,7 +536,7 @@
 
 &ldb {
 	status = "okay";
-
+	
 	lvds-channel@0 {
 		fsl,data-mapping = "spwg";
 		fsl,data-width = <24>;
@@ -548,15 +548,15 @@
 		display-timings {
 			native-mode = <&timing0>;
 			timing0: hsd100pxn1 {
-				clock-frequency = <65000000>;
-				hactive = <1024>;
-				hfront-porch = <240>;
-				hback-porch = <0>;
-				hsync-len = <80>;
-				vactive = <768>;
-				vfront-porch = <28>;
-				vback-porch = <0>;
-				vsync-len = <7>;
+				clock-frequency = <71000000>;
+				hactive = <1280>;
+				hfront-porch = <48>;
+				hback-porch = <80>;
+				hsync-len = <32>;
+				vactive = <800>;
+				vfront-porch = <3>;
+				vback-porch = <14>;
+				vsync-len = <6>;
 				mode-is-detailed ;
 				de-active = <1>;
 			};
@@ -574,21 +574,22 @@
 		display-timings {
 			native-mode = <&timing1>;
 			timing1: hsd100pxn2 {
-				clock-frequency = <65000000>;
-				hactive = <1024>;
-				hfront-porch = <240>;
-				hback-porch = <0>;
-				hsync-len = <80>;
-				vactive = <768>;
-				vfront-porch = <28>;
-				vback-porch = <0>;
-				vsync-len = <7>;
+				clock-frequency = <71000000>;
+				hactive = <1280>;
+				hfront-porch = <48>;
+				hback-porch = <80>;
+				hsync-len = <32>;
+				vactive = <800>;
+				vfront-porch = <3>;
+				vback-porch = <14>;
+				vsync-len = <6>;
 				mode-is-detailed ;
 				de-active = <1>;
 			};
 		};
 	};
 };
+
 
 &pcie {
 	pinctrl-names = "default";

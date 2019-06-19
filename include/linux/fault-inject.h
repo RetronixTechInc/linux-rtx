@@ -18,7 +18,7 @@ struct fault_attr {
 	atomic_t times;
 	atomic_t space;
 	unsigned long verbose;
-	bool task_filter;
+	u32 task_filter;
 	unsigned long stacktrace_depth;
 	unsigned long require_start;
 	unsigned long require_end;
@@ -62,9 +62,10 @@ static inline struct dentry *fault_create_debugfs_attr(const char *name,
 #endif /* CONFIG_FAULT_INJECTION */
 
 #ifdef CONFIG_FAILSLAB
-extern bool should_failslab(struct kmem_cache *s, gfp_t gfpflags);
+extern bool should_failslab(size_t size, gfp_t gfpflags, unsigned long flags);
 #else
-static inline bool should_failslab(struct kmem_cache *s, gfp_t gfpflags)
+static inline bool should_failslab(size_t size, gfp_t gfpflags,
+				unsigned long flags)
 {
 	return false;
 }

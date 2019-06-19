@@ -1450,7 +1450,6 @@ static const struct of_device_id cpm_uart_match[] = {
 	},
 	{}
 };
-MODULE_DEVICE_TABLE(of, cpm_uart_match);
 
 static struct platform_driver cpm_uart_driver = {
 	.driver = {

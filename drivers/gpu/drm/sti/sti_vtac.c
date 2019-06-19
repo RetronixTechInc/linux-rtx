@@ -12,8 +12,6 @@
 
 #include <drm/drmP.h>
 
-#include "sti_drv.h"
-
 /* registers offset */
 #define VTAC_CONFIG                     0x00
 #define VTAC_RX_FIFO_CONFIG             0x04
@@ -217,6 +215,8 @@ struct platform_driver sti_vtac_driver = {
 	.probe = sti_vtac_probe,
 	.remove = sti_vtac_remove,
 };
+
+module_platform_driver(sti_vtac_driver);
 
 MODULE_AUTHOR("Benjamin Gaignard <benjamin.gaignard@st.com>");
 MODULE_DESCRIPTION("STMicroelectronics SoC DRM driver");

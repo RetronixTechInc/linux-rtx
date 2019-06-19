@@ -18,10 +18,11 @@ execveat.denatured: execveat
 	$(CC) $(CFLAGS) -o $@ $^
 
 TEST_PROGS := execveat
-# Makefile is a run-time dependency, since it's accessed by the execveat test
-TEST_FILES := $(DEPS) Makefile
+TEST_FILES := $(DEPS)
 
 include ../lib.mk
+
+override EMIT_TESTS := echo "mkdir -p subdir; (./execveat && echo \"selftests: execveat [PASS]\") || echo \"selftests: execveat [FAIL]\""
 
 clean:
 	rm -rf $(BINARIES) $(DEPS) subdir.moved execveat.moved xxxxx*

@@ -414,7 +414,7 @@ void set_sense_data(struct rtsx_chip *chip, unsigned int lun, u8 err_code,
 	sense->ascq = ascq;
 	if (sns_key_info0 != 0) {
 		sense->sns_key_info[0] = SKSV | sns_key_info0;
-		sense->sns_key_info[1] = (sns_key_info1 & 0xf0) >> 4;
+		sense->sns_key_info[1] = (sns_key_info1 & 0xf0) >> 8;
 		sense->sns_key_info[2] = sns_key_info1 & 0x0f;
 	}
 }
@@ -484,14 +484,14 @@ static int inquiry(struct scsi_cmnd *srb, struct rtsx_chip *chip)
 	u8 card = get_lun_card(chip, lun);
 	bool pro_formatter_flag = false;
 	unsigned char inquiry_buf[] = {
-		QULIFIRE | DRCT_ACCESS_DEV,
-		RMB_DISC | 0x0D,
+		QULIFIRE|DRCT_ACCESS_DEV,
+		RMB_DISC|0x0D,
 		0x00,
 		0x01,
 		0x1f,
 		0x02,
 		0,
-		REL_ADR | WBUS_32 | WBUS_16 | SYNC | LINKED | CMD_QUE | SFT_RE,
+		REL_ADR|WBUS_32|WBUS_16|SYNC|LINKED|CMD_QUE|SFT_RE,
 	};
 
 	if (CHECK_LUN_MODE(chip, SD_MS_2LUN)) {
@@ -507,7 +507,7 @@ static int inquiry(struct scsi_cmnd *srb, struct rtsx_chip *chip)
 	}
 
 	buf = vmalloc(scsi_bufflen(srb));
-	if (!buf) {
+	if (buf == NULL) {
 		rtsx_trace(chip);
 		return TRANSPORT_ERROR;
 	}
@@ -558,6 +558,7 @@ static int inquiry(struct scsi_cmnd *srb, struct rtsx_chip *chip)
 	return TRANSPORT_GOOD;
 }
 
+
 static int start_stop_unit(struct scsi_cmnd *srb, struct rtsx_chip *chip)
 {
 	unsigned int lun = SCSI_LUN(srb);
@@ -593,6 +594,7 @@ static int start_stop_unit(struct scsi_cmnd *srb, struct rtsx_chip *chip)
 	return TRANSPORT_ERROR;
 }
 
+
 static int allow_medium_removal(struct scsi_cmnd *srb, struct rtsx_chip *chip)
 {
 	int prevent;
@@ -610,6 +612,7 @@ static int allow_medium_removal(struct scsi_cmnd *srb, struct rtsx_chip *chip)
 
 	return TRANSPORT_GOOD;
 }
+
 
 static int request_sense(struct scsi_cmnd *srb, struct rtsx_chip *chip)
 {
@@ -641,7 +644,7 @@ static int request_sense(struct scsi_cmnd *srb, struct rtsx_chip *chip)
 	}
 
 	buf = vmalloc(scsi_bufflen(srb));
-	if (!buf) {
+	if (buf == NULL) {
 		rtsx_trace(chip);
 		return TRANSPORT_ERROR;
 	}
@@ -789,7 +792,7 @@ static int mode_sense(struct scsi_cmnd *srb, struct rtsx_chip *chip)
 #endif
 
 	buf = kmalloc(dataSize, GFP_KERNEL);
-	if (!buf) {
+	if (buf == NULL) {
 		rtsx_trace(chip);
 		return TRANSPORT_ERROR;
 	}
@@ -912,8 +915,6 @@ static int read_write(struct scsi_cmnd *srb, struct rtsx_chip *chip)
 		start_sec = ((u32)(srb->cmnd[1] & 0x1F) << 16) |
 			((u32)srb->cmnd[2] << 8) | ((u32)srb->cmnd[3]);
 		sec_cnt = srb->cmnd[4];
-		if (sec_cnt == 0)
-			sec_cnt = 256;
 	} else if ((srb->cmnd[0] == VENDOR_CMND) &&
 		(srb->cmnd[1] == SCSI_APP_CMD) &&
 		((srb->cmnd[2] == PP_READ10) || (srb->cmnd[2] == PP_WRITE10))) {
@@ -1014,7 +1015,7 @@ static int read_format_capacity(struct scsi_cmnd *srb, struct rtsx_chip *chip)
 	buf_len = (scsi_bufflen(srb) > 12) ? 0x14 : 12;
 
 	buf = kmalloc(buf_len, GFP_KERNEL);
-	if (!buf) {
+	if (buf == NULL) {
 		rtsx_trace(chip);
 		return TRANSPORT_ERROR;
 	}
@@ -1093,7 +1094,7 @@ static int read_capacity(struct scsi_cmnd *srb, struct rtsx_chip *chip)
 	}
 
 	buf = kmalloc(8, GFP_KERNEL);
-	if (!buf) {
+	if (buf == NULL) {
 		rtsx_trace(chip);
 		return TRANSPORT_ERROR;
 	}
@@ -1203,7 +1204,7 @@ static int write_eeprom(struct scsi_cmnd *srb, struct rtsx_chip *chip)
 		len = (unsigned short)min_t(unsigned int, scsi_bufflen(srb),
 					len);
 		buf = vmalloc(len);
-		if (!buf) {
+		if (buf == NULL) {
 			rtsx_trace(chip);
 			return TRANSPORT_ERROR;
 		}
@@ -1312,7 +1313,7 @@ static int write_mem(struct scsi_cmnd *srb, struct rtsx_chip *chip)
 
 	len = (unsigned short)min_t(unsigned int, scsi_bufflen(srb), len);
 	buf = vmalloc(len);
-	if (!buf) {
+	if (buf == NULL) {
 		rtsx_trace(chip);
 		return TRANSPORT_ERROR;
 	}
@@ -1397,7 +1398,7 @@ static int trace_msg_cmd(struct scsi_cmnd *srb, struct rtsx_chip *chip)
 	buf_len = 4 + ((2 + MSG_FUNC_LEN + MSG_FILE_LEN + TIME_VAL_LEN) *
 		TRACE_ITEM_CNT);
 
-	if ((scsi_bufflen(srb) < buf_len) || !scsi_sglist(srb)) {
+	if ((scsi_bufflen(srb) < buf_len) || (scsi_sglist(srb) == NULL)) {
 		set_sense_type(chip, SCSI_LUN(srb),
 			SENSE_TYPE_MEDIA_UNRECOVER_READ_ERR);
 		rtsx_trace(chip);
@@ -1407,7 +1408,7 @@ static int trace_msg_cmd(struct scsi_cmnd *srb, struct rtsx_chip *chip)
 	clear = srb->cmnd[2];
 
 	buf = vmalloc(scsi_bufflen(srb));
-	if (!buf) {
+	if (buf == NULL) {
 		rtsx_trace(chip);
 		return TRANSPORT_ERROR;
 	}
@@ -1518,7 +1519,7 @@ static int write_host_reg(struct scsi_cmnd *srb, struct rtsx_chip *chip)
 
 static int set_variable(struct scsi_cmnd *srb, struct rtsx_chip *chip)
 {
-	unsigned int lun = SCSI_LUN(srb);
+	unsigned lun = SCSI_LUN(srb);
 
 	if (srb->cmnd[3] == 1) {
 		/* Variable Clock */
@@ -1928,15 +1929,20 @@ static int rw_mem_cmd_buf(struct scsi_cmnd *srb, struct rtsx_chip *chip)
 
 static int suit_cmd(struct scsi_cmnd *srb, struct rtsx_chip *chip)
 {
+	int result;
+
 	switch (srb->cmnd[3]) {
 	case INIT_BATCHCMD:
 	case ADD_BATCHCMD:
 	case SEND_BATCHCMD:
 	case GET_BATCHRSP:
-		return rw_mem_cmd_buf(srb, chip);
+		result = rw_mem_cmd_buf(srb, chip);
+		break;
 	default:
-		return TRANSPORT_ERROR;
+		result = TRANSPORT_ERROR;
 	}
+
+	return result;
 }
 
 static int read_phy_register(struct scsi_cmnd *srb, struct rtsx_chip *chip)
@@ -1986,8 +1992,8 @@ static int read_phy_register(struct scsi_cmnd *srb, struct rtsx_chip *chip)
 				return TRANSPORT_FAILED;
 			}
 
-			buf[2 * i] = (u8)(val >> 8);
-			buf[2 * i + 1] = (u8)val;
+			buf[2*i] = (u8)(val >> 8);
+			buf[2*i+1] = (u8)val;
 		}
 
 		len = (unsigned short)min_t(unsigned int, scsi_bufflen(srb),
@@ -2027,7 +2033,7 @@ static int write_phy_register(struct scsi_cmnd *srb, struct rtsx_chip *chip)
 					len);
 
 		buf = vmalloc(len);
-		if (!buf) {
+		if (buf == NULL) {
 			rtsx_trace(chip);
 			return TRANSPORT_ERROR;
 		}
@@ -2045,7 +2051,7 @@ static int write_phy_register(struct scsi_cmnd *srb, struct rtsx_chip *chip)
 		}
 
 		for (i = 0; i < len / 2; i++) {
-			val = ((u16)buf[2 * i] << 8) | buf[2 * i + 1];
+			val = ((u16)buf[2*i] << 8) | buf[2*i+1];
 			retval = rtsx_write_phy_register(chip, addr + i, val);
 			if (retval != STATUS_SUCCESS) {
 				vfree(buf);
@@ -2183,7 +2189,7 @@ static int write_eeprom2(struct scsi_cmnd *srb, struct rtsx_chip *chip)
 
 	len = (unsigned short)min_t(unsigned int, scsi_bufflen(srb), len);
 	buf = vmalloc(len);
-	if (!buf) {
+	if (buf == NULL) {
 		rtsx_trace(chip);
 		return TRANSPORT_ERROR;
 	}
@@ -2287,7 +2293,7 @@ static int write_efuse(struct scsi_cmnd *srb, struct rtsx_chip *chip)
 
 	len = (u8)min_t(unsigned int, scsi_bufflen(srb), len);
 	buf = vmalloc(len);
-	if (!buf) {
+	if (buf == NULL) {
 		rtsx_trace(chip);
 		return TRANSPORT_ERROR;
 	}
@@ -2601,6 +2607,7 @@ static int app_cmd(struct scsi_cmnd *srb, struct rtsx_chip *chip)
 	return result;
 }
 
+
 static int read_status(struct scsi_cmnd *srb, struct rtsx_chip *chip)
 {
 	u8 rtsx_status[16];
@@ -2897,11 +2904,9 @@ void led_shine(struct scsi_cmnd *srb, struct rtsx_chip *chip)
 
 	if ((srb->cmnd[0] == READ_10) || (srb->cmnd[0] == WRITE_10))
 		sec_cnt = ((u16)(srb->cmnd[7]) << 8) | srb->cmnd[8];
-	else if ((srb->cmnd[0] == READ_6) || (srb->cmnd[0] == WRITE_6)) {
+	else if ((srb->cmnd[0] == READ_6) || (srb->cmnd[0] == WRITE_6))
 		sec_cnt = srb->cmnd[4];
-		if (sec_cnt == 0)
-			sec_cnt = 256;
-	} else
+	else
 		return;
 
 	if (chip->rw_cap[lun] >= GPIO_TOGGLE_THRESHOLD) {
@@ -3067,18 +3072,18 @@ static int get_ms_information(struct scsi_cmnd *srb, struct rtsx_chip *chip)
 	buf[i++] = 0x80;
 	if ((dev_info_id == 0x10) || (dev_info_id == 0x13)) {
 		/* System Information */
-		memcpy(buf + i, ms_card->raw_sys_info, 96);
+		memcpy(buf+i, ms_card->raw_sys_info, 96);
 	} else {
 		/* Model Name */
-		memcpy(buf + i, ms_card->raw_model_name, 48);
+		memcpy(buf+i, ms_card->raw_model_name, 48);
 	}
 
 	rtsx_stor_set_xfer_buf(buf, buf_len, srb);
 
 	if (dev_info_id == 0x15)
-		scsi_set_resid(srb, scsi_bufflen(srb) - 0x3C);
+		scsi_set_resid(srb, scsi_bufflen(srb)-0x3C);
 	else
-		scsi_set_resid(srb, scsi_bufflen(srb) - 0x6C);
+		scsi_set_resid(srb, scsi_bufflen(srb)-0x6C);
 
 	kfree(buf);
 	return STATUS_SUCCESS;

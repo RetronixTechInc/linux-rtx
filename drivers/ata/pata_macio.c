@@ -22,7 +22,6 @@
 #include <linux/scatterlist.h>
 #include <linux/of.h>
 #include <linux/gfp.h>
-#include <linux/pci.h>
 
 #include <scsi/scsi.h>
 #include <scsi/scsi_host.h>
@@ -31,6 +30,7 @@
 #include <asm/macio.h>
 #include <asm/io.h>
 #include <asm/dbdma.h>
+#include <asm/pci-bridge.h>
 #include <asm/machdep.h>
 #include <asm/pmac_feature.h>
 #include <asm/mediabay.h>
@@ -1344,7 +1344,6 @@ static struct of_device_id pata_macio_match[] =
 	},
 	{},
 };
-MODULE_DEVICE_TABLE(of, pata_macio_match);
 
 static struct macio_driver pata_macio_driver =
 {

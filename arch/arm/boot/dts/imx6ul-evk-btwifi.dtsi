@@ -13,13 +13,6 @@
  */
 
 / {
-	modem_reset: modem-reset {
-		compatible = "gpio-reset";
-		reset-gpios = <&gpio_spi 4 GPIO_ACTIVE_LOW>;
-		reset-delay-us = <1000>;
-		#reset-cells = <0>;
-	};
-
 	regulators {
 		wlreg_on: fixedregulator@100 {
 			compatible = "regulator-fixed";
@@ -39,19 +32,17 @@
 };
 
 &iomuxc {
-	pinctrl_wifi: wifigrp {
-		fsl,pins = <
-			MX6UL_PAD_SNVS_TAMPER1__GPIO5_IO01 0x03029
-		>;
+	imx6ul-evk-murata-v2 {
+		pinctrl_wifi: wifigrp {
+			fsl,pins = <
+				MX6UL_PAD_SNVS_TAMPER1__GPIO5_IO01 0x03029
+			>;
+		};
 	};
 };
 
 &reg_sd1_vmmc {
 	regulator-always-on;
-};
-
-&uart2 {
-	resets = <&modem_reset>;
 };
 
 &usdhc1 {
@@ -62,11 +53,4 @@
 	cd-post;
 	pm-ignore-notify;
 	wifi-host; /* add hook for SD card detect mechanism for BCMDHD driver */
-};
-
-&gpio_spi {
-	/* Murata: modify default setting so that BT_nPWD/BT_REG_ON
-	 * is low (0V) during kernel boot.
-	 */
-	registers-default = /bits/ 8 <0x47>;
 };

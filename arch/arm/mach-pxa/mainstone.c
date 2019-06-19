@@ -26,7 +26,6 @@
 #include <linux/mtd/partitions.h>
 #include <linux/input.h>
 #include <linux/gpio_keys.h>
-#include <linux/pwm.h>
 #include <linux/pwm_backlight.h>
 #include <linux/smc91x.h>
 #include <linux/i2c/pxa-i2c.h>
@@ -46,7 +45,7 @@
 #include <asm/mach/irq.h>
 #include <asm/mach/flash.h>
 
-#include "pxa27x.h"
+#include <mach/pxa27x.h>
 #include <mach/mainstone.h>
 #include <mach/audio.h>
 #include <linux/platform_data/video-pxafb.h>
@@ -249,14 +248,11 @@ static struct platform_device mst_flash_device[2] = {
 };
 
 #if defined(CONFIG_FB_PXA) || defined(CONFIG_FB_PXA_MODULE)
-static struct pwm_lookup mainstone_pwm_lookup[] = {
-	PWM_LOOKUP("pxa27x-pwm.0", 0, "pwm-backlight.0", NULL, 78770,
-		   PWM_POLARITY_NORMAL),
-};
-
 static struct platform_pwm_backlight_data mainstone_backlight_data = {
+	.pwm_id		= 0,
 	.max_brightness	= 1023,
 	.dft_brightness	= 1023,
+	.pwm_period_ns	= 78770,
 	.enable_gpio	= -1,
 };
 
@@ -270,16 +266,9 @@ static struct platform_device mainstone_backlight_device = {
 
 static void __init mainstone_backlight_register(void)
 {
-	int ret;
-
-	pwm_add_table(mainstone_pwm_lookup, ARRAY_SIZE(mainstone_pwm_lookup));
-
-	ret = platform_device_register(&mainstone_backlight_device);
-	if (ret) {
+	int ret = platform_device_register(&mainstone_backlight_device);
+	if (ret)
 		printk(KERN_ERR "mainstone: failed to register backlight device: %d\n", ret);
-		pwm_remove_table(mainstone_pwm_lookup,
-				 ARRAY_SIZE(mainstone_pwm_lookup));
-	}
 }
 #else
 #define mainstone_backlight_register()	do { } while (0)

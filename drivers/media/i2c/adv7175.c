@@ -300,26 +300,20 @@ static int adv7175_s_routing(struct v4l2_subdev *sd,
 	return 0;
 }
 
-static int adv7175_enum_mbus_code(struct v4l2_subdev *sd,
-		struct v4l2_subdev_pad_config *cfg,
-		struct v4l2_subdev_mbus_code_enum *code)
+static int adv7175_enum_fmt(struct v4l2_subdev *sd, unsigned int index,
+				u32 *code)
 {
-	if (code->pad || code->index >= ARRAY_SIZE(adv7175_codes))
+	if (index >= ARRAY_SIZE(adv7175_codes))
 		return -EINVAL;
 
-	code->code = adv7175_codes[code->index];
+	*code = adv7175_codes[index];
 	return 0;
 }
 
-static int adv7175_get_fmt(struct v4l2_subdev *sd,
-		struct v4l2_subdev_pad_config *cfg,
-		struct v4l2_subdev_format *format)
+static int adv7175_g_fmt(struct v4l2_subdev *sd,
+				struct v4l2_mbus_framefmt *mf)
 {
-	struct v4l2_mbus_framefmt *mf = &format->format;
 	u8 val = adv7175_read(sd, 0x7);
-
-	if (format->pad)
-		return -EINVAL;
 
 	if ((val & 0x40) == (1 << 6))
 		mf->code = MEDIA_BUS_FMT_UYVY8_1X16;
@@ -334,16 +328,11 @@ static int adv7175_get_fmt(struct v4l2_subdev *sd,
 	return 0;
 }
 
-static int adv7175_set_fmt(struct v4l2_subdev *sd,
-		struct v4l2_subdev_pad_config *cfg,
-		struct v4l2_subdev_format *format)
+static int adv7175_s_fmt(struct v4l2_subdev *sd,
+				struct v4l2_mbus_framefmt *mf)
 {
-	struct v4l2_mbus_framefmt *mf = &format->format;
 	u8 val = adv7175_read(sd, 0x7);
-	int ret = 0;
-
-	if (format->pad)
-		return -EINVAL;
+	int ret;
 
 	switch (mf->code) {
 	case MEDIA_BUS_FMT_UYVY8_2X8:
@@ -360,8 +349,7 @@ static int adv7175_set_fmt(struct v4l2_subdev *sd,
 		return -EINVAL;
 	}
 
-	if (format->which == V4L2_SUBDEV_FORMAT_ACTIVE)
-		ret = adv7175_write(sd, 0x7, val);
+	ret = adv7175_write(sd, 0x7, val);
 
 	return ret;
 }
@@ -386,18 +374,14 @@ static const struct v4l2_subdev_core_ops adv7175_core_ops = {
 static const struct v4l2_subdev_video_ops adv7175_video_ops = {
 	.s_std_output = adv7175_s_std_output,
 	.s_routing = adv7175_s_routing,
-};
-
-static const struct v4l2_subdev_pad_ops adv7175_pad_ops = {
-	.enum_mbus_code = adv7175_enum_mbus_code,
-	.get_fmt = adv7175_get_fmt,
-	.set_fmt = adv7175_set_fmt,
+	.s_mbus_fmt = adv7175_s_fmt,
+	.g_mbus_fmt = adv7175_g_fmt,
+	.enum_mbus_fmt  = adv7175_enum_fmt,
 };
 
 static const struct v4l2_subdev_ops adv7175_ops = {
 	.core = &adv7175_core_ops,
 	.video = &adv7175_video_ops,
-	.pad = &adv7175_pad_ops,
 };
 
 /* ----------------------------------------------------------------------- */
@@ -455,6 +439,7 @@ MODULE_DEVICE_TABLE(i2c, adv7175_id);
 
 static struct i2c_driver adv7175_driver = {
 	.driver = {
+		.owner	= THIS_MODULE,
 		.name	= "adv7175",
 	},
 	.probe		= adv7175_probe,

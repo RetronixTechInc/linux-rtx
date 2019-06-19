@@ -284,7 +284,8 @@ static int hid_prox_probe(struct platform_device *pdev)
 		goto error_free_dev_mem;
 	}
 
-	indio_dev->num_channels = ARRAY_SIZE(prox_channels);
+	indio_dev->num_channels =
+				ARRAY_SIZE(prox_channels);
 	indio_dev->dev.parent = &pdev->dev;
 	indio_dev->info = &prox_info;
 	indio_dev->name = name;
@@ -349,7 +350,7 @@ static int hid_prox_remove(struct platform_device *pdev)
 	return 0;
 }
 
-static const struct platform_device_id hid_prox_ids[] = {
+static struct platform_device_id hid_prox_ids[] = {
 	{
 		/* Format: HID-SENSOR-usage_id_in_hex_lowercase */
 		.name = "HID-SENSOR-200011",

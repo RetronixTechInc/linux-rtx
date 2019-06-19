@@ -31,7 +31,7 @@ static int seq_show(struct seq_file *m, void *v)
 	put_task_struct(task);
 
 	if (files) {
-		unsigned int fd = proc_fd(m->private);
+		int fd = proc_fd(m->private);
 
 		spin_lock(&files->file_lock);
 		file = fcheck_files(files, fd);
@@ -86,7 +86,7 @@ static int tid_fd_revalidate(struct dentry *dentry, unsigned int flags)
 	struct task_struct *task;
 	const struct cred *cred;
 	struct inode *inode;
-	unsigned int fd;
+	int fd;
 
 	if (flags & LOOKUP_RCU)
 		return -ECHILD;
@@ -158,7 +158,7 @@ static int proc_fd_link(struct dentry *dentry, struct path *path)
 	}
 
 	if (files) {
-		unsigned int fd = proc_fd(d_inode(dentry));
+		int fd = proc_fd(d_inode(dentry));
 		struct file *fd_file;
 
 		spin_lock(&files->file_lock);
@@ -253,12 +253,11 @@ static int proc_readfd_common(struct file *file, struct dir_context *ctx,
 			continue;
 		rcu_read_unlock();
 
-		len = snprintf(name, sizeof(name), "%u", fd);
+		len = snprintf(name, sizeof(name), "%d", fd);
 		if (!proc_fill_cache(file, ctx,
 				     name, len, instantiate, p,
 				     (void *)(unsigned long)fd))
 			goto out_fd_loop;
-		cond_resched();
 		rcu_read_lock();
 	}
 	rcu_read_unlock();
@@ -276,8 +275,8 @@ static int proc_readfd(struct file *file, struct dir_context *ctx)
 
 const struct file_operations proc_fd_operations = {
 	.read		= generic_read_dir,
-	.iterate_shared	= proc_readfd,
-	.llseek		= generic_file_llseek,
+	.iterate	= proc_readfd,
+	.llseek		= default_llseek,
 };
 
 static struct dentry *proc_lookupfd(struct inode *dir, struct dentry *dentry,
@@ -292,19 +291,11 @@ static struct dentry *proc_lookupfd(struct inode *dir, struct dentry *dentry,
  */
 int proc_fd_permission(struct inode *inode, int mask)
 {
-	struct task_struct *p;
-	int rv;
-
-	rv = generic_permission(inode, mask);
+	int rv = generic_permission(inode, mask);
 	if (rv == 0)
-		return rv;
-
-	rcu_read_lock();
-	p = pid_task(proc_pid(inode), PIDTYPE_PID);
-	if (p && same_thread_group(p, current))
+		return 0;
+	if (task_tgid(current) == proc_pid(inode))
 		rv = 0;
-	rcu_read_unlock();
-
 	return rv;
 }
 
@@ -361,6 +352,6 @@ const struct inode_operations proc_fdinfo_inode_operations = {
 
 const struct file_operations proc_fdinfo_operations = {
 	.read		= generic_read_dir,
-	.iterate_shared	= proc_readfdinfo,
-	.llseek		= generic_file_llseek,
+	.iterate	= proc_readfdinfo,
+	.llseek		= default_llseek,
 };

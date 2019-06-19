@@ -29,7 +29,7 @@ static struct trace_array *branch_tracer;
 static void
 probe_likely_condition(struct ftrace_branch_data *f, int val, int expect)
 {
-	struct trace_event_call *call = &event_branch;
+	struct ftrace_event_call *call = &event_branch;
 	struct trace_array *tr = branch_tracer;
 	struct trace_array_cpu *data;
 	struct ring_buffer_event *event;
@@ -125,14 +125,25 @@ void disable_branch_tracing(void)
 	mutex_unlock(&branch_tracing_mutex);
 }
 
+static void start_branch_trace(struct trace_array *tr)
+{
+	enable_branch_tracing(tr);
+}
+
+static void stop_branch_trace(struct trace_array *tr)
+{
+	disable_branch_tracing();
+}
+
 static int branch_trace_init(struct trace_array *tr)
 {
-	return enable_branch_tracing(tr);
+	start_branch_trace(tr);
+	return 0;
 }
 
 static void branch_trace_reset(struct trace_array *tr)
 {
-	disable_branch_tracing();
+	stop_branch_trace(tr);
 }
 
 static enum print_line_t trace_branch_print(struct trace_iterator *iter,
@@ -183,7 +194,7 @@ __init static int init_branch_tracer(void)
 {
 	int ret;
 
-	ret = register_trace_event(&trace_branch_event);
+	ret = register_ftrace_event(&trace_branch_event);
 	if (!ret) {
 		printk(KERN_WARNING "Warning: could not register "
 				    "branch events\n");

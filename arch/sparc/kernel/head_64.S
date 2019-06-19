@@ -32,8 +32,7 @@
 #include <asm/estate.h>
 #include <asm/sfafsr.h>
 #include <asm/unistd.h>
-#include <asm/export.h>
-
+	
 /* This section from from _start to sparc64_boot_end should fit into
  * 0x0000000000404000 to 0x0000000000408000.
  */
@@ -144,7 +143,6 @@ prom_cpu_compatible:
 	.skip	64
 prom_root_node:
 	.word	0
-EXPORT_SYMBOL(prom_root_node)
 prom_mmu_ihandle_cache:
 	.word	0
 prom_boot_mapped_pc:
@@ -160,7 +158,6 @@ is_sun4v:
 	.word	0
 sun4v_chip_type:
 	.word	SUN4V_CHIP_INVALID
-EXPORT_SYMBOL(sun4v_chip_type)
 1:
 	rd	%pc, %l0
 
@@ -417,8 +414,6 @@ EXPORT_SYMBOL(sun4v_chip_type)
 	cmp	%g2, 'T'
 	be,pt	%xcc, 70f
 	 cmp	%g2, 'M'
-	be,pt	%xcc, 70f
-	 cmp	%g2, 'S'
 	bne,pn	%xcc, 49f
 	 nop
 
@@ -438,9 +433,6 @@ EXPORT_SYMBOL(sun4v_chip_type)
 	cmp	%g2, '7'
 	be,pt	%xcc, 5f
 	 mov	SUN4V_CHIP_SPARC_M7, %g4
-	cmp	%g2, 'N'
-	be,pt	%xcc, 5f
-	 mov	SUN4V_CHIP_SPARC_SN, %g4
 	ba,pt	%xcc, 49f
 	 nop
 
@@ -469,8 +461,9 @@ EXPORT_SYMBOL(sun4v_chip_type)
 	subcc	%g3, 1, %g3
 	bne,pt	%xcc, 41b
 	add	%g1, 1, %g1
+	mov	SUN4V_CHIP_SPARC64X, %g4
 	ba,pt	%xcc, 5f
-	 mov	SUN4V_CHIP_SPARC64X, %g4
+	nop
 
 49:
 	mov	SUN4V_CHIP_UNKNOWN, %g4
@@ -555,7 +548,8 @@ sun4u_init:
 	stxa		%g0, [%g7] ASI_DMMU
 	membar	#Sync
 
-	ba,a,pt		%xcc, sun4u_continue
+	ba,pt		%xcc, sun4u_continue
+	 nop
 
 sun4v_init:
 	/* Set ctx 0 */
@@ -566,12 +560,14 @@ sun4v_init:
 	mov		SECONDARY_CONTEXT, %g7
 	stxa		%g0, [%g7] ASI_MMU
 	membar		#Sync
-	ba,a,pt		%xcc, niagara_tlb_fixup
+	ba,pt		%xcc, niagara_tlb_fixup
+	 nop
 
 sun4u_continue:
 	BRANCH_IF_ANY_CHEETAH(g1, g7, cheetah_tlb_fixup)
 
-	ba,a,pt	%xcc, spitfire_tlb_fixup
+	ba,pt	%xcc, spitfire_tlb_fixup
+	 nop
 
 niagara_tlb_fixup:
 	mov	3, %g2		/* Set TLB type to hypervisor. */
@@ -599,9 +595,6 @@ niagara_tlb_fixup:
 	be,pt	%xcc, niagara4_patch
 	 nop
 	cmp	%g1, SUN4V_CHIP_SPARC_M7
-	be,pt	%xcc, niagara4_patch
-	 nop
-	cmp	%g1, SUN4V_CHIP_SPARC_SN
 	be,pt	%xcc, niagara4_patch
 	 nop
 
@@ -646,7 +639,8 @@ niagara_patch:
 	call	hypervisor_patch_cachetlbops
 	 nop
 
-	ba,a,pt	%xcc, tlb_fixup_done
+	ba,pt	%xcc, tlb_fixup_done
+	 nop
 
 cheetah_tlb_fixup:
 	mov	2, %g2		/* Set TLB type to cheetah+. */
@@ -665,7 +659,8 @@ cheetah_tlb_fixup:
 	call	cheetah_patch_cachetlbops
 	 nop
 
-	ba,a,pt	%xcc, tlb_fixup_done
+	ba,pt	%xcc, tlb_fixup_done
+	 nop
 
 spitfire_tlb_fixup:
 	/* Set TLB type to spitfire. */
@@ -700,6 +695,14 @@ tlb_fixup_done:
 	or	%o1, %lo(_end), %o1
 	call	__bzero
 	 sub	%o1, %o0, %o1
+
+#ifdef CONFIG_LOCKDEP
+	/* We have this call this super early, as even prom_init can grab
+	 * spinlocks and thus call into the lockdep code.
+	 */
+	call	lockdep_init
+	 nop
+#endif
 
 	call	prom_init
 	 mov	%l7, %o0			! OpenPROM cif handler
@@ -779,7 +782,8 @@ setup_trap_table:
 	call	%o1
 	 add	%sp, (2047 + 128), %o0
 
-	ba,a,pt	%xcc, 2f
+	ba,pt	%xcc, 2f
+	 nop
 
 1:	sethi	%hi(sparc64_ttable_tl0), %o0
 	set	prom_set_trap_table_name, %g2
@@ -818,7 +822,8 @@ setup_trap_table:
 
 	BRANCH_IF_ANY_CHEETAH(o2, o3, 1f)
 
-	ba,a,pt	%xcc, 2f
+	ba,pt	%xcc, 2f
+	 nop
 
 	/* Disable STICK_INT interrupts. */
 1:
@@ -923,21 +928,37 @@ swapper_4m_tsb:
 	.globl	prom_tba, tlb_type
 prom_tba:	.xword	0
 tlb_type:	.word	0	/* Must NOT end up in BSS */
-EXPORT_SYMBOL(tlb_type)
 	.section	".fixup",#alloc,#execinstr
+
+	.globl	__ret_efault, __retl_efault, __ret_one, __retl_one
+ENTRY(__ret_efault)
+	ret
+	 restore %g0, -EFAULT, %o0
+ENDPROC(__ret_efault)
 
 ENTRY(__retl_efault)
 	retl
 	 mov	-EFAULT, %o0
 ENDPROC(__retl_efault)
 
+ENTRY(__retl_one)
+	retl
+	 mov	1, %o0
+ENDPROC(__retl_one)
+
+ENTRY(__ret_one_asi)
+	wr	%g0, ASI_AIUS, %asi
+	ret
+	 restore %g0, 1, %o0
+ENDPROC(__ret_one_asi)
+
+ENTRY(__retl_one_asi)
+	wr	%g0, ASI_AIUS, %asi
+	retl
+	 mov	1, %o0
+ENDPROC(__retl_one_asi)
+
 ENTRY(__retl_o1)
 	retl
 	 mov	%o1, %o0
 ENDPROC(__retl_o1)
-
-ENTRY(__retl_o1_asi)
-	wr      %o5, 0x0, %asi
-	retl
-	 mov    %o1, %o0
-ENDPROC(__retl_o1_asi)

@@ -24,7 +24,6 @@
 #include "xfs_trans_resv.h"
 #include "xfs_bit.h"
 #include "xfs_mount.h"
-#include "xfs_defer.h"
 #include "xfs_da_format.h"
 #include "xfs_da_btree.h"
 #include "xfs_inode.h"
@@ -101,14 +100,14 @@ xfs_attr3_rmt_verify(
 		return false;
 	if (rmt->rm_magic != cpu_to_be32(XFS_ATTR3_RMT_MAGIC))
 		return false;
-	if (!uuid_equal(&rmt->rm_uuid, &mp->m_sb.sb_meta_uuid))
+	if (!uuid_equal(&rmt->rm_uuid, &mp->m_sb.sb_uuid))
 		return false;
 	if (be64_to_cpu(rmt->rm_blkno) != bno)
 		return false;
 	if (be32_to_cpu(rmt->rm_bytes) > fsbsize - sizeof(*rmt))
 		return false;
 	if (be32_to_cpu(rmt->rm_offset) +
-				be32_to_cpu(rmt->rm_bytes) > XFS_XATTR_SIZE_MAX)
+				be32_to_cpu(rmt->rm_bytes) > XATTR_SIZE_MAX)
 		return false;
 	if (rmt->rm_owner == 0)
 		return false;
@@ -202,7 +201,6 @@ xfs_attr3_rmt_write_verify(
 }
 
 const struct xfs_buf_ops xfs_attr3_rmt_buf_ops = {
-	.name = "xfs_attr3_rmt",
 	.verify_read = xfs_attr3_rmt_read_verify,
 	.verify_write = xfs_attr3_rmt_write_verify,
 };
@@ -224,7 +222,7 @@ xfs_attr3_rmt_hdr_set(
 	rmt->rm_magic = cpu_to_be32(XFS_ATTR3_RMT_MAGIC);
 	rmt->rm_offset = cpu_to_be32(offset);
 	rmt->rm_bytes = cpu_to_be32(size);
-	uuid_copy(&rmt->rm_uuid, &mp->m_sb.sb_meta_uuid);
+	uuid_copy(&rmt->rm_uuid, &mp->m_sb.sb_uuid);
 	rmt->rm_owner = cpu_to_be64(ino);
 	rmt->rm_blkno = cpu_to_be64(bno);
 
@@ -449,6 +447,8 @@ xfs_attr_rmtval_set(
 	 * Roll through the "value", allocating blocks on disk as required.
 	 */
 	while (blkcnt > 0) {
+		int	committed;
+
 		/*
 		 * Allocate a single extent, up to the size of the value.
 		 *
@@ -461,18 +461,28 @@ xfs_attr_rmtval_set(
 		 * extent and then crash then the block may not contain the
 		 * correct metadata after log recovery occurs.
 		 */
-		xfs_defer_init(args->dfops, args->firstblock);
+		xfs_bmap_init(args->flist, args->firstblock);
 		nmap = 1;
 		error = xfs_bmapi_write(args->trans, dp, (xfs_fileoff_t)lblkno,
 				  blkcnt, XFS_BMAPI_ATTRFORK, args->firstblock,
-				  args->total, &map, &nmap, args->dfops);
-		if (!error)
-			error = xfs_defer_finish(&args->trans, args->dfops, dp);
+				  args->total, &map, &nmap, args->flist);
+		if (!error) {
+			error = xfs_bmap_finish(&args->trans, args->flist,
+						&committed);
+		}
 		if (error) {
+			ASSERT(committed);
 			args->trans = NULL;
-			xfs_defer_cancel(args->dfops);
+			xfs_bmap_cancel(args->flist);
 			return error;
 		}
+
+		/*
+		 * bmap_finish() may have committed the last trans and started
+		 * a new one.  We need the inode to be in all transactions.
+		 */
+		if (committed)
+			xfs_trans_ijoin(args->trans, dp, 0);
 
 		ASSERT(nmap == 1);
 		ASSERT((map.br_startblock != DELAYSTARTBLOCK) &&
@@ -504,7 +514,7 @@ xfs_attr_rmtval_set(
 
 		ASSERT(blkcnt > 0);
 
-		xfs_defer_init(args->dfops, args->firstblock);
+		xfs_bmap_init(args->flist, args->firstblock);
 		nmap = 1;
 		error = xfs_bmapi_read(dp, (xfs_fileoff_t)lblkno,
 				       blkcnt, &map, &nmap,
@@ -604,18 +614,30 @@ xfs_attr_rmtval_remove(
 	blkcnt = args->rmtblkcnt;
 	done = 0;
 	while (!done) {
-		xfs_defer_init(args->dfops, args->firstblock);
+		int committed;
+
+		xfs_bmap_init(args->flist, args->firstblock);
 		error = xfs_bunmapi(args->trans, args->dp, lblkno, blkcnt,
-				    XFS_BMAPI_ATTRFORK, 1, args->firstblock,
-				    args->dfops, &done);
-		if (!error)
-			error = xfs_defer_finish(&args->trans, args->dfops,
-						args->dp);
+				    XFS_BMAPI_ATTRFORK | XFS_BMAPI_METADATA,
+				    1, args->firstblock, args->flist,
+				    &done);
+		if (!error) {
+			error = xfs_bmap_finish(&args->trans, args->flist,
+						&committed);
+		}
 		if (error) {
+			ASSERT(committed);
 			args->trans = NULL;
-			xfs_defer_cancel(args->dfops);
+			xfs_bmap_cancel(args->flist);
 			return error;
 		}
+
+		/*
+		 * bmap_finish() may have committed the last trans and started
+		 * a new one.  We need the inode to be in all transactions.
+		 */
+		if (committed)
+			xfs_trans_ijoin(args->trans, args->dp, 0);
 
 		/*
 		 * Close out trans and start the next one in the chain.

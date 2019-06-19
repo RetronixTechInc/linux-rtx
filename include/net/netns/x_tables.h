@@ -2,7 +2,7 @@
 #define __NETNS_X_TABLES_H
 
 #include <linux/list.h>
-#include <linux/netfilter_defs.h>
+#include <linux/netfilter.h>
 
 struct ebt_table;
 

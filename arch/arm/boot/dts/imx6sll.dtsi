@@ -51,14 +51,14 @@
 			next-level-cache = <&L2>;
 			operating-points = <
 				/* kHz    uV */
-				996000  1225000
+				996000  1275000
 				792000  1175000
 				396000  1075000
 				198000	975000
 			>;
 			fsl,soc-operating-points = <
 				/* ARM kHz      SOC-PU uV */
-				996000          1225000
+				996000          1275000
 				792000          1175000
 				396000          1175000
 				198000		1175000
@@ -211,7 +211,7 @@
 						      "rxtx1", "rxtx2",
 						      "rxtx3", "rxtx4",
 						      "rxtx5", "rxtx6",
-						      "rxtx7", "spba";
+						      "rxtx7", "dma";
 					status = "disabled";
 				};
 
@@ -574,7 +574,7 @@
 					regmap = <&snvs>;
 					interrupts = <GIC_SPI 4 IRQ_TYPE_LEVEL_HIGH>;
 					linux,keycode = <KEY_POWER>;
-					wakeup-source;
+					wakeup;
 				};
 			};
 

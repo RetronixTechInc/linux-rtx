@@ -23,7 +23,6 @@ endef
 # Allow setting CC and AR, or setting CROSS_COMPILE as a prefix.
 $(call allow-override,CC,$(CROSS_COMPILE)gcc)
 $(call allow-override,AR,$(CROSS_COMPILE)ar)
-$(call allow-override,NM,$(CROSS_COMPILE)nm)
 
 EXT = -std=gnu99
 INSTALL = install
@@ -35,15 +34,9 @@ INSTALL = install
 DESTDIR ?=
 DESTDIR_SQ = '$(subst ','\'',$(DESTDIR))'
 
-LP64 := $(shell echo __LP64__ | ${CC} ${CFLAGS} -E -x c - | tail -n 1)
-ifeq ($(LP64), 1)
-  libdir_relative = lib64
-else
-  libdir_relative = lib
-endif
-
 prefix ?= /usr/local
-libdir = $(prefix)/$(libdir_relative)
+bindir_relative = bin
+bindir = $(prefix)/$(bindir_relative)
 man_dir = $(prefix)/share/man
 man_dir_SQ = '$(subst ','\'',$(man_dir))'
 
@@ -65,7 +58,7 @@ ifeq ($(prefix),$(HOME))
 override plugin_dir = $(HOME)/.traceevent/plugins
 set_plugin_dir := 0
 else
-override plugin_dir = $(libdir)/traceevent/plugins
+override plugin_dir = $(prefix)/lib/traceevent/plugins
 endif
 endif
 
@@ -92,11 +85,11 @@ srctree := $(patsubst %/,%,$(dir $(srctree)))
 #$(info Determined 'srctree' to be $(srctree))
 endif
 
-export prefix libdir src obj
+export prefix bindir src obj
 
 # Shell quotes
-libdir_SQ = $(subst ','\'',$(libdir))
-libdir_relative_SQ = $(subst ','\'',$(libdir_relative))
+bindir_SQ = $(subst ','\'',$(bindir))
+bindir_relative_SQ = $(subst ','\'',$(bindir_relative))
 plugin_dir_SQ = $(subst ','\'',$(plugin_dir))
 
 LIB_FILE = libtraceevent.a libtraceevent.so
@@ -158,9 +151,8 @@ PLUGINS_IN := $(PLUGINS:.so=-in.o)
 
 TE_IN    := $(OUTPUT)libtraceevent-in.o
 LIB_FILE := $(addprefix $(OUTPUT),$(LIB_FILE))
-DYNAMIC_LIST_FILE := $(OUTPUT)libtraceevent-dynamic-list
 
-CMD_TARGETS = $(LIB_FILE) $(PLUGINS) $(DYNAMIC_LIST_FILE)
+CMD_TARGETS = $(LIB_FILE) $(PLUGINS)
 
 TARGETS = $(CMD_TARGETS)
 
@@ -176,9 +168,6 @@ $(OUTPUT)libtraceevent.so: $(TE_IN)
 
 $(OUTPUT)libtraceevent.a: $(TE_IN)
 	$(QUIET_LINK)$(RM) $@; $(AR) rcs $@ $^
-
-$(OUTPUT)libtraceevent-dynamic-list: $(PLUGINS)
-	$(QUIET_GEN)$(call do_generate_dynamic_list_file, $(PLUGINS), $@)
 
 plugins: $(PLUGINS)
 
@@ -249,16 +238,9 @@ define do_install_plugins
 	done
 endef
 
-define do_generate_dynamic_list_file
-	(echo '{';							\
-	$(NM) -u -D $1 | awk 'NF>1 {print "\t"$$2";"}' | sort -u;	\
-	echo '};';							\
-	) > $2
-endef
-
 install_lib: all_cmd install_plugins
 	$(call QUIET_INSTALL, $(LIB_FILE)) \
-		$(call do_install,$(LIB_FILE),$(libdir_SQ))
+		$(call do_install,$(LIB_FILE),$(bindir_SQ))
 
 install_plugins: $(PLUGINS)
 	$(call QUIET_INSTALL, trace_plugins) \
@@ -268,7 +250,7 @@ install: install_lib
 
 clean:
 	$(call QUIET_CLEAN, libtraceevent) \
-		$(RM) *.o *~ $(TARGETS) *.a *.so $(VERSION_FILES) .*.d .*.cmd \
+		$(RM) *.o *~ $(TARGETS) *.a *.so $(VERSION_FILES) .*.d \
 		$(RM) TRACEEVENT-CFLAGS tags TAGS
 
 PHONY += force plugins

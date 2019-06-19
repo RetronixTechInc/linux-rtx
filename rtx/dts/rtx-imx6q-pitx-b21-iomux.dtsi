@@ -22,20 +22,20 @@
 				MX6QDL_PAD_KEY_ROW1__GPIO4_IO09				0x80000000	/* UART1_SLEW */
 				MX6QDL_PAD_NANDF_ALE__GPIO6_IO08			0x80000000	/* SD4_RESETn */
 				MX6QDL_PAD_GPIO_5__GPIO1_IO05				0x80000000	/* CAN1_STBY */
-
+				
 				/* LVDS */
 				MX6QDL_PAD_SD1_DAT2__GPIO1_IO19				0x80000000	/* LVDS_BLEN */
-
+				
 				/* GPIO */
 				MX6QDL_PAD_EIM_A25__GPIO5_IO02				0x80000000	/* GPIO1 */
 				MX6QDL_PAD_EIM_D18__GPIO3_IO18				0x80000000	/* GPIO2 */
-
+				
 				/* Audio Codec */
 				MX6QDL_PAD_GPIO_0__CCM_CLKO1				0x130b0		/* SGTL5000 sys_mclk */
 				MX6QDL_PAD_SD3_RST__GPIO7_IO08				0x80000000	/* HEADPHONE_DET */
 				MX6QDL_PAD_GPIO_9__GPIO1_IO09				0x80000000	/* MICROPHONE_DET */
 				MX6QDL_PAD_KEY_COL2__GPIO4_IO10				0x80000000	/* AUD_AMP_STBY_B */
-
+				
 			>;
 		};
 	};
@@ -74,7 +74,7 @@
 			>;
 		};
 	};
-
+	
 	lvds_pwm {
 		pinctrl_pwm1_pitx: pwm1-pitx {
 			fsl,pins = <
@@ -82,7 +82,7 @@
 			>;
 		};
 	};
-
+	
 	hdmi_hdcp {
 		pinctrl_hdmi_hdcp_pitx: hdmihdcp-pitx {
 			fsl,pins = <
@@ -145,6 +145,18 @@
 				MX6QDL_PAD_EIM_D20__GPIO3_IO20			0x80000000
 			>;
 		};
+		pinctrl_uart1_gpio: uart1-gpio {
+			fsl,pins = <
+				MX6QDL_PAD_EIM_D23__GPIO3_IO23 		0x80000000
+				MX6QDL_PAD_EIM_D25__GPIO3_IO25 		0x80000000
+                MX6QDL_PAD_CSI0_DAT11__GPIO5_IO29			0x80000000
+				MX6QDL_PAD_EIM_D20__GPIO3_IO20			0x80000000
+				MX6QDL_PAD_CSI0_DAT10__GPIO5_IO28			0x80000000
+				MX6QDL_PAD_EIM_D19__GPIO3_IO19			0x80000000
+				MX6QDL_PAD_EIM_D24__GPIO3_IO24 		0x80000000
+				MX6QDL_PAD_EIM_EB3__GPIO2_IO31			0x80000000
+			>;
+		};
 		/* Additional DTR, DSR, DCD, RI */
 		pinctrl_uart1_ctrl1: uart1-ctrlgrp1 {
 			fsl,pins = <
@@ -159,7 +171,7 @@
 				MX6QDL_PAD_EIM_D23__GPIO3_IO23			0x80000000	/* UART1_M0 */
 				MX6QDL_PAD_EIM_D24__GPIO3_IO24			0x80000000	/* UART1_TM */
 				MX6QDL_PAD_EIM_D25__GPIO3_IO25			0x80000000	/* UART1_M1 */
-				MX6QDL_PAD_EIM_EB3__UART1_RI_B			0x1b0b1
+				MX6QDL_PAD_EIM_EB3__UART1_RI_B			0x1b0b1	
 			>;
 		};
 	};
@@ -222,7 +234,7 @@
 				MX6QDL_PAD_NANDF_D1__GPIO2_IO01				0x80000000	/* SD3_WP */
 			>;
 		};
-
+		
 		pinctrl_usdhc3_pitx_50mhz: usdhc3-pitx-50mhz {						/* 50Mhz */
 			fsl,pins = <
 				MX6QDL_PAD_SD3_CMD__SD3_CMD				0x17059
@@ -319,8 +331,16 @@
 				MX6QDL_PAD_DISP0_DAT3__GPIO4_IO24           		0x80000000	/* CSPI3_CS0 */
 			>;
 		};
+        pinctrl_cspi3_gpio: cspi3-gpio {
+			fsl,pins = <
+				MX6QDL_PAD_DISP0_DAT0__GPIO4_IO21           		0x80000000	
+				MX6QDL_PAD_DISP0_DAT1__GPIO4_IO22           		0x80000000	
+				MX6QDL_PAD_DISP0_DAT2__GPIO4_IO23           		0x80000000	
+				MX6QDL_PAD_DISP0_DAT3__GPIO4_IO24           		0x80000000	
+			>;
+		};
 	};
-
+	
 	flexcan1 {
 		pinctrl_flexcan1_pitx: flexcan1-pitx {
 			fsl,pins = <
@@ -328,14 +348,21 @@
 				MX6QDL_PAD_GPIO_8__FLEXCAN1_RX				0x1b0b0		/* CAN1_RX */
 			>;
 		};
+		pinctrl_flexcan1_gpio: flexcan1-gpio {
+			fsl,pins = <
+				MX6QDL_PAD_GPIO_7__GPIO1_IO07		0x80000000
+				MX6QDL_PAD_GPIO_8__GPIO1_IO08		0x80000000
+			>;
+		};        
 	};
-
+	
 	keys {
 		pinctrl_keys_pitx: keys-pitx {
-			fsl,pins = <
+			fsl,pins = <	
 					/* special key */
 				MX6QDL_PAD_EIM_D29__GPIO3_IO29				0x80000000	/* PWR_BTN_SNS */
 			>;
 		};
-	};
+	};		
 };
+

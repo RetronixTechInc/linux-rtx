@@ -35,6 +35,12 @@ struct virtio_pci_vq_info {
 	/* the actual virtqueue */
 	struct virtqueue *vq;
 
+	/* the number of entries in the queue */
+	int num;
+
+	/* the virtual address of the ring queue */
+	void *queue;
+
 	/* the list node for the virtqueues list */
 	struct list_head node;
 
@@ -68,8 +74,6 @@ struct virtio_pci_device {
 
 	/* Multiply queue_notify_off by this value. (non-legacy mode). */
 	u32 notify_offset_multiplier;
-
-	int modern_bars;
 
 	/* Legacy only field */
 	/* the IO mapping for the PCI config space */
@@ -133,7 +137,7 @@ void vp_del_vqs(struct virtio_device *vdev);
 int vp_find_vqs(struct virtio_device *vdev, unsigned nvqs,
 		       struct virtqueue *vqs[],
 		       vq_callback_t *callbacks[],
-		       const char * const names[]);
+		       const char *names[]);
 const char *vp_bus_name(struct virtio_device *vdev);
 
 /* Setup the affinity for a virtqueue:

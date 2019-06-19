@@ -448,11 +448,7 @@ static void wl1251_op_stop(struct ieee80211_hw *hw)
 	WARN_ON(wl->state != WL1251_STATE_ON);
 
 	if (wl->scanning) {
-		struct cfg80211_scan_info info = {
-			.aborted = true,
-		};
-
-		ieee80211_scan_completed(wl->hw, &info);
+		ieee80211_scan_completed(wl->hw, true);
 		wl->scanning = false;
 	}
 
@@ -767,7 +763,8 @@ static u64 wl1251_op_prepare_multicast(struct ieee80211_hw *hw,
 	return (u64)(unsigned long)fp;
 }
 
-#define WL1251_SUPPORTED_FILTERS (FIF_ALLMULTI | \
+#define WL1251_SUPPORTED_FILTERS (FIF_PROMISC_IN_BSS | \
+				  FIF_ALLMULTI | \
 				  FIF_FCSFAIL | \
 				  FIF_BCN_PRBRESP_PROMISC | \
 				  FIF_CONTROL | \
@@ -798,6 +795,10 @@ static void wl1251_op_configure_filter(struct ieee80211_hw *hw,
 	wl->rx_config = WL1251_DEFAULT_RX_CONFIG;
 	wl->rx_filter = WL1251_DEFAULT_RX_FILTER;
 
+	if (*total & FIF_PROMISC_IN_BSS) {
+		wl->rx_config |= CFG_BSSID_FILTER_EN;
+		wl->rx_config |= CFG_RX_ALL_GOOD;
+	}
 	if (*total & FIF_ALLMULTI)
 		/*
 		 * CFG_MC_FILTER_EN in rx_config needs to be 0 to receive
@@ -824,7 +825,7 @@ static void wl1251_op_configure_filter(struct ieee80211_hw *hw,
 	if (ret < 0)
 		goto out;
 
-	if (*total & FIF_ALLMULTI)
+	if (*total & FIF_ALLMULTI || *total & FIF_PROMISC_IN_BSS)
 		ret = wl1251_acx_group_address_tbl(wl, false, NULL, 0);
 	else if (fp)
 		ret = wl1251_acx_group_address_tbl(wl, fp->enabled,
@@ -1480,13 +1481,12 @@ int wl1251_init_ieee80211(struct wl1251 *wl)
 	/* unit us */
 	/* FIXME: find a proper value */
 
-	ieee80211_hw_set(wl->hw, SIGNAL_DBM);
-	ieee80211_hw_set(wl->hw, SUPPORTS_PS);
+	wl->hw->flags = IEEE80211_HW_SIGNAL_DBM | IEEE80211_HW_SUPPORTS_PS;
 
 	wl->hw->wiphy->interface_modes = BIT(NL80211_IFTYPE_STATION) |
 					 BIT(NL80211_IFTYPE_ADHOC);
 	wl->hw->wiphy->max_scan_ssids = 1;
-	wl->hw->wiphy->bands[NL80211_BAND_2GHZ] = &wl1251_band_2ghz;
+	wl->hw->wiphy->bands[IEEE80211_BAND_2GHZ] = &wl1251_band_2ghz;
 
 	wl->hw->queues = 4;
 
@@ -1571,7 +1571,6 @@ struct ieee80211_hw *wl1251_alloc_hw(void)
 
 	wl->state = WL1251_STATE_OFF;
 	mutex_init(&wl->mutex);
-	spin_lock_init(&wl->wl_lock);
 
 	wl->tx_mgmt_frm_rate = DEFAULT_HW_GEN_TX_RATE;
 	wl->tx_mgmt_frm_mod = DEFAULT_HW_GEN_MODULATION_TYPE;

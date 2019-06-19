@@ -6,7 +6,7 @@
 
 / {
 	core-module@10000000 {
-		compatible = "arm,core-module-integrator", "syscon", "simple-mfd";
+		compatible = "arm,core-module-integrator", "syscon";
 		reg = <0x10000000 0x200>;
 
 		/* Use core module LED to indicate CPU load */
@@ -52,13 +52,12 @@
 	};
 
 	flash@24000000 {
-		compatible = "arm,versatile-flash", "cfi-flash";
+		compatible = "cfi-flash";
 		reg = <0x24000000 0x02000000>;
-		bank-width = <4>;
 	};
 
 	fpga {
-		compatible = "simple-bus";
+		compatible = "arm,amba-bus", "simple-bus";
 		#address-cells = <1>;
 		#size-cells = <1>;
 		ranges;
@@ -96,7 +95,7 @@
 
 		syscon {
 			/* Debug registers mapped as syscon */
-			compatible = "syscon", "simple-mfd";
+			compatible = "syscon";
 			reg = <0x1a000000 0x10>;
 
 			led@04.0 {

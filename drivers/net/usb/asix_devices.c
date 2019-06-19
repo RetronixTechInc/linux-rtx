@@ -603,12 +603,12 @@ static void ax88772_suspend(struct usbnet *dev)
 	u16 medium;
 
 	/* Stop MAC operation */
-	medium = asix_read_medium_status(dev, 1);
+	medium = asix_read_medium_status(dev, 0);
 	medium &= ~AX_MEDIUM_RE;
-	asix_write_medium_mode(dev, medium, 1);
+	asix_write_medium_mode(dev, medium, 0);
 
 	netdev_dbg(dev->net, "ax88772_suspend: medium=0x%04x\n",
-		   asix_read_medium_status(dev, 1));
+		   asix_read_medium_status(dev, 0));
 
 	/* Preserve BMCR for restoring */
 	priv->presvd_phy_bmcr =
@@ -624,7 +624,7 @@ static int asix_suspend(struct usb_interface *intf, pm_message_t message)
 	struct usbnet *dev = usb_get_intfdata(intf);
 	struct asix_common_private *priv = dev->driver_priv;
 
-	if (priv && priv->suspend)
+	if (priv->suspend)
 		priv->suspend(dev);
 
 	return usbnet_suspend(intf, message);
@@ -676,7 +676,7 @@ static int asix_resume(struct usb_interface *intf)
 	struct usbnet *dev = usb_get_intfdata(intf);
 	struct asix_common_private *priv = dev->driver_priv;
 
-	if (priv && priv->resume)
+	if (priv->resume)
 		priv->resume(dev);
 
 	return usbnet_resume(intf);
@@ -1231,10 +1231,6 @@ static const struct usb_device_id	products [] = {
 	USB_DEVICE (0x08dd, 0x90ff),
 	.driver_info =  (unsigned long) &ax8817x_info,
 }, {
-	// Billionton Systems, GUSB2AM-1G-B
-	USB_DEVICE(0x08dd, 0x0114),
-	.driver_info =  (unsigned long) &ax88178_info,
-}, {
 	// ATEN UC210T
 	USB_DEVICE (0x0557, 0x2009),
 	.driver_info =  (unsigned long) &ax8817x_info,
@@ -1369,7 +1365,6 @@ static struct usb_driver asix_driver = {
 	.probe =	usbnet_probe,
 	.suspend =	asix_suspend,
 	.resume =	asix_resume,
-	.reset_resume =	asix_resume,
 	.disconnect =	usbnet_disconnect,
 	.supports_autosuspend = 1,
 	.disable_hub_initiated_lpm = 1,

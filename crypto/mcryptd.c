@@ -41,7 +41,7 @@ struct mcryptd_flush_list {
 static struct mcryptd_flush_list __percpu *mcryptd_flist;
 
 struct hashd_instance_ctx {
-	struct crypto_ahash_spawn spawn;
+	struct crypto_shash_spawn spawn;
 	struct mcryptd_queue *queue;
 };
 
@@ -80,7 +80,6 @@ static int mcryptd_init_queue(struct mcryptd_queue *queue,
 		pr_debug("cpu_queue #%d %p\n", cpu, queue->cpu_queue);
 		crypto_init_queue(&cpu_queue->queue, max_cpu_qlen);
 		INIT_WORK(&cpu_queue->work, mcryptd_queue_worker);
-		spin_lock_init(&cpu_queue->q_lock);
 	}
 	return 0;
 }
@@ -104,16 +103,15 @@ static int mcryptd_enqueue_request(struct mcryptd_queue *queue,
 	int cpu, err;
 	struct mcryptd_cpu_queue *cpu_queue;
 
-	cpu_queue = raw_cpu_ptr(queue->cpu_queue);
-	spin_lock(&cpu_queue->q_lock);
-	cpu = smp_processor_id();
-	rctx->tag.cpu = smp_processor_id();
+	cpu = get_cpu();
+	cpu_queue = this_cpu_ptr(queue->cpu_queue);
+	rctx->tag.cpu = cpu;
 
 	err = crypto_enqueue_request(&cpu_queue->queue, request);
 	pr_debug("enqueue request: cpu %d cpu_queue %p request %p\n",
 		 cpu, cpu_queue, request);
-	spin_unlock(&cpu_queue->q_lock);
 	queue_work_on(cpu, kcrypto_wq, &cpu_queue->work);
+	put_cpu();
 
 	return err;
 }
@@ -130,9 +128,13 @@ static void mcryptd_opportunistic_flush(void)
 	flist = per_cpu_ptr(mcryptd_flist, smp_processor_id());
 	while (single_task_running()) {
 		mutex_lock(&flist->lock);
-		cstate = list_first_entry_or_null(&flist->list,
+		if (list_empty(&flist->list)) {
+			mutex_unlock(&flist->lock);
+			return;
+		}
+		cstate = list_entry(flist->list.next,
 				struct mcryptd_alg_cstate, flush_list);
-		if (!cstate || !cstate->flusher_engaged) {
+		if (!cstate->flusher_engaged) {
 			mutex_unlock(&flist->lock);
 			return;
 		}
@@ -162,11 +164,16 @@ static void mcryptd_queue_worker(struct work_struct *work)
 	cpu_queue = container_of(work, struct mcryptd_cpu_queue, work);
 	i = 0;
 	while (i < MCRYPTD_BATCH || single_task_running()) {
-
-		spin_lock_bh(&cpu_queue->q_lock);
+		/*
+		 * preempt_disable/enable is used to prevent
+		 * being preempted by mcryptd_enqueue_request()
+		 */
+		local_bh_disable();
+		preempt_disable();
 		backlog = crypto_get_backlog(&cpu_queue->queue);
 		req = crypto_dequeue_request(&cpu_queue->queue);
-		spin_unlock_bh(&cpu_queue->q_lock);
+		preempt_enable();
+		local_bh_enable();
 
 		if (!req) {
 			mcryptd_opportunistic_flush();
@@ -181,7 +188,7 @@ static void mcryptd_queue_worker(struct work_struct *work)
 		++i;
 	}
 	if (cpu_queue->queue.qlen)
-		queue_work_on(smp_processor_id(), kcrypto_wq, &cpu_queue->work);
+		queue_work(kcrypto_wq, &cpu_queue->work);
 }
 
 void mcryptd_flusher(struct work_struct *__work)
@@ -251,40 +258,36 @@ out_free_inst:
 	goto out;
 }
 
-static inline bool mcryptd_check_internal(struct rtattr **tb, u32 *type,
+static inline void mcryptd_check_internal(struct rtattr **tb, u32 *type,
 					  u32 *mask)
 {
 	struct crypto_attr_type *algt;
 
 	algt = crypto_get_attr_type(tb);
 	if (IS_ERR(algt))
-		return false;
-
-	*type |= algt->type & CRYPTO_ALG_INTERNAL;
-	*mask |= algt->mask & CRYPTO_ALG_INTERNAL;
-
-	if (*type & *mask & CRYPTO_ALG_INTERNAL)
-		return true;
-	else
-		return false;
+		return;
+	if ((algt->type & CRYPTO_ALG_INTERNAL))
+		*type |= CRYPTO_ALG_INTERNAL;
+	if ((algt->mask & CRYPTO_ALG_INTERNAL))
+		*mask |= CRYPTO_ALG_INTERNAL;
 }
 
 static int mcryptd_hash_init_tfm(struct crypto_tfm *tfm)
 {
 	struct crypto_instance *inst = crypto_tfm_alg_instance(tfm);
 	struct hashd_instance_ctx *ictx = crypto_instance_ctx(inst);
-	struct crypto_ahash_spawn *spawn = &ictx->spawn;
+	struct crypto_shash_spawn *spawn = &ictx->spawn;
 	struct mcryptd_hash_ctx *ctx = crypto_tfm_ctx(tfm);
-	struct crypto_ahash *hash;
+	struct crypto_shash *hash;
 
-	hash = crypto_spawn_ahash(spawn);
+	hash = crypto_spawn_shash(spawn);
 	if (IS_ERR(hash))
 		return PTR_ERR(hash);
 
 	ctx->child = hash;
 	crypto_ahash_set_reqsize(__crypto_ahash_cast(tfm),
 				 sizeof(struct mcryptd_hash_request_ctx) +
-				 crypto_ahash_reqsize(hash));
+				 crypto_shash_descsize(hash));
 	return 0;
 }
 
@@ -292,21 +295,21 @@ static void mcryptd_hash_exit_tfm(struct crypto_tfm *tfm)
 {
 	struct mcryptd_hash_ctx *ctx = crypto_tfm_ctx(tfm);
 
-	crypto_free_ahash(ctx->child);
+	crypto_free_shash(ctx->child);
 }
 
 static int mcryptd_hash_setkey(struct crypto_ahash *parent,
 				   const u8 *key, unsigned int keylen)
 {
 	struct mcryptd_hash_ctx *ctx   = crypto_ahash_ctx(parent);
-	struct crypto_ahash *child = ctx->child;
+	struct crypto_shash *child = ctx->child;
 	int err;
 
-	crypto_ahash_clear_flags(child, CRYPTO_TFM_REQ_MASK);
-	crypto_ahash_set_flags(child, crypto_ahash_get_flags(parent) &
+	crypto_shash_clear_flags(child, CRYPTO_TFM_REQ_MASK);
+	crypto_shash_set_flags(child, crypto_ahash_get_flags(parent) &
 				      CRYPTO_TFM_REQ_MASK);
-	err = crypto_ahash_setkey(child, key, keylen);
-	crypto_ahash_set_flags(parent, crypto_ahash_get_flags(child) &
+	err = crypto_shash_setkey(child, key, keylen);
+	crypto_ahash_set_flags(parent, crypto_shash_get_flags(child) &
 				       CRYPTO_TFM_RES_MASK);
 	return err;
 }
@@ -332,20 +335,20 @@ static int mcryptd_hash_enqueue(struct ahash_request *req,
 static void mcryptd_hash_init(struct crypto_async_request *req_async, int err)
 {
 	struct mcryptd_hash_ctx *ctx = crypto_tfm_ctx(req_async->tfm);
-	struct crypto_ahash *child = ctx->child;
+	struct crypto_shash *child = ctx->child;
 	struct ahash_request *req = ahash_request_cast(req_async);
 	struct mcryptd_hash_request_ctx *rctx = ahash_request_ctx(req);
-	struct ahash_request *desc = &rctx->areq;
+	struct shash_desc *desc = &rctx->desc;
 
 	if (unlikely(err == -EINPROGRESS))
 		goto out;
 
-	ahash_request_set_tfm(desc, child);
-	ahash_request_set_callback(desc, CRYPTO_TFM_REQ_MAY_SLEEP,
-						rctx->complete, req_async);
+	desc->tfm = child;
+	desc->flags = CRYPTO_TFM_REQ_MAY_SLEEP;
 
-	rctx->out = req->result;
-	err = crypto_ahash_init(desc);
+	err = crypto_shash_init(desc);
+
+	req->base.complete = rctx->complete;
 
 out:
 	local_bh_disable();
@@ -366,8 +369,7 @@ static void mcryptd_hash_update(struct crypto_async_request *req_async, int err)
 	if (unlikely(err == -EINPROGRESS))
 		goto out;
 
-	rctx->out = req->result;
-	err = ahash_mcryptd_update(&rctx->areq);
+	err = shash_ahash_mcryptd_update(req, &rctx->desc);
 	if (err) {
 		req->base.complete = rctx->complete;
 		goto out;
@@ -393,8 +395,7 @@ static void mcryptd_hash_final(struct crypto_async_request *req_async, int err)
 	if (unlikely(err == -EINPROGRESS))
 		goto out;
 
-	rctx->out = req->result;
-	err = ahash_mcryptd_final(&rctx->areq);
+	err = shash_ahash_mcryptd_final(req, &rctx->desc);
 	if (err) {
 		req->base.complete = rctx->complete;
 		goto out;
@@ -419,8 +420,8 @@ static void mcryptd_hash_finup(struct crypto_async_request *req_async, int err)
 
 	if (unlikely(err == -EINPROGRESS))
 		goto out;
-	rctx->out = req->result;
-	err = ahash_mcryptd_finup(&rctx->areq);
+
+	err = shash_ahash_mcryptd_finup(req, &rctx->desc);
 
 	if (err) {
 		req->base.complete = rctx->complete;
@@ -442,21 +443,25 @@ static int mcryptd_hash_finup_enqueue(struct ahash_request *req)
 static void mcryptd_hash_digest(struct crypto_async_request *req_async, int err)
 {
 	struct mcryptd_hash_ctx *ctx = crypto_tfm_ctx(req_async->tfm);
-	struct crypto_ahash *child = ctx->child;
+	struct crypto_shash *child = ctx->child;
 	struct ahash_request *req = ahash_request_cast(req_async);
 	struct mcryptd_hash_request_ctx *rctx = ahash_request_ctx(req);
-	struct ahash_request *desc = &rctx->areq;
+	struct shash_desc *desc = &rctx->desc;
 
 	if (unlikely(err == -EINPROGRESS))
 		goto out;
 
-	ahash_request_set_tfm(desc, child);
-	ahash_request_set_callback(desc, CRYPTO_TFM_REQ_MAY_SLEEP,
-						rctx->complete, req_async);
+	desc->tfm = child;
+	desc->flags = CRYPTO_TFM_REQ_MAY_SLEEP;  /* check this again */
 
-	rctx->out = req->result;
-	err = ahash_mcryptd_digest(desc);
+	err = shash_ahash_mcryptd_digest(req, desc);
 
+	if (err) {
+		req->base.complete = rctx->complete;
+		goto out;
+	}
+
+	return;
 out:
 	local_bh_disable();
 	rctx->complete(&req->base, err);
@@ -472,14 +477,14 @@ static int mcryptd_hash_export(struct ahash_request *req, void *out)
 {
 	struct mcryptd_hash_request_ctx *rctx = ahash_request_ctx(req);
 
-	return crypto_ahash_export(&rctx->areq, out);
+	return crypto_shash_export(&rctx->desc, out);
 }
 
 static int mcryptd_hash_import(struct ahash_request *req, const void *in)
 {
 	struct mcryptd_hash_request_ctx *rctx = ahash_request_ctx(req);
 
-	return crypto_ahash_import(&rctx->areq, in);
+	return crypto_shash_import(&rctx->desc, in);
 }
 
 static int mcryptd_create_hash(struct crypto_template *tmpl, struct rtattr **tb,
@@ -487,20 +492,19 @@ static int mcryptd_create_hash(struct crypto_template *tmpl, struct rtattr **tb,
 {
 	struct hashd_instance_ctx *ctx;
 	struct ahash_instance *inst;
-	struct hash_alg_common *halg;
+	struct shash_alg *salg;
 	struct crypto_alg *alg;
 	u32 type = 0;
 	u32 mask = 0;
 	int err;
 
-	if (!mcryptd_check_internal(tb, &type, &mask))
-		return -EINVAL;
+	mcryptd_check_internal(tb, &type, &mask);
 
-	halg = ahash_attr_alg(tb[1], type, mask);
-	if (IS_ERR(halg))
-		return PTR_ERR(halg);
+	salg = shash_attr_alg(tb[1], type, mask);
+	if (IS_ERR(salg))
+		return PTR_ERR(salg);
 
-	alg = &halg->base;
+	alg = &salg->base;
 	pr_debug("crypto: mcryptd hash alg: %s\n", alg->cra_name);
 	inst = mcryptd_alloc_instance(alg, ahash_instance_headroom(),
 					sizeof(*ctx));
@@ -511,17 +515,17 @@ static int mcryptd_create_hash(struct crypto_template *tmpl, struct rtattr **tb,
 	ctx = ahash_instance_ctx(inst);
 	ctx->queue = queue;
 
-	err = crypto_init_ahash_spawn(&ctx->spawn, halg,
+	err = crypto_init_shash_spawn(&ctx->spawn, salg,
 				      ahash_crypto_instance(inst));
 	if (err)
 		goto out_free_inst;
 
-	inst->alg.halg.base.cra_flags = CRYPTO_ALG_ASYNC |
-		(alg->cra_flags & (CRYPTO_ALG_INTERNAL |
-				   CRYPTO_ALG_OPTIONAL_KEY));
+	type = CRYPTO_ALG_ASYNC;
+	if (alg->cra_flags & CRYPTO_ALG_INTERNAL)
+		type |= CRYPTO_ALG_INTERNAL;
+	inst->alg.halg.base.cra_flags = type;
 
-	inst->alg.halg.digestsize = halg->digestsize;
-	inst->alg.halg.statesize = halg->statesize;
+	inst->alg.halg.digestsize = salg->digestsize;
 	inst->alg.halg.base.cra_ctxsize = sizeof(struct mcryptd_hash_ctx);
 
 	inst->alg.halg.base.cra_init = mcryptd_hash_init_tfm;
@@ -533,13 +537,12 @@ static int mcryptd_create_hash(struct crypto_template *tmpl, struct rtattr **tb,
 	inst->alg.finup  = mcryptd_hash_finup_enqueue;
 	inst->alg.export = mcryptd_hash_export;
 	inst->alg.import = mcryptd_hash_import;
-	if (crypto_hash_alg_has_setkey(halg))
-		inst->alg.setkey = mcryptd_hash_setkey;
+	inst->alg.setkey = mcryptd_hash_setkey;
 	inst->alg.digest = mcryptd_hash_digest_enqueue;
 
 	err = ahash_register_instance(tmpl, inst);
 	if (err) {
-		crypto_drop_ahash(&ctx->spawn);
+		crypto_drop_shash(&ctx->spawn);
 out_free_inst:
 		kfree(inst);
 	}
@@ -575,7 +578,7 @@ static void mcryptd_free(struct crypto_instance *inst)
 
 	switch (inst->alg.cra_flags & CRYPTO_ALG_TYPE_MASK) {
 	case CRYPTO_ALG_TYPE_AHASH:
-		crypto_drop_ahash(&hctx->spawn);
+		crypto_drop_shash(&hctx->spawn);
 		kfree(ahash_instance(inst));
 		return;
 	default:
@@ -612,33 +615,55 @@ struct mcryptd_ahash *mcryptd_alloc_ahash(const char *alg_name,
 }
 EXPORT_SYMBOL_GPL(mcryptd_alloc_ahash);
 
-int ahash_mcryptd_digest(struct ahash_request *desc)
+int shash_ahash_mcryptd_digest(struct ahash_request *req,
+			       struct shash_desc *desc)
 {
-	return crypto_ahash_init(desc) ?: ahash_mcryptd_finup(desc);
-}
+	int err;
 
-int ahash_mcryptd_update(struct ahash_request *desc)
+	err = crypto_shash_init(desc) ?:
+	      shash_ahash_mcryptd_finup(req, desc);
+
+	return err;
+}
+EXPORT_SYMBOL_GPL(shash_ahash_mcryptd_digest);
+
+int shash_ahash_mcryptd_update(struct ahash_request *req,
+			       struct shash_desc *desc)
 {
+	struct crypto_shash *tfm = desc->tfm;
+	struct shash_alg *shash = crypto_shash_alg(tfm);
+
 	/* alignment is to be done by multi-buffer crypto algorithm if needed */
 
-	return crypto_ahash_update(desc);
+	return shash->update(desc, NULL, 0);
 }
+EXPORT_SYMBOL_GPL(shash_ahash_mcryptd_update);
 
-int ahash_mcryptd_finup(struct ahash_request *desc)
+int shash_ahash_mcryptd_finup(struct ahash_request *req,
+			      struct shash_desc *desc)
 {
+	struct crypto_shash *tfm = desc->tfm;
+	struct shash_alg *shash = crypto_shash_alg(tfm);
+
 	/* alignment is to be done by multi-buffer crypto algorithm if needed */
 
-	return crypto_ahash_finup(desc);
+	return shash->finup(desc, NULL, 0, req->result);
 }
+EXPORT_SYMBOL_GPL(shash_ahash_mcryptd_finup);
 
-int ahash_mcryptd_final(struct ahash_request *desc)
+int shash_ahash_mcryptd_final(struct ahash_request *req,
+			      struct shash_desc *desc)
 {
+	struct crypto_shash *tfm = desc->tfm;
+	struct shash_alg *shash = crypto_shash_alg(tfm);
+
 	/* alignment is to be done by multi-buffer crypto algorithm if needed */
 
-	return crypto_ahash_final(desc);
+	return shash->final(desc, req->result);
 }
+EXPORT_SYMBOL_GPL(shash_ahash_mcryptd_final);
 
-struct crypto_ahash *mcryptd_ahash_child(struct mcryptd_ahash *tfm)
+struct crypto_shash *mcryptd_ahash_child(struct mcryptd_ahash *tfm)
 {
 	struct mcryptd_hash_ctx *ctx = crypto_ahash_ctx(&tfm->base);
 
@@ -646,18 +671,19 @@ struct crypto_ahash *mcryptd_ahash_child(struct mcryptd_ahash *tfm)
 }
 EXPORT_SYMBOL_GPL(mcryptd_ahash_child);
 
-struct ahash_request *mcryptd_ahash_desc(struct ahash_request *req)
+struct shash_desc *mcryptd_shash_desc(struct ahash_request *req)
 {
 	struct mcryptd_hash_request_ctx *rctx = ahash_request_ctx(req);
-	return &rctx->areq;
+	return &rctx->desc;
 }
-EXPORT_SYMBOL_GPL(mcryptd_ahash_desc);
+EXPORT_SYMBOL_GPL(mcryptd_shash_desc);
 
 void mcryptd_free_ahash(struct mcryptd_ahash *tfm)
 {
 	crypto_free_ahash(&tfm->base);
 }
 EXPORT_SYMBOL_GPL(mcryptd_free_ahash);
+
 
 static int __init mcryptd_init(void)
 {

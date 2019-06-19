@@ -593,6 +593,7 @@ static int f_audio_set_alt(struct usb_function *f, unsigned intf, unsigned alt)
 				return err;
 
 			usb_ep_enable(out_ep);
+			out_ep->driver_data = audio;
 			audio->copy_buf = f_audio_buffer_alloc(audio_buf_size);
 			if (IS_ERR(audio->copy_buf))
 				return -ENOMEM;
@@ -717,18 +718,20 @@ f_audio_bind(struct usb_configuration *c, struct usb_function *f)
 		goto fail;
 	audio->out_ep = ep;
 	audio->out_ep->desc = &as_out_ep_desc;
+	ep->driver_data = cdev;	/* claim */
 
 	status = -ENOMEM;
 
 	/* copy descriptors, and track endpoint copies */
-	status = usb_assign_descriptors(f, f_audio_desc, f_audio_desc, NULL,
-					NULL);
+	status = usb_assign_descriptors(f, f_audio_desc, f_audio_desc, NULL);
 	if (status)
 		goto fail;
 	return 0;
 
 fail:
 	gaudio_cleanup(&audio->card);
+	if (ep)
+		ep->driver_data = NULL;
 	return status;
 }
 
@@ -770,6 +773,9 @@ static inline struct f_uac1_opts *to_f_uac1_opts(struct config_item *item)
 			    func_inst.group);
 }
 
+CONFIGFS_ATTR_STRUCT(f_uac1_opts);
+CONFIGFS_ATTR_OPS(f_uac1_opts);
+
 static void f_uac1_attr_release(struct config_item *item)
 {
 	struct f_uac1_opts *opts = to_f_uac1_opts(item);
@@ -779,13 +785,14 @@ static void f_uac1_attr_release(struct config_item *item)
 
 static struct configfs_item_operations f_uac1_item_ops = {
 	.release	= f_uac1_attr_release,
+	.show_attribute	= f_uac1_opts_attr_show,
+	.store_attribute = f_uac1_opts_attr_store,
 };
 
 #define UAC1_INT_ATTRIBUTE(name)					\
-static ssize_t f_uac1_opts_##name##_show(struct config_item *item,	\
+static ssize_t f_uac1_opts_##name##_show(struct f_uac1_opts *opts,	\
 					 char *page)			\
 {									\
-	struct f_uac1_opts *opts = to_f_uac1_opts(item);		\
 	int result;							\
 									\
 	mutex_lock(&opts->lock);					\
@@ -795,10 +802,9 @@ static ssize_t f_uac1_opts_##name##_show(struct config_item *item,	\
 	return result;							\
 }									\
 									\
-static ssize_t f_uac1_opts_##name##_store(struct config_item *item,		\
+static ssize_t f_uac1_opts_##name##_store(struct f_uac1_opts *opts,	\
 					  const char *page, size_t len)	\
 {									\
-	struct f_uac1_opts *opts = to_f_uac1_opts(item);		\
 	int ret;							\
 	u32 num;							\
 									\
@@ -820,17 +826,19 @@ end:									\
 	return ret;							\
 }									\
 									\
-CONFIGFS_ATTR(f_uac1_opts_, name)
+static struct f_uac1_opts_attribute f_uac1_opts_##name =		\
+	__CONFIGFS_ATTR(name, S_IRUGO | S_IWUSR,			\
+			f_uac1_opts_##name##_show,			\
+			f_uac1_opts_##name##_store)
 
 UAC1_INT_ATTRIBUTE(req_buf_size);
 UAC1_INT_ATTRIBUTE(req_count);
 UAC1_INT_ATTRIBUTE(audio_buf_size);
 
 #define UAC1_STR_ATTRIBUTE(name)					\
-static ssize_t f_uac1_opts_##name##_show(struct config_item *item,	\
+static ssize_t f_uac1_opts_##name##_show(struct f_uac1_opts *opts,	\
 					 char *page)			\
 {									\
-	struct f_uac1_opts *opts = to_f_uac1_opts(item);		\
 	int result;							\
 									\
 	mutex_lock(&opts->lock);					\
@@ -840,10 +848,9 @@ static ssize_t f_uac1_opts_##name##_show(struct config_item *item,	\
 	return result;							\
 }									\
 									\
-static ssize_t f_uac1_opts_##name##_store(struct config_item *item,	\
+static ssize_t f_uac1_opts_##name##_store(struct f_uac1_opts *opts,	\
 					  const char *page, size_t len)	\
 {									\
-	struct f_uac1_opts *opts = to_f_uac1_opts(item);		\
 	int ret = -EBUSY;						\
 	char *tmp;							\
 									\
@@ -867,19 +874,22 @@ end:									\
 	return ret;							\
 }									\
 									\
-CONFIGFS_ATTR(f_uac1_opts_, name)
+static struct f_uac1_opts_attribute f_uac1_opts_##name =		\
+	__CONFIGFS_ATTR(name, S_IRUGO | S_IWUSR,			\
+			f_uac1_opts_##name##_show,			\
+			f_uac1_opts_##name##_store)
 
 UAC1_STR_ATTRIBUTE(fn_play);
 UAC1_STR_ATTRIBUTE(fn_cap);
 UAC1_STR_ATTRIBUTE(fn_cntl);
 
 static struct configfs_attribute *f_uac1_attrs[] = {
-	&f_uac1_opts_attr_req_buf_size,
-	&f_uac1_opts_attr_req_count,
-	&f_uac1_opts_attr_audio_buf_size,
-	&f_uac1_opts_attr_fn_play,
-	&f_uac1_opts_attr_fn_cap,
-	&f_uac1_opts_attr_fn_cntl,
+	&f_uac1_opts_req_buf_size.attr,
+	&f_uac1_opts_req_count.attr,
+	&f_uac1_opts_audio_buf_size.attr,
+	&f_uac1_opts_fn_play.attr,
+	&f_uac1_opts_fn_cap.attr,
+	&f_uac1_opts_fn_cntl.attr,
 	NULL,
 };
 

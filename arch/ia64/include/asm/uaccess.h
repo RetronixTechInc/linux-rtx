@@ -241,16 +241,12 @@ extern unsigned long __must_check __copy_user (void __user *to, const void __use
 static inline unsigned long
 __copy_to_user (void __user *to, const void *from, unsigned long count)
 {
-	check_object_size(from, count, true);
-
 	return __copy_user(to, (__force void __user *) from, count);
 }
 
 static inline unsigned long
 __copy_from_user (void *to, const void __user *from, unsigned long count)
 {
-	check_object_size(to, count, false);
-
 	return __copy_user((__force void __user *) to, from, count);
 }
 
@@ -262,23 +258,22 @@ __copy_from_user (void *to, const void __user *from, unsigned long count)
 	const void *__cu_from = (from);							\
 	long __cu_len = (n);								\
 											\
-	if (__access_ok(__cu_to, __cu_len, get_fs())) {					\
-		check_object_size(__cu_from, __cu_len, true);			\
-		__cu_len = __copy_user(__cu_to, (__force void __user *)  __cu_from, __cu_len);	\
-	}										\
+	if (__access_ok(__cu_to, __cu_len, get_fs()))					\
+		__cu_len = __copy_user(__cu_to, (__force void __user *) __cu_from, __cu_len);	\
 	__cu_len;									\
 })
 
-static inline unsigned long
-copy_from_user(void *to, const void __user *from, unsigned long n)
-{
-	check_object_size(to, n, false);
-	if (likely(__access_ok(from, n, get_fs())))
-		n = __copy_user((__force void __user *) to, from, n);
-	else
-		memset(to, 0, n);
-	return n;
-}
+#define copy_from_user(to, from, n)							\
+({											\
+	void *__cu_to = (to);								\
+	const void __user *__cu_from = (from);						\
+	long __cu_len = (n);								\
+											\
+	__chk_user_ptr(__cu_from);							\
+	if (__access_ok(__cu_from, __cu_len, get_fs()))					\
+		__cu_len = __copy_user((__force void __user *) __cu_to, __cu_from, __cu_len);	\
+	__cu_len;									\
+})
 
 #define __copy_in_user(to, from, size)	__copy_user((to), (from), (size))
 
@@ -346,11 +341,13 @@ extern unsigned long __strnlen_user (const char __user *, long);
 	__su_ret;						\
 })
 
-#define ARCH_HAS_RELATIVE_EXTABLE
+/* Generic code can't deal with the location-relative format that we use for compactness.  */
+#define ARCH_HAS_SORT_EXTABLE
+#define ARCH_HAS_SEARCH_EXTABLE
 
 struct exception_table_entry {
-	int insn;	/* location-relative address of insn this fixup is for */
-	int fixup;	/* location-relative continuation addr.; if bit 2 is set, r9 is set to 0 */
+	int addr;	/* location-relative address of insn this fixup is for */
+	int cont;	/* location-relative continuation addr.; if bit 2 is set, r9 is set to 0 */
 };
 
 extern void ia64_handle_exception (struct pt_regs *regs, const struct exception_table_entry *e);

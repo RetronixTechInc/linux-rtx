@@ -13,13 +13,6 @@
 #include <stdlib.h>
 #include <unistd.h>
 
-/* define kselftest exit codes */
-#define KSFT_PASS  0
-#define KSFT_FAIL  1
-#define KSFT_XFAIL 2
-#define KSFT_XPASS 3
-#define KSFT_SKIP  4
-
 /* counters */
 struct ksft_count {
 	unsigned int ksft_pass;
@@ -47,23 +40,23 @@ static inline void ksft_print_cnts(void)
 
 static inline int ksft_exit_pass(void)
 {
-	exit(KSFT_PASS);
+	exit(0);
 }
 static inline int ksft_exit_fail(void)
 {
-	exit(KSFT_FAIL);
+	exit(1);
 }
 static inline int ksft_exit_xfail(void)
 {
-	exit(KSFT_XFAIL);
+	exit(2);
 }
 static inline int ksft_exit_xpass(void)
 {
-	exit(KSFT_XPASS);
+	exit(3);
 }
 static inline int ksft_exit_skip(void)
 {
-	exit(KSFT_SKIP);
+	exit(4);
 }
 
 #endif /* __KSELFTEST_H */

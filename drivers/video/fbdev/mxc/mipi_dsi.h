@@ -1,6 +1,5 @@
 /*
- * Copyright (C) 2011-2016 Freescale Semiconductor, Inc. All Rights Reserved.
- * Copyright 2017 NXP.
+ * Copyright (C) 2011-2015 Freescale Semiconductor, Inc. All Rights Reserved.
  */
 
 /*
@@ -24,10 +23,6 @@
 #endif
 
 #define	DSI_CMD_BUF_MAXSIZE         (128)
-
-#define DSI_NON_BURST_WITH_SYNC_PULSE  0
-#define DSI_NON_BURST_WITH_SYNC_EVENT  1
-#define DSI_BURST_MODE                 2
 
 /* DPI interface pixel color coding map */
 enum mipi_dsi_dpi_fmt {
@@ -75,8 +70,6 @@ struct mipi_dsi_info {
 	const struct mipi_dsi_bus_mux	*bus_mux;
 	int				dsi_power_on;
 	int				lcd_inited;
-	int				encoder;
-	int				traffic_mode;
 	u32				dphy_pll_config;
 	int				dev_id;
 	int				disp_id;
@@ -84,7 +77,6 @@ struct mipi_dsi_info {
 	int				irq;
 	struct clk			*dphy_clk;
 	struct clk			*cfg_clk;
-	struct clk			*esc_clk;
 	struct mxc_dispdrv_handle	*disp_mipi;
 	struct  fb_videomode		*mode;
 	struct regulator		*disp_power_on;

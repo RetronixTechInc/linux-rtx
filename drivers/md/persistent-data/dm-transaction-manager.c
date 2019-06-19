@@ -342,9 +342,9 @@ int dm_tm_read_lock(struct dm_transaction_manager *tm, dm_block_t b,
 }
 EXPORT_SYMBOL_GPL(dm_tm_read_lock);
 
-void dm_tm_unlock(struct dm_transaction_manager *tm, struct dm_block *b)
+int dm_tm_unlock(struct dm_transaction_manager *tm, struct dm_block *b)
 {
-	dm_bm_unlock(b);
+	return dm_bm_unlock(b);
 }
 EXPORT_SYMBOL_GPL(dm_tm_unlock);
 

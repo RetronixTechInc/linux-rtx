@@ -58,7 +58,6 @@
 			regulator-min-microvolt = <3300000>;
 			regulator-max-microvolt = <3300000>;
 			gpio = <&gpio2 11 GPIO_ACTIVE_LOW>;
-			off-on-delay = <20000>;
 		};
 
 		reg_usb_otg1_vbus: usb_otg1_vbus {
@@ -134,17 +133,9 @@
 		792000  1175000
 		396000  1175000
 	>;
+	arm-supply = <&sw1a_reg>;
+	soc-supply = <&sw1a_reg>;
 	fsl,arm-soc-shared = <1>;
-};
-
-&reg_arm {
-	vin-supply = <&sw1a_reg>;
-	regulator-allow-bypass;
-};
-
-&reg_soc {
-	vin-supply = <&sw1a_reg>;
-	regulator-allow-bypass;
 };
 
 &ecspi4 {
@@ -389,10 +380,10 @@
 	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl_lcdif_dat_0
 		     &pinctrl_lcdif_ctrl_0>;
-	display = <&display0>;
+	display = <&display>;
 	status = "okay";
 
-	display0: display@0 {
+	display: display {
 		bits-per-pixel = <16>;
 		bus-width = <24>;
 
@@ -556,7 +547,7 @@
 &wdog1 {
 	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl_wdog>;
-	fsl,ext-reset-output;
+	fsl,wdog_b;
 };
 
 &iomuxc {

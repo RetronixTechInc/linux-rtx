@@ -91,8 +91,7 @@ static inline void set_fs(mm_segment_t s)
  * @addr: User space pointer to start of block to check
  * @size: Size of block to check
  *
- * Context: User context only. This function may sleep if pagefaults are
- *          enabled.
+ * Context: User context only.  This function may sleep.
  *
  * Checks if a pointer to a block of memory in user space is valid.
  *
@@ -156,8 +155,7 @@ extern int fixup_exception(struct pt_regs *regs);
  * @x:   Variable to store result.
  * @ptr: Source address, in user space.
  *
- * Context: User context only. This function may sleep if pagefaults are
- *          enabled.
+ * Context: User context only.  This function may sleep.
  *
  * This macro copies a single simple variable from user space to kernel
  * space.  It supports simple types like char and int, but not larger
@@ -177,8 +175,7 @@ extern int fixup_exception(struct pt_regs *regs);
  * @x:   Value to copy to user space.
  * @ptr: Destination address, in user space.
  *
- * Context: User context only. This function may sleep if pagefaults are
- *          enabled.
+ * Context: User context only.  This function may sleep.
  *
  * This macro copies a single simple value from kernel space to user
  * space.  It supports simple types like char and int, but not larger
@@ -197,8 +194,7 @@ extern int fixup_exception(struct pt_regs *regs);
  * @x:   Variable to store result.
  * @ptr: Source address, in user space.
  *
- * Context: User context only. This function may sleep if pagefaults are
- *          enabled.
+ * Context: User context only.  This function may sleep.
  *
  * This macro copies a single simple variable from user space to kernel
  * space.  It supports simple types like char and int, but not larger
@@ -219,7 +215,7 @@ extern int fixup_exception(struct pt_regs *regs);
 #define __get_user_nocheck(x, ptr, size)				\
 ({									\
 	long __gu_err = 0;						\
-	unsigned long __gu_val = 0;					\
+	unsigned long __gu_val;						\
 	might_fault();							\
 	__get_user_size(__gu_val, (ptr), (size), __gu_err);		\
 	(x) = (__force __typeof__(*(ptr)))__gu_val;			\
@@ -278,8 +274,7 @@ do {									\
  * @x:   Value to copy to user space.
  * @ptr: Destination address, in user space.
  *
- * Context: User context only. This function may sleep if pagefaults are
- *          enabled.
+ * Context: User context only.  This function may sleep.
  *
  * This macro copies a single simple value from kernel space to user
  * space.  It supports simple types like char and int, but not larger
@@ -573,8 +568,7 @@ unsigned long __generic_copy_from_user(void *, const void __user *, unsigned lon
  * @from: Source address, in kernel space.
  * @n:    Number of bytes to copy.
  *
- * Context: User context only. This function may sleep if pagefaults are
- *          enabled.
+ * Context: User context only.  This function may sleep.
  *
  * Copy data from kernel space to user space.  Caller must check
  * the specified block with access_ok() before calling this function.
@@ -594,8 +588,7 @@ unsigned long __generic_copy_from_user(void *, const void __user *, unsigned lon
  * @from: Source address, in kernel space.
  * @n:    Number of bytes to copy.
  *
- * Context: User context only. This function may sleep if pagefaults are
- *          enabled.
+ * Context: User context only.  This function may sleep.
  *
  * Copy data from kernel space to user space.
  *
@@ -613,8 +606,7 @@ unsigned long __generic_copy_from_user(void *, const void __user *, unsigned lon
  * @from: Source address, in user space.
  * @n:    Number of bytes to copy.
  *
- * Context: User context only. This function may sleep if pagefaults are
- *          enabled.
+ * Context: User context only.  This function may sleep.
  *
  * Copy data from user space to kernel space.  Caller must check
  * the specified block with access_ok() before calling this function.
@@ -634,8 +626,7 @@ unsigned long __generic_copy_from_user(void *, const void __user *, unsigned lon
  * @from: Source address, in user space.
  * @n:    Number of bytes to copy.
  *
- * Context: User context only. This function may sleep if pagefaults are
- *          enabled.
+ * Context: User context only.  This function may sleep.
  *
  * Copy data from user space to kernel space.
  *
@@ -686,8 +677,7 @@ unsigned long clear_user(void __user *mem, unsigned long len);
  * strlen_user: - Get the size of a string in user space.
  * @str: The string to measure.
  *
- * Context: User context only. This function may sleep if pagefaults are
- *          enabled.
+ * Context: User context only.  This function may sleep.
  *
  * Get the size of a NUL-terminated string in user space.
  *

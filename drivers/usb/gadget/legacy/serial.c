@@ -17,6 +17,7 @@
 #include <linux/tty_flip.h>
 
 #include "u_serial.h"
+#include "gadget_chips.h"
 
 
 /* Defines */
@@ -65,7 +66,7 @@ static struct usb_gadget_strings *dev_strings[] = {
 static struct usb_device_descriptor device_desc = {
 	.bLength =		USB_DT_DEVICE_SIZE,
 	.bDescriptorType =	USB_DT_DEVICE,
-	/* .bcdUSB = DYNAMIC */
+	.bcdUSB =		cpu_to_le16(0x0200),
 	/* .bDeviceClass = f(use_acm) */
 	.bDeviceSubClass =	0,
 	.bDeviceProtocol =	0,

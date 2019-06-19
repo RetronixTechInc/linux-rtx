@@ -52,9 +52,7 @@ struct tc1100_data {
 	u32 jogdial;
 };
 
-#ifdef CONFIG_PM
 static struct tc1100_data suspend_data;
-#endif
 
 /* --------------------------------------------------------------------------
 				Device Management
@@ -84,7 +82,7 @@ static int get_state(u32 *out, u8 instance)
 		tmp = 0;
 	}
 
-	if (result.length > 0)
+	if (result.length > 0 && result.pointer)
 		kfree(result.pointer);
 
 	switch (instance) {

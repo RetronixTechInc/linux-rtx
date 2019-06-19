@@ -156,17 +156,7 @@ static struct phy_driver dm91xx_driver[] = {
 	.read_status	= genphy_read_status,
 	.ack_interrupt	= dm9161_ack_interrupt,
 	.config_intr	= dm9161_config_intr,
-}, {
-	.phy_id		= 0x0181b8b0,
-	.name		= "Davicom DM9161B/C",
-	.phy_id_mask	= 0x0ffffff0,
-	.features	= PHY_BASIC_FEATURES,
-	.flags		= PHY_HAS_INTERRUPT,
-	.config_init	= dm9161_config_init,
-	.config_aneg	= dm9161_config_aneg,
-	.read_status	= genphy_read_status,
-	.ack_interrupt	= dm9161_ack_interrupt,
-	.config_intr	= dm9161_config_intr,
+	.driver		= { .owner = THIS_MODULE,},
 }, {
 	.phy_id		= 0x0181b8a0,
 	.name		= "Davicom DM9161A",
@@ -178,6 +168,7 @@ static struct phy_driver dm91xx_driver[] = {
 	.read_status	= genphy_read_status,
 	.ack_interrupt	= dm9161_ack_interrupt,
 	.config_intr	= dm9161_config_intr,
+	.driver		= { .owner = THIS_MODULE,},
 }, {
 	.phy_id		= 0x00181b80,
 	.name		= "Davicom DM9131",
@@ -188,13 +179,13 @@ static struct phy_driver dm91xx_driver[] = {
 	.read_status	= genphy_read_status,
 	.ack_interrupt	= dm9161_ack_interrupt,
 	.config_intr	= dm9161_config_intr,
+	.driver		= { .owner = THIS_MODULE,},
 } };
 
 module_phy_driver(dm91xx_driver);
 
 static struct mdio_device_id __maybe_unused davicom_tbl[] = {
 	{ 0x0181b880, 0x0ffffff0 },
-	{ 0x0181b8b0, 0x0ffffff0 },
 	{ 0x0181b8a0, 0x0ffffff0 },
 	{ 0x00181b80, 0x0ffffff0 },
 	{ }

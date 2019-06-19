@@ -5,23 +5,21 @@
 void ddk750_setDPMS(DPMS_t state)
 {
 	unsigned int value;
-
-	if (sm750_get_chip_type() == SM750LE) {
-		value = PEEK32(CRT_DISPLAY_CTRL) & ~CRT_DISPLAY_CTRL_DPMS_MASK;
-		value |= (state << CRT_DISPLAY_CTRL_DPMS_SHIFT);
-		POKE32(CRT_DISPLAY_CTRL, value);
-	} else {
+	if(getChipType() == SM750LE){
+		value = PEEK32(CRT_DISPLAY_CTRL);
+		POKE32(CRT_DISPLAY_CTRL,FIELD_VALUE(value,CRT_DISPLAY_CTRL,DPMS,state));
+	}else{
 		value = PEEK32(SYSTEM_CTRL);
-		value = (value & ~SYSTEM_CTRL_DPMS_MASK) | state;
+		value= FIELD_VALUE(value,SYSTEM_CTRL,DPMS,state);
 		POKE32(SYSTEM_CTRL, value);
 	}
 }
 
-static unsigned int getPowerMode(void)
+unsigned int getPowerMode(void)
 {
-	if (sm750_get_chip_type() == SM750LE)
+	if(getChipType() == SM750LE)
 		return 0;
-	return PEEK32(POWER_MODE_CTRL) & POWER_MODE_CTRL_MODE_MASK;
+    return (FIELD_GET(PEEK32(POWER_MODE_CTRL), POWER_MODE_CTRL, MODE));
 }
 
 
@@ -31,69 +29,76 @@ static unsigned int getPowerMode(void)
  */
 void setPowerMode(unsigned int powerMode)
 {
-	unsigned int control_value = 0;
+    unsigned int control_value = 0;
 
-	control_value = PEEK32(POWER_MODE_CTRL) & ~POWER_MODE_CTRL_MODE_MASK;
+    control_value = PEEK32(POWER_MODE_CTRL);
 
-	if (sm750_get_chip_type() == SM750LE)
+	if(getChipType() == SM750LE)
 		return;
 
-	switch (powerMode) {
-	case POWER_MODE_CTRL_MODE_MODE0:
-		control_value |= POWER_MODE_CTRL_MODE_MODE0;
-		break;
+    switch (powerMode)
+    {
+        case POWER_MODE_CTRL_MODE_MODE0:
+            control_value = FIELD_SET(control_value, POWER_MODE_CTRL, MODE, MODE0);
+            break;
 
-	case POWER_MODE_CTRL_MODE_MODE1:
-		control_value |= POWER_MODE_CTRL_MODE_MODE1;
-		break;
+        case POWER_MODE_CTRL_MODE_MODE1:
+            control_value = FIELD_SET(control_value, POWER_MODE_CTRL, MODE, MODE1);
+            break;
 
-	case POWER_MODE_CTRL_MODE_SLEEP:
-		control_value |= POWER_MODE_CTRL_MODE_SLEEP;
-		break;
+        case POWER_MODE_CTRL_MODE_SLEEP:
+            control_value = FIELD_SET(control_value, POWER_MODE_CTRL, MODE, SLEEP);
+            break;
 
-	default:
-		break;
-	}
+        default:
+            break;
+    }
 
-	/* Set up other fields in Power Control Register */
-	if (powerMode == POWER_MODE_CTRL_MODE_SLEEP) {
-		control_value &= ~POWER_MODE_CTRL_OSC_INPUT;
+    /* Set up other fields in Power Control Register */
+    if (powerMode == POWER_MODE_CTRL_MODE_SLEEP)
+    {
+        control_value =
 #ifdef VALIDATION_CHIP
-		control_value &= ~POWER_MODE_CTRL_336CLK;
+            FIELD_SET(  control_value, POWER_MODE_CTRL, 336CLK, OFF) |
 #endif
-	} else {
-		control_value |= POWER_MODE_CTRL_OSC_INPUT;
+            FIELD_SET(  control_value, POWER_MODE_CTRL, OSC_INPUT,  OFF);
+    }
+    else
+    {
+        control_value =
 #ifdef VALIDATION_CHIP
-		control_value |= POWER_MODE_CTRL_336CLK;
+            FIELD_SET(  control_value, POWER_MODE_CTRL, 336CLK, ON) |
 #endif
-	}
+            FIELD_SET(  control_value, POWER_MODE_CTRL, OSC_INPUT,  ON);
+    }
 
-	/* Program new power mode. */
-	POKE32(POWER_MODE_CTRL, control_value);
+    /* Program new power mode. */
+    POKE32(POWER_MODE_CTRL, control_value);
 }
 
 void setCurrentGate(unsigned int gate)
 {
-	unsigned int gate_reg;
-	unsigned int mode;
+    unsigned int gate_reg;
+    unsigned int mode;
 
-	/* Get current power mode. */
-	mode = getPowerMode();
+    /* Get current power mode. */
+    mode = getPowerMode();
 
-	switch (mode) {
-	case POWER_MODE_CTRL_MODE_MODE0:
-		gate_reg = MODE0_GATE;
-		break;
+    switch (mode)
+    {
+        case POWER_MODE_CTRL_MODE_MODE0:
+            gate_reg = MODE0_GATE;
+            break;
 
-	case POWER_MODE_CTRL_MODE_MODE1:
-		gate_reg = MODE1_GATE;
-		break;
+        case POWER_MODE_CTRL_MODE_MODE1:
+            gate_reg = MODE1_GATE;
+            break;
 
-	default:
-		gate_reg = MODE0_GATE;
-		break;
-	}
-	POKE32(gate_reg, gate);
+        default:
+            gate_reg = MODE0_GATE;
+            break;
+    }
+    POKE32(gate_reg, gate);
 }
 
 
@@ -103,29 +108,81 @@ void setCurrentGate(unsigned int gate)
  */
 void enable2DEngine(unsigned int enable)
 {
-	u32 gate;
+    uint32_t gate;
 
-	gate = PEEK32(CURRENT_GATE);
-	if (enable)
-		gate |= (CURRENT_GATE_DE | CURRENT_GATE_CSC);
-	else
-		gate &= ~(CURRENT_GATE_DE | CURRENT_GATE_CSC);
+    gate = PEEK32(CURRENT_GATE);
+    if (enable)
+    {
+        gate = FIELD_SET(gate, CURRENT_GATE, DE,  ON);
+        gate = FIELD_SET(gate, CURRENT_GATE, CSC, ON);
+    }
+    else
+    {
+        gate = FIELD_SET(gate, CURRENT_GATE, DE,  OFF);
+        gate = FIELD_SET(gate, CURRENT_GATE, CSC, OFF);
+    }
 
-	setCurrentGate(gate);
+    setCurrentGate(gate);
+}
+
+
+/*
+ * This function enable/disable the ZV Port.
+ */
+void enableZVPort(unsigned int enable)
+{
+    uint32_t gate;
+
+    /* Enable ZV Port Gate */
+    gate = PEEK32(CURRENT_GATE);
+    if (enable)
+    {
+        gate = FIELD_SET(gate, CURRENT_GATE, ZVPORT, ON);
+#if 1
+        /* Using Software I2C */
+        gate = FIELD_SET(gate, CURRENT_GATE, GPIO, ON);
+#else
+        /* Using Hardware I2C */
+        gate = FIELD_SET(gate, CURRENT_GATE, I2C,    ON);
+#endif
+    }
+    else
+    {
+        /* Disable ZV Port Gate. There is no way to know whether the GPIO pins are being used
+           or not. Therefore, do not disable the GPIO gate. */
+        gate = FIELD_SET(gate, CURRENT_GATE, ZVPORT, OFF);
+    }
+
+    setCurrentGate(gate);
+}
+
+
+void enableSSP(unsigned int enable)
+{
+    uint32_t gate;
+
+    /* Enable SSP Gate */
+    gate = PEEK32(CURRENT_GATE);
+    if (enable)
+        gate = FIELD_SET(gate, CURRENT_GATE, SSP, ON);
+    else
+        gate = FIELD_SET(gate, CURRENT_GATE, SSP, OFF);
+
+    setCurrentGate(gate);
 }
 
 void enableDMA(unsigned int enable)
 {
-	u32 gate;
+    uint32_t gate;
 
-	/* Enable DMA Gate */
-	gate = PEEK32(CURRENT_GATE);
-	if (enable)
-		gate |= CURRENT_GATE_DMA;
-	else
-		gate &= ~CURRENT_GATE_DMA;
+    /* Enable DMA Gate */
+    gate = PEEK32(CURRENT_GATE);
+    if (enable)
+        gate = FIELD_SET(gate, CURRENT_GATE, DMA, ON);
+    else
+        gate = FIELD_SET(gate, CURRENT_GATE, DMA, OFF);
 
-	setCurrentGate(gate);
+    setCurrentGate(gate);
 }
 
 /*
@@ -133,16 +190,33 @@ void enableDMA(unsigned int enable)
  */
 void enableGPIO(unsigned int enable)
 {
-	u32 gate;
+    uint32_t gate;
 
-	/* Enable GPIO Gate */
-	gate = PEEK32(CURRENT_GATE);
-	if (enable)
-		gate |= CURRENT_GATE_GPIO;
-	else
-		gate &= ~CURRENT_GATE_GPIO;
+    /* Enable GPIO Gate */
+    gate = PEEK32(CURRENT_GATE);
+    if (enable)
+        gate = FIELD_SET(gate, CURRENT_GATE, GPIO, ON);
+    else
+        gate = FIELD_SET(gate, CURRENT_GATE, GPIO, OFF);
 
-	setCurrentGate(gate);
+    setCurrentGate(gate);
+}
+
+/*
+ * This function enable/disable the PWM Engine
+ */
+void enablePWM(unsigned int enable)
+{
+    uint32_t gate;
+
+    /* Enable PWM Gate */
+    gate = PEEK32(CURRENT_GATE);
+    if (enable)
+        gate = FIELD_SET(gate, CURRENT_GATE, PWM, ON);
+    else
+        gate = FIELD_SET(gate, CURRENT_GATE, PWM, OFF);
+
+    setCurrentGate(gate);
 }
 
 /*
@@ -150,16 +224,16 @@ void enableGPIO(unsigned int enable)
  */
 void enableI2C(unsigned int enable)
 {
-	u32 gate;
+    uint32_t gate;
 
-	/* Enable I2C Gate */
-	gate = PEEK32(CURRENT_GATE);
-	if (enable)
-		gate |= CURRENT_GATE_I2C;
-	else
-		gate &= ~CURRENT_GATE_I2C;
+    /* Enable I2C Gate */
+    gate = PEEK32(CURRENT_GATE);
+    if (enable)
+        gate = FIELD_SET(gate, CURRENT_GATE, I2C, ON);
+    else
+        gate = FIELD_SET(gate, CURRENT_GATE, I2C, OFF);
 
-	setCurrentGate(gate);
+    setCurrentGate(gate);
 }
 
 

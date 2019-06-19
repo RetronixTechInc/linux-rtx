@@ -40,7 +40,7 @@
 #include <sound/control.h>
 #include <sound/initval.h>
 #include <sound/tlv.h>
-#include <media/i2c/wm8775.h>
+#include <media/wm8775.h>
 
 #include "cx88.h"
 #include "cx88-reg.h"
@@ -101,7 +101,7 @@ typedef struct cx88_audio_dev snd_cx88_card_t;
 
 static int index[SNDRV_CARDS] = SNDRV_DEFAULT_IDX;	/* Index 0-MAX */
 static const char *id[SNDRV_CARDS] = SNDRV_DEFAULT_STR;	/* ID for this card */
-static bool enable[SNDRV_CARDS] = SNDRV_DEFAULT_ENABLE_PNP;
+static bool enable[SNDRV_CARDS] = {1, [1 ... (SNDRV_CARDS - 1)] = 1};
 
 module_param_array(enable, bool, NULL, 0444);
 MODULE_PARM_DESC(enable, "Enable cx88x soundcard. default enabled.");
@@ -599,7 +599,7 @@ static struct page *snd_cx88_page(struct snd_pcm_substream *substream,
 /*
  * operators
  */
-static const struct snd_pcm_ops snd_cx88_pcm_ops = {
+static struct snd_pcm_ops snd_cx88_pcm_ops = {
 	.open = snd_cx88_pcm_open,
 	.close = snd_cx88_close,
 	.ioctl = snd_pcm_lib_ioctl,
@@ -799,9 +799,13 @@ static int snd_cx88_alc_put(struct snd_kcontrol *kcontrol,
 {
 	snd_cx88_card_t *chip = snd_kcontrol_chip(kcontrol);
 	struct cx88_core *core = chip->core;
+	struct v4l2_control client_ctl;
 
-	wm8775_s_ctrl(core, V4L2_CID_AUDIO_LOUDNESS,
-		      value->value.integer.value[0] != 0);
+	memset(&client_ctl, 0, sizeof(client_ctl));
+	client_ctl.value = 0 != value->value.integer.value[0];
+	client_ctl.id = V4L2_CID_AUDIO_LOUDNESS;
+	call_hw(core, WM8775_GID, core, s_ctrl, &client_ctl);
+
 	return 0;
 }
 
@@ -886,9 +890,9 @@ static int snd_cx88_create(struct snd_card *card, struct pci_dev *pci,
 		return err;
 	}
 
-	err = pci_set_dma_mask(pci,DMA_BIT_MASK(32));
-	if (err) {
+	if (!pci_dma_supported(pci,DMA_BIT_MASK(32))) {
 		dprintk(0, "%s/1: Oops: no 32bit PCI DMA ???\n",core->name);
+		err = -EIO;
 		cx88_core_put(core, pci);
 		return err;
 	}

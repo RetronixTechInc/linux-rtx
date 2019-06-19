@@ -105,7 +105,7 @@ static struct list_head virtio_chan_list;
 /* How many bytes left in this page. */
 static unsigned int rest_of_page(void *data)
 {
-	return PAGE_SIZE - offset_in_page(data);
+	return PAGE_SIZE - ((unsigned long)data % PAGE_SIZE);
 }
 
 /**
@@ -143,6 +143,7 @@ static void p9_virtio_close(struct p9_client *client)
 static void req_done(struct virtqueue *vq)
 {
 	struct virtio_chan *chan = vq->vdev->priv;
+	struct p9_fcall *rc;
 	unsigned int len;
 	struct p9_req_t *req;
 	unsigned long flags;
@@ -151,8 +152,8 @@ static void req_done(struct virtqueue *vq)
 
 	while (1) {
 		spin_lock_irqsave(&chan->lock, flags);
-		req = virtqueue_get_buf(chan->vq, &len);
-		if (req == NULL) {
+		rc = virtqueue_get_buf(chan->vq, &len);
+		if (rc == NULL) {
 			spin_unlock_irqrestore(&chan->lock, flags);
 			break;
 		}
@@ -160,8 +161,10 @@ static void req_done(struct virtqueue *vq)
 		spin_unlock_irqrestore(&chan->lock, flags);
 		/* Wakeup if anyone waiting for VirtIO ring space. */
 		wake_up(chan->vc_wq);
-		if (len)
-			p9_client_cb(chan->client, req, REQ_STATUS_RCVD);
+		p9_debug(P9_DEBUG_TRANS, ": rc %p\n", rc);
+		p9_debug(P9_DEBUG_TRANS, ": lookup tag %d\n", rc->tag);
+		req = p9_tag_lookup(chan->client, rc->tag);
+		p9_client_cb(chan->client, req, REQ_STATUS_RCVD);
 	}
 }
 
@@ -281,14 +284,14 @@ req_retry:
 	if (in)
 		sgs[out_sgs + in_sgs++] = chan->sg + out;
 
-	err = virtqueue_add_sgs(chan->vq, sgs, out_sgs, in_sgs, req,
+	err = virtqueue_add_sgs(chan->vq, sgs, out_sgs, in_sgs, req->tc,
 				GFP_ATOMIC);
 	if (err < 0) {
 		if (err == -ENOSPC) {
 			chan->ring_bufs_avail = 0;
 			spin_unlock_irqrestore(&chan->lock, flags);
-			err = wait_event_killable(*chan->vc_wq,
-						  chan->ring_bufs_avail);
+			err = wait_event_interruptible(*chan->vc_wq,
+							chan->ring_bufs_avail);
 			if (err  == -ERESTARTSYS)
 				return err;
 
@@ -328,7 +331,7 @@ static int p9_get_mapped_pages(struct virtio_chan *chan,
 		 * Other zc request to finish here
 		 */
 		if (atomic_read(&vp_pinned) >= chan->p9_max_pages) {
-			err = wait_event_killable(vp_wq,
+			err = wait_event_interruptible(vp_wq,
 			      (atomic_read(&vp_pinned) < chan->p9_max_pages));
 			if (err == -ERESTARTSYS)
 				return err;
@@ -366,7 +369,7 @@ static int p9_get_mapped_pages(struct virtio_chan *chan,
 			return -ENOMEM;
 
 		*need_drop = 0;
-		p -= (*offs = offset_in_page(p));
+		p -= (*offs = (unsigned long)p % PAGE_SIZE);
 		for (index = 0; index < nr_pages; index++) {
 			if (is_vmalloc_addr(p))
 				(*pages)[index] = vmalloc_to_page(p);
@@ -466,14 +469,14 @@ req_retry_pinned:
 	}
 
 	BUG_ON(out_sgs + in_sgs > ARRAY_SIZE(sgs));
-	err = virtqueue_add_sgs(chan->vq, sgs, out_sgs, in_sgs, req,
+	err = virtqueue_add_sgs(chan->vq, sgs, out_sgs, in_sgs, req->tc,
 				GFP_ATOMIC);
 	if (err < 0) {
 		if (err == -ENOSPC) {
 			chan->ring_bufs_avail = 0;
 			spin_unlock_irqrestore(&chan->lock, flags);
-			err = wait_event_killable(*chan->vc_wq,
-						  chan->ring_bufs_avail);
+			err = wait_event_interruptible(*chan->vc_wq,
+						       chan->ring_bufs_avail);
 			if (err  == -ERESTARTSYS)
 				goto err_out;
 
@@ -490,7 +493,8 @@ req_retry_pinned:
 	virtqueue_kick(chan->vq);
 	spin_unlock_irqrestore(&chan->lock, flags);
 	p9_debug(P9_DEBUG_TRANS, "virtio request kicked\n");
-	err = wait_event_killable(*req->wq, req->status >= REQ_STATUS_RCVD);
+	err = wait_event_interruptible(*req->wq,
+				       req->status >= REQ_STATUS_RCVD);
 	/*
 	 * Non kernel buffers are pinned, unpin them
 	 */
@@ -507,8 +511,8 @@ err_out:
 		/* wakeup anybody waiting for slots to pin pages */
 		wake_up(&vp_wq);
 	}
-	kvfree(in_pages);
-	kvfree(out_pages);
+	kfree(in_pages);
+	kfree(out_pages);
 	return err;
 }
 
@@ -658,7 +662,7 @@ p9_virtio_create(struct p9_client *client, const char *devname, char *args)
 	mutex_unlock(&virtio_9p_lock);
 
 	if (!found) {
-		pr_err("no channels available for device %s\n", devname);
+		pr_err("no channels available\n");
 		return ret;
 	}
 
@@ -700,7 +704,6 @@ static void p9_virtio_remove(struct virtio_device *vdev)
 
 	mutex_unlock(&virtio_9p_lock);
 
-	vdev->config->reset(vdev);
 	vdev->config->del_vqs(vdev);
 
 	sysfs_remove_file(&(vdev->dev.kobj), &dev_attr_mount_tag.attr);

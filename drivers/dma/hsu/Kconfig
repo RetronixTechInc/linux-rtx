@@ -5,5 +5,10 @@ config HSU_DMA
 	select DMA_VIRTUAL_CHANNELS
 
 config HSU_DMA_PCI
-	tristate
-	depends on HSU_DMA && PCI
+	tristate "High Speed UART DMA PCI driver"
+	depends on PCI
+	select HSU_DMA
+	help
+	  Support the High Speed UART DMA on the platfroms that
+	  enumerate it as a PCI device. For example, Intel Medfield
+	  has integrated this HSU DMA controller.

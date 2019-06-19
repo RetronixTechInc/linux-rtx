@@ -49,7 +49,7 @@ extern void secondary_startup_arm(void);
 static DEFINE_SPINLOCK(boot_lock);
 
 #ifdef CONFIG_HOTPLUG_CPU
-static void qcom_cpu_die(unsigned int cpu)
+static void __ref qcom_cpu_die(unsigned int cpu)
 {
 	wfi();
 }
@@ -332,7 +332,7 @@ static void __init qcom_smp_prepare_cpus(unsigned int max_cpus)
 	}
 }
 
-static const struct smp_operations smp_msm8660_ops __initconst = {
+static struct smp_operations smp_msm8660_ops __initdata = {
 	.smp_prepare_cpus	= qcom_smp_prepare_cpus,
 	.smp_secondary_init	= qcom_secondary_init,
 	.smp_boot_secondary	= msm8660_boot_secondary,
@@ -342,7 +342,7 @@ static const struct smp_operations smp_msm8660_ops __initconst = {
 };
 CPU_METHOD_OF_DECLARE(qcom_smp, "qcom,gcc-msm8660", &smp_msm8660_ops);
 
-static const struct smp_operations qcom_smp_kpssv1_ops __initconst = {
+static struct smp_operations qcom_smp_kpssv1_ops __initdata = {
 	.smp_prepare_cpus	= qcom_smp_prepare_cpus,
 	.smp_secondary_init	= qcom_secondary_init,
 	.smp_boot_secondary	= kpssv1_boot_secondary,
@@ -352,7 +352,7 @@ static const struct smp_operations qcom_smp_kpssv1_ops __initconst = {
 };
 CPU_METHOD_OF_DECLARE(qcom_smp_kpssv1, "qcom,kpss-acc-v1", &qcom_smp_kpssv1_ops);
 
-static const struct smp_operations qcom_smp_kpssv2_ops __initconst = {
+static struct smp_operations qcom_smp_kpssv2_ops __initdata = {
 	.smp_prepare_cpus	= qcom_smp_prepare_cpus,
 	.smp_secondary_init	= qcom_secondary_init,
 	.smp_boot_secondary	= kpssv2_boot_secondary,

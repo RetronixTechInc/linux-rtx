@@ -74,7 +74,7 @@ extern __kernel_size_t __copy_user(void *to, const void *from,
 
 extern __kernel_size_t copy_to_user(void __user *to, const void *from,
 				    __kernel_size_t n);
-extern __kernel_size_t ___copy_from_user(void *to, const void __user *from,
+extern __kernel_size_t copy_from_user(void *to, const void __user *from,
 				      __kernel_size_t n);
 
 static inline __kernel_size_t __copy_to_user(void __user *to, const void *from,
@@ -88,15 +88,6 @@ static inline __kernel_size_t __copy_from_user(void *to,
 {
 	return __copy_user(to, (const void __force *)from, n);
 }
-static inline __kernel_size_t copy_from_user(void *to,
-					       const void __user *from,
-					       __kernel_size_t n)
-{
-	size_t res = ___copy_from_user(to, from, n);
-	if (unlikely(res))
-		memset(to + (n - res), 0, res);
-	return res;
-}
 
 #define __copy_to_user_inatomic __copy_to_user
 #define __copy_from_user_inatomic __copy_from_user
@@ -106,8 +97,7 @@ static inline __kernel_size_t copy_from_user(void *to,
  * @x:   Value to copy to user space.
  * @ptr: Destination address, in user space.
  *
- * Context: User context only. This function may sleep if pagefaults are
- *          enabled.
+ * Context: User context only.  This function may sleep.
  *
  * This macro copies a single simple value from kernel space to user
  * space.  It supports simple types like char and int, but not larger
@@ -126,8 +116,7 @@ static inline __kernel_size_t copy_from_user(void *to,
  * @x:   Variable to store result.
  * @ptr: Source address, in user space.
  *
- * Context: User context only. This function may sleep if pagefaults are
- *          enabled.
+ * Context: User context only.  This function may sleep.
  *
  * This macro copies a single simple variable from user space to kernel
  * space.  It supports simple types like char and int, but not larger
@@ -147,8 +136,7 @@ static inline __kernel_size_t copy_from_user(void *to,
  * @x:   Value to copy to user space.
  * @ptr: Destination address, in user space.
  *
- * Context: User context only. This function may sleep if pagefaults are
- *          enabled.
+ * Context: User context only.  This function may sleep.
  *
  * This macro copies a single simple value from kernel space to user
  * space.  It supports simple types like char and int, but not larger
@@ -170,8 +158,7 @@ static inline __kernel_size_t copy_from_user(void *to,
  * @x:   Variable to store result.
  * @ptr: Source address, in user space.
  *
- * Context: User context only. This function may sleep if pagefaults are
- *          enabled.
+ * Context: User context only.  This function may sleep.
  *
  * This macro copies a single simple variable from user space to kernel
  * space.  It supports simple types like char and int, but not larger

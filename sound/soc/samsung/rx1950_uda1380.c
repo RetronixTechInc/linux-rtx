@@ -38,15 +38,16 @@ static int rx1950_hw_params(struct snd_pcm_substream *substream,
 static int rx1950_spk_power(struct snd_soc_dapm_widget *w,
 				struct snd_kcontrol *kcontrol, int event);
 
-static const unsigned int rates[] = {
+static unsigned int rates[] = {
 	16000,
 	44100,
 	48000,
 };
 
-static const struct snd_pcm_hw_constraint_list hw_rates = {
+static struct snd_pcm_hw_constraint_list hw_rates = {
 	.count = ARRAY_SIZE(rates),
 	.list = rates,
+	.mask = 0,
 };
 
 static struct snd_soc_jack hp_jack;

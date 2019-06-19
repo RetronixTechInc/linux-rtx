@@ -414,12 +414,17 @@ void *ipc_alloc(int size)
 /**
  * ipc_free - free ipc space
  * @ptr: pointer returned by ipc_alloc
+ * @size: size of block
  *
- * Free a block created with ipc_alloc().
+ * Free a block created with ipc_alloc(). The caller must know the size
+ * used in the allocation call.
  */
-void ipc_free(void *ptr)
+void ipc_free(void *ptr, int size)
 {
-	kvfree(ptr);
+	if (size > PAGE_SIZE)
+		vfree(ptr);
+	else
+		kfree(ptr);
 }
 
 /**
@@ -462,7 +467,10 @@ void ipc_rcu_free(struct rcu_head *head)
 {
 	struct ipc_rcu *p = container_of(head, struct ipc_rcu, rcu);
 
-	kvfree(p);
+	if (is_vmalloc_addr(p))
+		vfree(p);
+	else
+		kfree(p);
 }
 
 /**
@@ -550,7 +558,7 @@ void ipc64_perm_to_ipc_perm(struct ipc64_perm *in, struct ipc_perm *out)
  * Call inside the RCU critical section.
  * The ipc object is *not* locked on exit.
  */
-struct kern_ipc_perm *ipc_obtain_object_idr(struct ipc_ids *ids, int id)
+struct kern_ipc_perm *ipc_obtain_object(struct ipc_ids *ids, int id)
 {
 	struct kern_ipc_perm *out;
 	int lid = ipcid_to_idx(id);
@@ -576,24 +584,21 @@ struct kern_ipc_perm *ipc_lock(struct ipc_ids *ids, int id)
 	struct kern_ipc_perm *out;
 
 	rcu_read_lock();
-	out = ipc_obtain_object_idr(ids, id);
+	out = ipc_obtain_object(ids, id);
 	if (IS_ERR(out))
-		goto err;
+		goto err1;
 
 	spin_lock(&out->lock);
 
-	/*
-	 * ipc_rmid() may have already freed the ID while ipc_lock()
-	 * was spinning: here verify that the structure is still valid.
-	 * Upon races with RMID, return -EIDRM, thus indicating that
-	 * the ID points to a removed identifier.
+	/* ipc_rmid() may have already freed the ID while ipc_lock
+	 * was spinning: here verify that the structure is still valid
 	 */
 	if (ipc_valid_object(out))
 		return out;
 
 	spin_unlock(&out->lock);
-	out = ERR_PTR(-EIDRM);
-err:
+	out = ERR_PTR(-EINVAL);
+err1:
 	rcu_read_unlock();
 	return out;
 }
@@ -603,7 +608,7 @@ err:
  * @ids: ipc identifier set
  * @id: ipc id to look for
  *
- * Similar to ipc_obtain_object_idr() but also checks
+ * Similar to ipc_obtain_object() but also checks
  * the ipc object reference counter.
  *
  * Call inside the RCU critical section.
@@ -611,13 +616,13 @@ err:
  */
 struct kern_ipc_perm *ipc_obtain_object_check(struct ipc_ids *ids, int id)
 {
-	struct kern_ipc_perm *out = ipc_obtain_object_idr(ids, id);
+	struct kern_ipc_perm *out = ipc_obtain_object(ids, id);
 
 	if (IS_ERR(out))
 		goto out;
 
 	if (ipc_checkid(out, id))
-		return ERR_PTR(-EINVAL);
+		return ERR_PTR(-EIDRM);
 out:
 	return out;
 }

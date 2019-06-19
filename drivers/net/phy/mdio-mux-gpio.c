@@ -35,8 +35,7 @@ static int mdio_mux_gpio_switch_fn(int current_child, int desired_child,
 	for (n = 0; n < s->gpios->ndescs; n++)
 		values[n] = (desired_child >> n) & 1;
 
-	gpiod_set_array_value_cansleep(s->gpios->ndescs, s->gpios->desc,
-				       values);
+	gpiod_set_array_cansleep(s->gpios->ndescs, s->gpios->desc, values);
 
 	return 0;
 }
@@ -55,7 +54,7 @@ static int mdio_mux_gpio_probe(struct platform_device *pdev)
 		return PTR_ERR(s->gpios);
 
 	r = mdio_mux_init(&pdev->dev,
-			  mdio_mux_gpio_switch_fn, &s->mux_handle, s, NULL);
+			  mdio_mux_gpio_switch_fn, &s->mux_handle, s);
 
 	if (r != 0) {
 		gpiod_put_array(s->gpios);

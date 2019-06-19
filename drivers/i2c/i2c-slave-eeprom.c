@@ -80,6 +80,9 @@ static ssize_t i2c_slave_eeprom_bin_read(struct file *filp, struct kobject *kobj
 	struct eeprom_data *eeprom;
 	unsigned long flags;
 
+	if (off + count > attr->size)
+		return -EFBIG;
+
 	eeprom = dev_get_drvdata(container_of(kobj, struct device, kobj));
 
 	spin_lock_irqsave(&eeprom->buffer_lock, flags);
@@ -94,6 +97,9 @@ static ssize_t i2c_slave_eeprom_bin_write(struct file *filp, struct kobject *kob
 {
 	struct eeprom_data *eeprom;
 	unsigned long flags;
+
+	if (off + count > attr->size)
+		return -EFBIG;
 
 	eeprom = dev_get_drvdata(container_of(kobj, struct device, kobj));
 
@@ -157,6 +163,7 @@ MODULE_DEVICE_TABLE(i2c, i2c_slave_eeprom_id);
 static struct i2c_driver i2c_slave_eeprom_driver = {
 	.driver = {
 		.name = "i2c-slave-eeprom",
+		.owner = THIS_MODULE,
 	},
 	.probe = i2c_slave_eeprom_probe,
 	.remove = i2c_slave_eeprom_remove,

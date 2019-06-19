@@ -93,7 +93,7 @@
 			compatible = "regulator-fixed";
 			reg = <4>;
 			regulator-name = "lcd-pwr";
-			gpio = <&gpio4 8 0>;
+			gpio = <&gpio4 3 0>;
 			enable-active-high;
 		};
 
@@ -103,7 +103,6 @@
 			regulator-min-microvolt = <3000000>;
 			regulator-max-microvolt = <3000000>;
 			gpio = <&gpio3 30 GPIO_ACTIVE_HIGH>;
-			off-on-delay = <20000>;
 			enable-active-high;
 		};
 
@@ -121,7 +120,6 @@
 			regulator-min-microvolt = <3000000>;
 			regulator-max-microvolt = <3000000>;
 			gpio = <&gpio4 4 GPIO_ACTIVE_HIGH>;
-			off-on-delay = <20000>;
 			enable-active-high;
 		};
 
@@ -316,10 +314,10 @@
 
 			VCOM_reg: VCOM {
 				regulator-name = "VCOM";
-				/* Real max value: -500000 */
-				regulator-max-microvolt = <4325000>;
-				/* Real min value: -4325000 */
-				regulator-min-microvolt = <500000>;
+				/* 2's-compliment, -4325000 */
+				regulator-min-microvolt = <0xffbe0178>;
+				/* 2's-compliment, -500000 */
+				regulator-max-microvolt = <0xfff85ee0>;
 			};
 
 			VNEG_reg: VNEG {
@@ -488,7 +486,7 @@
 				MX6SLL_PAD_LCD_HSYNC__LCD_HSYNC		0x79
 				MX6SLL_PAD_LCD_VSYNC__LCD_VSYNC		0x79
 				MX6SLL_PAD_LCD_RESET__LCD_RESET		0x79
-				MX6SLL_PAD_ECSPI1_SCLK__GPIO4_IO08	0x79
+				MX6SLL_PAD_KEY_ROW5__GPIO4_IO03		0x80000000
 			>;
 		};
 
@@ -687,10 +685,10 @@
 	pinctrl-0 = <&pinctrl_lcdif_dat
 		     &pinctrl_lcdif_ctrl>;
 	lcd-supply = <&reg_lcd>;
-	display = <&display0>;
+	display = <&display>;
 	status = "okay";
 
-	display0: display@0 {
+	display: display {
 		bits-per-pixel = <16>;
 		bus-width = <24>;
 
@@ -811,5 +809,5 @@
 &wdog1 {
 	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl_wdog1>;
-	fsl,ext-reset-output;
+	fsl,wdog_b;
 };

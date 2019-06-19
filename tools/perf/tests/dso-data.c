@@ -99,18 +99,7 @@ struct test_data_offset offsets[] = {
 	},
 };
 
-/* move it from util/dso.c for compatibility */
-static int dso__data_fd(struct dso *dso, struct machine *machine)
-{
-	int fd = dso__data_get_fd(dso, machine);
-
-	if (fd >= 0)
-		dso__data_put_fd(dso);
-
-	return fd;
-}
-
-int test__dso_data(int subtest __maybe_unused)
+int test__dso_data(void)
 {
 	struct machine machine;
 	struct dso *dso;
@@ -166,7 +155,7 @@ int test__dso_data(int subtest __maybe_unused)
 		free(buf);
 	}
 
-	dso__put(dso);
+	dso__delete(dso);
 	unlink(file);
 	return 0;
 }
@@ -202,7 +191,7 @@ static int dsos__create(int cnt, int size)
 {
 	int i;
 
-	dsos = malloc(sizeof(*dsos) * cnt);
+	dsos = malloc(sizeof(dsos) * cnt);
 	TEST_ASSERT_VAL("failed to alloc dsos array", dsos);
 
 	for (i = 0; i < cnt; i++) {
@@ -226,7 +215,7 @@ static void dsos__delete(int cnt)
 		struct dso *dso = dsos[i];
 
 		unlink(dso->name);
-		dso__put(dso);
+		dso__delete(dso);
 	}
 
 	free(dsos);
@@ -245,14 +234,11 @@ static int set_fd_limit(int n)
 	return setrlimit(RLIMIT_NOFILE, &rlim);
 }
 
-int test__dso_data_cache(int subtest __maybe_unused)
+int test__dso_data_cache(void)
 {
 	struct machine machine;
 	long nr_end, nr = open_files_cnt();
 	int dso_cnt, limit, i, fd;
-
-	/* Rest the internal dso open counter limit. */
-	reset_fd_limit();
 
 	memset(&machine, 0, sizeof(machine));
 
@@ -305,7 +291,7 @@ int test__dso_data_cache(int subtest __maybe_unused)
 	return 0;
 }
 
-int test__dso_data_reopen(int subtest __maybe_unused)
+int test__dso_data_reopen(void)
 {
 	struct machine machine;
 	long nr_end, nr = open_files_cnt();
@@ -314,9 +300,6 @@ int test__dso_data_reopen(int subtest __maybe_unused)
 #define dso_0 (dsos[0])
 #define dso_1 (dsos[1])
 #define dso_2 (dsos[2])
-
-	/* Rest the internal dso open counter limit. */
-	reset_fd_limit();
 
 	memset(&machine, 0, sizeof(machine));
 

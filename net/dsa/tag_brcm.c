@@ -58,10 +58,13 @@
 #define BRCM_EG_TC_MASK		0x7
 #define BRCM_EG_PID_MASK	0x1f
 
-static struct sk_buff *brcm_tag_xmit(struct sk_buff *skb, struct net_device *dev)
+static netdev_tx_t brcm_tag_xmit(struct sk_buff *skb, struct net_device *dev)
 {
 	struct dsa_slave_priv *p = netdev_priv(dev);
 	u8 *brcm_tag;
+
+	dev->stats.tx_packets++;
+	dev->stats.tx_bytes += skb->len;
 
 	if (skb_cow_head(skb, BRCM_TAG_LEN) < 0)
 		goto out_free;
@@ -84,11 +87,17 @@ static struct sk_buff *brcm_tag_xmit(struct sk_buff *skb, struct net_device *dev
 		brcm_tag[2] = BRCM_IG_DSTMAP2_MASK;
 	brcm_tag[3] = (1 << p->port) & BRCM_IG_DSTMAP1_MASK;
 
-	return skb;
+	/* Queue the SKB for transmission on the parent interface, but
+	 * do not modify its EtherType
+	 */
+	skb->dev = p->parent->dst->master_netdev;
+	dev_queue_xmit(skb);
+
+	return NETDEV_TX_OK;
 
 out_free:
 	kfree_skb(skb);
-	return NULL;
+	return NETDEV_TX_OK;
 }
 
 static int brcm_tag_rcv(struct sk_buff *skb, struct net_device *dev,
@@ -127,7 +136,7 @@ static int brcm_tag_rcv(struct sk_buff *skb, struct net_device *dev,
 	source_port = brcm_tag[3] & BRCM_EG_PID_MASK;
 
 	/* Validate port against switch setup, either the port is totally */
-	if (source_port >= DSA_MAX_PORTS || !ds->ports[source_port].netdev)
+	if (source_port >= DSA_MAX_PORTS || ds->ports[source_port] == NULL)
 		goto out_drop;
 
 	/* Remove Broadcom tag and update checksum */
@@ -140,7 +149,7 @@ static int brcm_tag_rcv(struct sk_buff *skb, struct net_device *dev,
 
 	skb_push(skb, ETH_HLEN);
 	skb->pkt_type = PACKET_HOST;
-	skb->dev = ds->ports[source_port].netdev;
+	skb->dev = ds->ports[source_port];
 	skb->protocol = eth_type_trans(skb, skb->dev);
 
 	skb->dev->stats.rx_packets++;

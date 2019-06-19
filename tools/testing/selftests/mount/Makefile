@@ -9,12 +9,7 @@ unprivileged-remount-test: unprivileged-remount-test.c
 include ../lib.mk
 
 TEST_PROGS := unprivileged-remount-test
-override RUN_TESTS := if [ -f /proc/self/uid_map ] ; \
-		      then	\
-				./unprivileged-remount-test ; \
-		      else	\
-				echo "WARN: No /proc/self/uid_map exist, test skipped." ; \
-		      fi
+override RUN_TESTS := if [ -f /proc/self/uid_map ] ; then ./unprivileged-remount-test ; fi
 override EMIT_TESTS := echo "$(RUN_TESTS)"
 
 clean:

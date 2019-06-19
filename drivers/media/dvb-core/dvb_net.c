@@ -709,7 +709,7 @@ static void dvb_net_ule( struct net_device *dev, const u8 *buf, size_t buf_len )
 					if (!priv->ule_dbit) {
 						 /* dest_addr buffer is only valid if priv->ule_dbit == 0 */
 						memcpy(ethh->h_dest, dest_addr, ETH_ALEN);
-						eth_zero_addr(ethh->h_source);
+						memset(ethh->h_source, 0, ETH_ALEN);
 					}
 					else /* zeroize source and dest */
 						memset( ethh, 0, ETH_ALEN*2 );
@@ -761,7 +761,7 @@ static void dvb_net_ule( struct net_device *dev, const u8 *buf, size_t buf_len )
 
 static int dvb_net_ts_callback(const u8 *buffer1, size_t buffer1_len,
 			       const u8 *buffer2, size_t buffer2_len,
-			       struct dmx_ts_feed *feed)
+			       struct dmx_ts_feed *feed, enum dmx_success success)
 {
 	struct net_device *dev = feed->priv;
 
@@ -870,7 +870,8 @@ static void dvb_net_sec(struct net_device *dev,
 
 static int dvb_net_sec_callback(const u8 *buffer1, size_t buffer1_len,
 		 const u8 *buffer2, size_t buffer2_len,
-		 struct dmx_section_filter *filter)
+		 struct dmx_section_filter *filter,
+		 enum dmx_success success)
 {
 	struct net_device *dev = filter->priv;
 
@@ -997,7 +998,7 @@ static int dvb_net_feed_start(struct net_device *dev)
 		netdev_dbg(dev, "start filtering\n");
 		priv->secfeed->start_filtering(priv->secfeed);
 	} else if (priv->feedtype == DVB_NET_FEEDTYPE_ULE) {
-		ktime_t timeout = ns_to_ktime(10 * NSEC_PER_MSEC);
+		struct timespec timeout = { 0, 10000000 }; // 10 msec
 
 		/* we have payloads encapsulated in TS */
 		netdev_dbg(dev, "alloc tsfeed\n");
@@ -1502,6 +1503,6 @@ int dvb_net_init (struct dvb_adapter *adap, struct dvb_net *dvbnet,
 		dvbnet->state[i] = 0;
 
 	return dvb_register_device(adap, &dvbnet->dvbdev, &dvbdev_net,
-			     dvbnet, DVB_DEVICE_NET, 0);
+			     dvbnet, DVB_DEVICE_NET);
 }
 EXPORT_SYMBOL(dvb_net_init);

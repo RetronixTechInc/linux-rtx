@@ -11,6 +11,5 @@
 #define ram_mask(s,r,m,d)   hwsq_mask(&(s)->base, &(s)->r_##r, (m), (d))
 #define ram_setf(s,f,d)     hwsq_setf(&(s)->base, (f), (d))
 #define ram_wait(s,f,d)     hwsq_wait(&(s)->base, (f), (d))
-#define ram_wait_vblank(s)  hwsq_wait_vblank(&(s)->base)
 #define ram_nsec(s,n)       hwsq_nsec(&(s)->base, (n))
 #endif

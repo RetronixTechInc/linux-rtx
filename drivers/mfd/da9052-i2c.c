@@ -70,7 +70,7 @@ static int da9052_i2c_fix(struct da9052 *da9052, unsigned char reg)
 	case DA9053_BA:
 	case DA9053_BB:
 		/* A dummy read to a safe register address. */
-		if (!i2c_safe_reg(reg))
+	if (!i2c_safe_reg(reg))
 			return regmap_read(da9052->regmap,
 					   DA9052_PARK_REGISTER,
 					   &val);
@@ -174,7 +174,11 @@ static int da9052_i2c_probe(struct i2c_client *client,
 		return ret;
 	}
 
-	return da9052_device_init(da9052, id->driver_data);
+	ret = da9052_device_init(da9052, id->driver_data);
+	if (ret != 0)
+		return ret;
+
+	return 0;
 }
 
 static int da9052_i2c_remove(struct i2c_client *client)
@@ -191,6 +195,7 @@ static struct i2c_driver da9052_i2c_driver = {
 	.id_table = da9052_i2c_id,
 	.driver = {
 		.name = "da9052",
+		.owner = THIS_MODULE,
 #ifdef CONFIG_OF
 		.of_match_table = dialog_dt_ids,
 #endif

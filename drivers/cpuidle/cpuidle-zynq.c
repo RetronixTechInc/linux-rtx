@@ -73,4 +73,5 @@ static struct platform_driver zynq_cpuidle_driver = {
 	},
 	.probe = zynq_cpuidle_probe,
 };
-builtin_platform_driver(zynq_cpuidle_driver);
+
+module_platform_driver(zynq_cpuidle_driver);

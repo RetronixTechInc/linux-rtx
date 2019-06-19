@@ -108,53 +108,6 @@ static void r600_pcie_gen2_enable(struct radeon_device *rdev);
 extern int evergreen_rlc_resume(struct radeon_device *rdev);
 extern void rv770_set_clk_bypass_mode(struct radeon_device *rdev);
 
-/*
- * Indirect registers accessor
- */
-u32 r600_rcu_rreg(struct radeon_device *rdev, u32 reg)
-{
-	unsigned long flags;
-	u32 r;
-
-	spin_lock_irqsave(&rdev->rcu_idx_lock, flags);
-	WREG32(R600_RCU_INDEX, ((reg) & 0x1fff));
-	r = RREG32(R600_RCU_DATA);
-	spin_unlock_irqrestore(&rdev->rcu_idx_lock, flags);
-	return r;
-}
-
-void r600_rcu_wreg(struct radeon_device *rdev, u32 reg, u32 v)
-{
-	unsigned long flags;
-
-	spin_lock_irqsave(&rdev->rcu_idx_lock, flags);
-	WREG32(R600_RCU_INDEX, ((reg) & 0x1fff));
-	WREG32(R600_RCU_DATA, (v));
-	spin_unlock_irqrestore(&rdev->rcu_idx_lock, flags);
-}
-
-u32 r600_uvd_ctx_rreg(struct radeon_device *rdev, u32 reg)
-{
-	unsigned long flags;
-	u32 r;
-
-	spin_lock_irqsave(&rdev->uvd_idx_lock, flags);
-	WREG32(R600_UVD_CTX_INDEX, ((reg) & 0x1ff));
-	r = RREG32(R600_UVD_CTX_DATA);
-	spin_unlock_irqrestore(&rdev->uvd_idx_lock, flags);
-	return r;
-}
-
-void r600_uvd_ctx_wreg(struct radeon_device *rdev, u32 reg, u32 v)
-{
-	unsigned long flags;
-
-	spin_lock_irqsave(&rdev->uvd_idx_lock, flags);
-	WREG32(R600_UVD_CTX_INDEX, ((reg) & 0x1ff));
-	WREG32(R600_UVD_CTX_DATA, (v));
-	spin_unlock_irqrestore(&rdev->uvd_idx_lock, flags);
-}
-
 /**
  * r600_get_allowed_info_register - fetch the register for the info ioctl
  *
@@ -235,8 +188,8 @@ int r600_set_uvd_clocks(struct radeon_device *rdev, u32 vclk, u32 dclk)
 		fb_div |= 1;
 
 	r = radeon_uvd_send_upll_ctlreq(rdev, CG_UPLL_FUNC_CNTL);
-	if (r)
-		return r;
+        if (r)
+                return r;
 
 	/* assert PLL_RESET */
 	WREG32_P(CG_UPLL_FUNC_CNTL, UPLL_RESET_MASK, ~UPLL_RESET_MASK);
@@ -1002,8 +955,7 @@ void r600_hpd_init(struct radeon_device *rdev)
 				break;
 			}
 		}
-		if (radeon_connector->hpd.hpd != RADEON_HPD_NONE)
-			enable |= 1 << radeon_connector->hpd.hpd;
+		enable |= 1 << radeon_connector->hpd.hpd;
 		radeon_hpd_set_polarity(rdev, radeon_connector->hpd.hpd);
 	}
 	radeon_irq_kms_enable_hpd(rdev, enable);
@@ -1056,8 +1008,7 @@ void r600_hpd_fini(struct radeon_device *rdev)
 				break;
 			}
 		}
-		if (radeon_connector->hpd.hpd != RADEON_HPD_NONE)
-			disable |= 1 << radeon_connector->hpd.hpd;
+		disable |= 1 << radeon_connector->hpd.hpd;
 	}
 	radeon_irq_kms_disable_hpd(rdev, disable);
 }
@@ -1492,7 +1443,7 @@ static int r600_mc_init(struct radeon_device *rdev)
 					rdev->fastfb_working = true;
 				}
 			}
-		}
+  		}
 	}
 
 	radeon_update_bandwidth_info(rdev);
@@ -1873,14 +1824,9 @@ static void r600_gpu_pci_config_reset(struct radeon_device *rdev)
 	}
 }
 
-int r600_asic_reset(struct radeon_device *rdev, bool hard)
+int r600_asic_reset(struct radeon_device *rdev)
 {
 	u32 reset_mask;
-
-	if (hard) {
-		r600_gpu_pci_config_reset(rdev);
-		return 0;
-	}
 
 	reset_mask = r600_gpu_check_soft_reset(rdev);
 
@@ -2631,7 +2577,11 @@ u32 r600_gfx_get_rptr(struct radeon_device *rdev,
 u32 r600_gfx_get_wptr(struct radeon_device *rdev,
 		      struct radeon_ring *ring)
 {
-	return RREG32(R600_CP_RB_WPTR);
+	u32 wptr;
+
+	wptr = RREG32(R600_CP_RB_WPTR);
+
+	return wptr;
 }
 
 void r600_gfx_set_wptr(struct radeon_device *rdev,
@@ -3038,73 +2988,6 @@ void r600_clear_surface_reg(struct radeon_device *rdev, int reg)
 	/* FIXME: implement */
 }
 
-static void r600_uvd_init(struct radeon_device *rdev)
-{
-	int r;
-
-	if (!rdev->has_uvd)
-		return;
-
-	r = radeon_uvd_init(rdev);
-	if (r) {
-		dev_err(rdev->dev, "failed UVD (%d) init.\n", r);
-		/*
-		 * At this point rdev->uvd.vcpu_bo is NULL which trickles down
-		 * to early fails uvd_v1_0_resume() and thus nothing happens
-		 * there. So it is pointless to try to go through that code
-		 * hence why we disable uvd here.
-		 */
-		rdev->has_uvd = 0;
-		return;
-	}
-	rdev->ring[R600_RING_TYPE_UVD_INDEX].ring_obj = NULL;
-	r600_ring_init(rdev, &rdev->ring[R600_RING_TYPE_UVD_INDEX], 4096);
-}
-
-static void r600_uvd_start(struct radeon_device *rdev)
-{
-	int r;
-
-	if (!rdev->has_uvd)
-		return;
-
-	r = uvd_v1_0_resume(rdev);
-	if (r) {
-		dev_err(rdev->dev, "failed UVD resume (%d).\n", r);
-		goto error;
-	}
-	r = radeon_fence_driver_start_ring(rdev, R600_RING_TYPE_UVD_INDEX);
-	if (r) {
-		dev_err(rdev->dev, "failed initializing UVD fences (%d).\n", r);
-		goto error;
-	}
-	return;
-
-error:
-	rdev->ring[R600_RING_TYPE_UVD_INDEX].ring_size = 0;
-}
-
-static void r600_uvd_resume(struct radeon_device *rdev)
-{
-	struct radeon_ring *ring;
-	int r;
-
-	if (!rdev->has_uvd || !rdev->ring[R600_RING_TYPE_UVD_INDEX].ring_size)
-		return;
-
-	ring = &rdev->ring[R600_RING_TYPE_UVD_INDEX];
-	r = radeon_ring_init(rdev, ring, ring->ring_size, 0, PACKET0(UVD_NO_OP, 0));
-	if (r) {
-		dev_err(rdev->dev, "failed initializing UVD ring (%d).\n", r);
-		return;
-	}
-	r = uvd_v1_0_init(rdev);
-	if (r) {
-		dev_err(rdev->dev, "failed initializing UVD (%d).\n", r);
-		return;
-	}
-}
-
 static int r600_startup(struct radeon_device *rdev)
 {
 	struct radeon_ring *ring;
@@ -3140,7 +3023,17 @@ static int r600_startup(struct radeon_device *rdev)
 		return r;
 	}
 
-	r600_uvd_start(rdev);
+	if (rdev->has_uvd) {
+		r = uvd_v1_0_resume(rdev);
+		if (!r) {
+			r = radeon_fence_driver_start_ring(rdev, R600_RING_TYPE_UVD_INDEX);
+			if (r) {
+				dev_err(rdev->dev, "failed initializing UVD fences (%d).\n", r);
+			}
+		}
+		if (r)
+			rdev->ring[R600_RING_TYPE_UVD_INDEX].ring_size = 0;
+	}
 
 	/* Enable IRQ */
 	if (!rdev->irq.installed) {
@@ -3170,7 +3063,17 @@ static int r600_startup(struct radeon_device *rdev)
 	if (r)
 		return r;
 
-	r600_uvd_resume(rdev);
+	if (rdev->has_uvd) {
+		ring = &rdev->ring[R600_RING_TYPE_UVD_INDEX];
+		if (ring->ring_size) {
+			r = radeon_ring_init(rdev, ring, ring->ring_size, 0,
+					     RADEON_CP_PACKET2);
+			if (!r)
+				r = uvd_v1_0_init(rdev);
+			if (r)
+				DRM_ERROR("radeon: failed initializing UVD (%d).\n", r);
+		}
+	}
 
 	r = radeon_ib_pool_init(rdev);
 	if (r) {
@@ -3314,7 +3217,13 @@ int r600_init(struct radeon_device *rdev)
 	rdev->ring[RADEON_RING_TYPE_GFX_INDEX].ring_obj = NULL;
 	r600_ring_init(rdev, &rdev->ring[RADEON_RING_TYPE_GFX_INDEX], 1024 * 1024);
 
-	r600_uvd_init(rdev);
+	if (rdev->has_uvd) {
+		r = radeon_uvd_init(rdev);
+		if (!r) {
+			rdev->ring[R600_RING_TYPE_UVD_INDEX].ring_obj = NULL;
+			r600_ring_init(rdev, &rdev->ring[R600_RING_TYPE_UVD_INDEX], 4096);
+		}
+	}
 
 	rdev->ih.ring_obj = NULL;
 	r600_ih_ring_init(rdev, 64 * 1024);
@@ -3425,17 +3334,11 @@ int r600_ib_test(struct radeon_device *rdev, struct radeon_ring *ring)
 		DRM_ERROR("radeon: failed to schedule ib (%d).\n", r);
 		goto free_ib;
 	}
-	r = radeon_fence_wait_timeout(ib.fence, false, usecs_to_jiffies(
-		RADEON_USEC_IB_TEST_TIMEOUT));
-	if (r < 0) {
+	r = radeon_fence_wait(ib.fence, false);
+	if (r) {
 		DRM_ERROR("radeon: fence wait failed (%d).\n", r);
 		goto free_ib;
-	} else if (r == 0) {
-		DRM_ERROR("radeon: fence wait timed out.\n");
-		r = -ETIMEDOUT;
-		goto free_ib;
 	}
-	r = 0;
 	for (i = 0; i < rdev->usec_timeout; i++) {
 		tmp = RREG32(scratch);
 		if (tmp == 0xDEADBEEF)
@@ -3995,7 +3898,7 @@ static void r600_irq_ack(struct radeon_device *rdev)
 			WREG32(DC_HPD5_INT_CONTROL, tmp);
 		}
 		if (rdev->irq.stat_regs.r600.disp_int_cont2 & DC_HPD6_INTERRUPT) {
-			tmp = RREG32(DC_HPD6_INT_CONTROL);
+			tmp = RREG32(DC_HPD5_INT_CONTROL);
 			tmp |= DC_HPDx_INT_ACK;
 			WREG32(DC_HPD6_INT_CONTROL, tmp);
 		}
@@ -4326,7 +4229,7 @@ restart_ih:
 		WREG32(IH_RB_RPTR, rptr);
 	}
 	if (queue_hotplug)
-		schedule_delayed_work(&rdev->hotplug_work, 0);
+		schedule_work(&rdev->hotplug_work);
 	if (queue_hdmi)
 		schedule_work(&rdev->audio_work);
 	if (queue_thermal && rdev->pm.dpm_enabled)
@@ -4618,7 +4521,7 @@ uint64_t r600_get_gpu_clock_counter(struct radeon_device *rdev)
 	mutex_lock(&rdev->gpu_clock_mutex);
 	WREG32(RLC_CAPTURE_GPU_CLOCK_COUNT, 1);
 	clock = (uint64_t)RREG32(RLC_GPU_CLOCK_COUNT_LSB) |
-		((uint64_t)RREG32(RLC_GPU_CLOCK_COUNT_MSB) << 32ULL);
+	        ((uint64_t)RREG32(RLC_GPU_CLOCK_COUNT_MSB) << 32ULL);
 	mutex_unlock(&rdev->gpu_clock_mutex);
 	return clock;
 }

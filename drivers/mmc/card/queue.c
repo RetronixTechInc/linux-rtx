@@ -19,9 +19,7 @@
 
 #include <linux/mmc/card.h>
 #include <linux/mmc/host.h>
-
 #include "queue.h"
-#include "block.h"
 
 #define MMC_QUEUE_BOUNCESZ	65536
 
@@ -35,8 +33,7 @@ static int mmc_prep_request(struct request_queue *q, struct request *req)
 	/*
 	 * We only like normal block requests and discards.
 	 */
-	if (req->cmd_type != REQ_TYPE_FS && req_op(req) != REQ_OP_DISCARD &&
-	    req_op(req) != REQ_OP_SECURE_ERASE) {
+	if (req->cmd_type != REQ_TYPE_FS && !(req->cmd_flags & REQ_DISCARD)) {
 		blk_dump_rq_flags(req, "MMC bad request");
 		return BLKPREP_KILL;
 	}
@@ -59,6 +56,7 @@ static int mmc_queue_thread(void *d)
 	down(&mq->thread_sem);
 	do {
 		struct request *req = NULL;
+		unsigned int cmd_flags = 0;
 
 		spin_lock_irq(q->queue_lock);
 		set_current_state(TASK_INTERRUPTIBLE);
@@ -67,10 +65,9 @@ static int mmc_queue_thread(void *d)
 		spin_unlock_irq(q->queue_lock);
 
 		if (req || mq->mqrq_prev->req) {
-			bool req_is_special = mmc_req_is_special(req);
-
 			set_current_state(TASK_RUNNING);
-			mmc_blk_issue_rq(mq, req);
+			cmd_flags = req ? req->cmd_flags : 0;
+			mq->issue_fn(mq, req);
 			cond_resched();
 			if (mq->flags & MMC_QUEUE_NEW_REQUEST) {
 				mq->flags &= ~MMC_QUEUE_NEW_REQUEST;
@@ -84,7 +81,7 @@ static int mmc_queue_thread(void *d)
 			 * has been finished. Do not assign it to previous
 			 * request.
 			 */
-			if (req_is_special)
+			if (cmd_flags & MMC_REQ_SPECIAL_MASK)
 				mq->mqrq_cur->req = NULL;
 
 			mq->mqrq_prev->brq.mrq.data = NULL;
@@ -168,7 +165,7 @@ static void mmc_queue_setup_discard(struct request_queue *q,
 		return;
 
 	queue_flag_set_unlocked(QUEUE_FLAG_DISCARD, q);
-	blk_queue_max_discard_sectors(q, max_discard);
+	q->limits.max_discard_sectors = max_discard;
 	if (card->erased_byte == 0 && !mmc_can_discard(card))
 		q->limits.discard_zeroes_data = 1;
 	q->limits.discard_granularity = card->pref_erase << 9;
@@ -176,7 +173,7 @@ static void mmc_queue_setup_discard(struct request_queue *q,
 	if (card->pref_erase > max_discard)
 		q->limits.discard_granularity = 0;
 	if (mmc_can_secure_erase_trim(card))
-		queue_flag_set_unlocked(QUEUE_FLAG_SECERASE, q);
+		queue_flag_set_unlocked(QUEUE_FLAG_SECDISCARD, q);
 }
 
 /**
@@ -470,7 +467,7 @@ static unsigned int mmc_queue_packed_map_sg(struct mmc_queue *mq,
 			sg_set_buf(__sg, buf + offset, len);
 			offset += len;
 			remain -= len;
-			sg_unmark_end(__sg++);
+			(__sg++)->page_link &= ~0x02;
 			sg_len++;
 		} while (remain);
 	}
@@ -478,7 +475,7 @@ static unsigned int mmc_queue_packed_map_sg(struct mmc_queue *mq,
 	list_for_each_entry(req, &packed->list, queuelist) {
 		sg_len += blk_rq_map_sg(mq->queue, req, __sg);
 		__sg = sg + (sg_len - 1);
-		sg_unmark_end(__sg++);
+		(__sg++)->page_link &= ~0x02;
 	}
 	sg_mark_end(sg + (sg_len - 1));
 	return sg_len;

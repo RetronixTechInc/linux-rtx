@@ -19,6 +19,7 @@
 #include <linux/err.h>
 #include <linux/slab.h>
 #include <linux/clk-provider.h>
+#include <linux/clk.h>
 
 #include "clk.h"
 
@@ -32,7 +33,7 @@
 static int get_div(struct tegra_clk_frac_div *divider, unsigned long rate,
 		   unsigned long parent_rate)
 {
-	u64 divider_ux1 = parent_rate;
+	s64 divider_ux1 = parent_rate;
 	u8 flags = divider->flags;
 	int mul;
 
@@ -54,7 +55,7 @@ static int get_div(struct tegra_clk_frac_div *divider, unsigned long rate,
 
 	divider_ux1 -= mul;
 
-	if ((s64)divider_ux1 < 0)
+	if (divider_ux1 < 0)
 		return 0;
 
 	if (divider_ux1 > get_max_div(divider))

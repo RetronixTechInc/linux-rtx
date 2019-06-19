@@ -17,7 +17,6 @@
 #include <linux/completion.h>
 #include <linux/interrupt.h>
 #include <linux/platform_device.h>
-#include <linux/pfn_t.h>
 #include <asm/extmem.h>
 #include <asm/io.h>
 
@@ -28,10 +27,9 @@
 
 static int dcssblk_open(struct block_device *bdev, fmode_t mode);
 static void dcssblk_release(struct gendisk *disk, fmode_t mode);
-static blk_qc_t dcssblk_make_request(struct request_queue *q,
-						struct bio *bio);
+static void dcssblk_make_request(struct request_queue *q, struct bio *bio);
 static long dcssblk_direct_access(struct block_device *bdev, sector_t secnum,
-			 void **kaddr, pfn_t *pfn, long size);
+				 void **kaddr, unsigned long *pfn, long size);
 
 static char dcssblk_segments[DCSSBLK_PARM_LEN] = "\0";
 
@@ -550,10 +548,10 @@ dcssblk_add_store(struct device *dev, struct device_attribute *attr, const char 
 	 */
 	num_of_segments = 0;
 	for (i = 0; (i < count && (buf[i] != '\0') && (buf[i] != '\n')); i++) {
-		for (j = i; j < count &&
-			(buf[j] != ':') &&
+		for (j = i; (buf[j] != ':') &&
 			(buf[j] != '\0') &&
-			(buf[j] != '\n'); j++) {
+			(buf[j] != '\n') &&
+			j < count; j++) {
 			local_buf[j-i] = toupper(buf[j]);
 		}
 		local_buf[j-i] = '\0';
@@ -615,9 +613,9 @@ dcssblk_add_store(struct device *dev, struct device_attribute *attr, const char 
 	dev_info->dcssblk_queue = blk_alloc_queue(GFP_KERNEL);
 	dev_info->gd->queue = dev_info->dcssblk_queue;
 	dev_info->gd->private_data = dev_info;
+	dev_info->gd->driverfs_dev = &dev_info->dev;
 	blk_queue_make_request(dev_info->dcssblk_queue, dcssblk_make_request);
 	blk_queue_logical_block_size(dev_info->dcssblk_queue, 4096);
-	queue_flag_set_unlocked(QUEUE_FLAG_DAX, dev_info->dcssblk_queue);
 
 	seg_byte_size = (dev_info->end - dev_info->start + 1);
 	set_capacity(dev_info->gd, seg_byte_size >> 9); // size in sectors
@@ -655,7 +653,7 @@ dcssblk_add_store(struct device *dev, struct device_attribute *attr, const char 
 		goto put_dev;
 
 	get_device(&dev_info->dev);
-	device_add_disk(&dev_info->dev, dev_info->gd);
+	add_disk(dev_info->gd);
 
 	switch (dev_info->segment_type) {
 		case SEG_TYPE_SR:
@@ -725,7 +723,7 @@ dcssblk_remove_store(struct device *dev, struct device_attribute *attr, const ch
 	/*
 	 * parse input
 	 */
-	for (i = 0; (i < count && (*(buf+i)!='\0') && (*(buf+i)!='\n')); i++) {
+	for (i = 0; ((*(buf+i)!='\0') && (*(buf+i)!='\n') && i < count); i++) {
 		local_buf[i] = toupper(buf[i]);
 	}
 	local_buf[i] = '\0';
@@ -738,15 +736,15 @@ dcssblk_remove_store(struct device *dev, struct device_attribute *attr, const ch
 	dev_info = dcssblk_get_device_by_name(local_buf);
 	if (dev_info == NULL) {
 		up_write(&dcssblk_devices_sem);
-		pr_warn("Device %s cannot be removed because it is not a known device\n",
-			local_buf);
+		pr_warning("Device %s cannot be removed because it is not a "
+			   "known device\n", local_buf);
 		rc = -ENODEV;
 		goto out_buf;
 	}
 	if (atomic_read(&dev_info->use_count) != 0) {
 		up_write(&dcssblk_devices_sem);
-		pr_warn("Device %s cannot be removed while it is in use\n",
-			local_buf);
+		pr_warning("Device %s cannot be removed while it is in "
+			   "use\n", local_buf);
 		rc = -EBUSY;
 		goto out_buf;
 	}
@@ -756,15 +754,14 @@ dcssblk_remove_store(struct device *dev, struct device_attribute *attr, const ch
 	blk_cleanup_queue(dev_info->dcssblk_queue);
 	dev_info->gd->queue = NULL;
 	put_disk(dev_info->gd);
+	device_unregister(&dev_info->dev);
 
 	/* unload all related segments */
 	list_for_each_entry(entry, &dev_info->seg_list, lh)
 		segment_unload(entry->segment_name);
 
-	up_write(&dcssblk_devices_sem);
-
-	device_unregister(&dev_info->dev);
 	put_device(&dev_info->dev);
+	up_write(&dcssblk_devices_sem);
 
 	rc = count;
 out_buf:
@@ -818,7 +815,7 @@ dcssblk_release(struct gendisk *disk, fmode_t mode)
 	up_write(&dcssblk_devices_sem);
 }
 
-static blk_qc_t
+static void
 dcssblk_make_request(struct request_queue *q, struct bio *bio)
 {
 	struct dcssblk_dev_info *dev_info;
@@ -828,8 +825,6 @@ dcssblk_make_request(struct request_queue *q, struct bio *bio)
 	unsigned long page_addr;
 	unsigned long source_addr;
 	unsigned long bytes_done;
-
-	blk_queue_split(q, &bio, q->bio_split);
 
 	bytes_done = 0;
 	dev_info = bio->bi_bdev->bd_disk->private_data;
@@ -851,8 +846,9 @@ dcssblk_make_request(struct request_queue *q, struct bio *bio)
 		case SEG_TYPE_SC:
 			/* cannot write to these segments */
 			if (bio_data_dir(bio) == WRITE) {
-				pr_warn("Writing to %s failed because it is a read-only device\n",
-					dev_name(&dev_info->dev));
+				pr_warning("Writing to %s failed because it "
+					   "is a read-only device\n",
+					   dev_name(&dev_info->dev));
 				goto fail;
 			}
 		}
@@ -875,16 +871,15 @@ dcssblk_make_request(struct request_queue *q, struct bio *bio)
 		}
 		bytes_done += bvec.bv_len;
 	}
-	bio_endio(bio);
-	return BLK_QC_T_NONE;
+	bio_endio(bio, 0);
+	return;
 fail:
 	bio_io_error(bio);
-	return BLK_QC_T_NONE;
 }
 
 static long
 dcssblk_direct_access (struct block_device *bdev, sector_t secnum,
-			void **kaddr, pfn_t *pfn, long size)
+			void **kaddr, unsigned long *pfn, long size)
 {
 	struct dcssblk_dev_info *dev_info;
 	unsigned long offset, dev_sz;
@@ -892,10 +887,10 @@ dcssblk_direct_access (struct block_device *bdev, sector_t secnum,
 	dev_info = bdev->bd_disk->private_data;
 	if (!dev_info)
 		return -ENODEV;
-	dev_sz = dev_info->end - dev_info->start + 1;
+	dev_sz = dev_info->end - dev_info->start;
 	offset = secnum * 512;
-	*kaddr = (void *) dev_info->start + offset;
-	*pfn = __pfn_to_pfn_t(PFN_DOWN(dev_info->start + offset), PFN_DEV);
+	*kaddr = (void *) (dev_info->start + offset);
+	*pfn = virt_to_phys(*kaddr) >> PAGE_SHIFT;
 
 	return dev_sz - offset;
 }
@@ -909,10 +904,10 @@ dcssblk_check_params(void)
 
 	for (i = 0; (i < DCSSBLK_PARM_LEN) && (dcssblk_segments[i] != '\0');
 	     i++) {
-		for (j = i; (j < DCSSBLK_PARM_LEN) &&
-			    (dcssblk_segments[j] != ',')  &&
+		for (j = i; (dcssblk_segments[j] != ',')  &&
 			    (dcssblk_segments[j] != '\0') &&
-			    (dcssblk_segments[j] != '('); j++)
+			    (dcssblk_segments[j] != '(')  &&
+			    (j < DCSSBLK_PARM_LEN); j++)
 		{
 			buf[j-i] = dcssblk_segments[j];
 		}

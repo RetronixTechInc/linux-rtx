@@ -14,7 +14,6 @@
 #include <asm/proc-fns.h>
 #include <asm/tlbflush.h>
 #include <asm/page.h>
-#include "dma.h"
 
 #ifndef MULTI_CPU
 EXPORT_SYMBOL(cpu_dcache_clean_area);

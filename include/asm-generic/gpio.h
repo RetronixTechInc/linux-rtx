@@ -26,11 +26,7 @@
  */
 
 #ifndef ARCH_NR_GPIOS
-#if defined(CONFIG_ARCH_NR_GPIO) && CONFIG_ARCH_NR_GPIO > 0
-#define ARCH_NR_GPIOS CONFIG_ARCH_NR_GPIO
-#else
 #define ARCH_NR_GPIOS		512
-#endif
 #endif
 
 /*
@@ -121,21 +117,21 @@ extern void gpio_free_array(const struct gpio *array, size_t num);
  * A sysfs interface can be exported by individual drivers if they want,
  * but more typically is configured entirely from userspace.
  */
+extern int gpio_export_with_name(unsigned gpio, bool direction_may_change, const char *name) ;
 static inline int gpio_export(unsigned gpio, bool direction_may_change)
 {
 	return gpiod_export(gpio_to_desc(gpio), direction_may_change);
-}
-
-int __gpiod_export(struct gpio_desc *desc, bool direction_may_change, const char *name);
-static inline int gpio_export_with_name(unsigned gpio, bool direction_may_change, const char *name)
-{
-	return __gpiod_export(gpio_to_desc(gpio), direction_may_change, name);
 }
 
 static inline int gpio_export_link(struct device *dev, const char *name,
 				   unsigned gpio)
 {
 	return gpiod_export_link(dev, name, gpio_to_desc(gpio));
+}
+
+static inline int gpio_sysfs_set_active_low(unsigned gpio, int value)
+{
+	return gpiod_sysfs_set_active_low(gpio_to_desc(gpio), value);
 }
 
 static inline void gpio_unexport(unsigned gpio)

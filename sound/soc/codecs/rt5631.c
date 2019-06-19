@@ -174,15 +174,16 @@ static const DECLARE_TLV_DB_SCALE(out_vol_tlv, -4650, 150, 0);
 static const DECLARE_TLV_DB_SCALE(dac_vol_tlv, -95625, 375, 0);
 static const DECLARE_TLV_DB_SCALE(in_vol_tlv, -3450, 150, 0);
 /* {0, +20, +24, +30, +35, +40, +44, +50, +52}dB */
-static const DECLARE_TLV_DB_RANGE(mic_bst_tlv,
+static unsigned int mic_bst_tlv[] = {
+	TLV_DB_RANGE_HEAD(7),
 	0, 0, TLV_DB_SCALE_ITEM(0, 0, 0),
 	1, 1, TLV_DB_SCALE_ITEM(2000, 0, 0),
 	2, 2, TLV_DB_SCALE_ITEM(2400, 0, 0),
 	3, 5, TLV_DB_SCALE_ITEM(3000, 500, 0),
 	6, 6, TLV_DB_SCALE_ITEM(4400, 0, 0),
 	7, 7, TLV_DB_SCALE_ITEM(5000, 0, 0),
-	8, 8, TLV_DB_SCALE_ITEM(5200, 0, 0)
-);
+	8, 8, TLV_DB_SCALE_ITEM(5200, 0, 0),
+};
 
 static int rt5631_dmic_get(struct snd_kcontrol *kcontrol,
 		struct snd_ctl_elem_value *ucontrol)
@@ -1545,7 +1546,7 @@ static int rt5631_set_bias_level(struct snd_soc_codec *codec,
 		break;
 
 	case SND_SOC_BIAS_STANDBY:
-		if (snd_soc_codec_get_bias_level(codec) == SND_SOC_BIAS_OFF) {
+		if (codec->dapm.bias_level == SND_SOC_BIAS_OFF) {
 			snd_soc_update_bits(codec, RT5631_PWR_MANAG_ADD3,
 				RT5631_PWR_VREF | RT5631_PWR_MAIN_BIAS,
 				RT5631_PWR_VREF | RT5631_PWR_MAIN_BIAS);
@@ -1568,6 +1569,7 @@ static int rt5631_set_bias_level(struct snd_soc_codec *codec,
 	default:
 		break;
 	}
+	codec->dapm.bias_level = level;
 
 	return 0;
 }
@@ -1613,7 +1615,7 @@ static int rt5631_probe(struct snd_soc_codec *codec)
 			RT5631_DMIC_R_CH_LATCH_RISING);
 	}
 
-	snd_soc_codec_init_bias_level(codec, SND_SOC_BIAS_STANDBY);
+	codec->dapm.bias_level = SND_SOC_BIAS_STANDBY;
 
 	return 0;
 }
@@ -1657,14 +1659,12 @@ static struct snd_soc_codec_driver soc_codec_dev_rt5631 = {
 	.probe = rt5631_probe,
 	.set_bias_level = rt5631_set_bias_level,
 	.suspend_bias_off = true,
-	.component_driver = {
-		.controls		= rt5631_snd_controls,
-		.num_controls		= ARRAY_SIZE(rt5631_snd_controls),
-		.dapm_widgets		= rt5631_dapm_widgets,
-		.num_dapm_widgets	= ARRAY_SIZE(rt5631_dapm_widgets),
-		.dapm_routes		= rt5631_dapm_routes,
-		.num_dapm_routes	= ARRAY_SIZE(rt5631_dapm_routes),
-	},
+	.controls = rt5631_snd_controls,
+	.num_controls = ARRAY_SIZE(rt5631_snd_controls),
+	.dapm_widgets = rt5631_dapm_widgets,
+	.num_dapm_widgets = ARRAY_SIZE(rt5631_dapm_widgets),
+	.dapm_routes = rt5631_dapm_routes,
+	.num_dapm_routes = ARRAY_SIZE(rt5631_dapm_routes),
 };
 
 static const struct i2c_device_id rt5631_i2c_id[] = {
@@ -1726,6 +1726,7 @@ static int rt5631_i2c_remove(struct i2c_client *client)
 static struct i2c_driver rt5631_i2c_driver = {
 	.driver = {
 		.name = "rt5631",
+		.owner = THIS_MODULE,
 		.of_match_table = of_match_ptr(rt5631_i2c_dt_ids),
 	},
 	.probe = rt5631_i2c_probe,

@@ -28,7 +28,6 @@ struct kvm_run;
 struct kvm_userspace_memory_region;
 struct kvm_vcpu;
 struct kvm_vcpu_init;
-struct kvm_memslots;
 
 enum kvm_mr_change;
 
@@ -53,7 +52,7 @@ typedef unsigned long  hva_t;
 typedef u64            hpa_t;
 typedef u64            hfn_t;
 
-typedef hfn_t kvm_pfn_t;
+typedef hfn_t pfn_t;
 
 struct gfn_to_hva_cache {
 	u64 generation;

@@ -55,8 +55,8 @@
 #define LOG_DISCARD_FLAG (1 << 2)
 #define LOG_MARK_FLAG (1 << 3)
 
-#define WRITE_LOG_VERSION 1ULL
-#define WRITE_LOG_MAGIC 0x6a736677736872ULL
+#define WRITE_LOG_VERSION 1
+#define WRITE_LOG_MAGIC 0x6a736677736872
 
 /*
  * The disk format for this is braindead simple.
@@ -146,20 +146,24 @@ static void put_io_block(struct log_writes_c *lc)
 	}
 }
 
-static void log_end_io(struct bio *bio)
+static void log_end_io(struct bio *bio, int err)
 {
 	struct log_writes_c *lc = bio->bi_private;
+	struct bio_vec *bvec;
+	int i;
 
-	if (bio->bi_error) {
+	if (err) {
 		unsigned long flags;
 
-		DMERR("Error writing log block, error=%d", bio->bi_error);
+		DMERR("Error writing log block, error=%d", err);
 		spin_lock_irqsave(&lc->blocks_lock, flags);
 		lc->logging_enabled = false;
 		spin_unlock_irqrestore(&lc->blocks_lock, flags);
 	}
 
-	bio_free_pages(bio);
+	bio_for_each_segment_all(bvec, bio, i)
+		__free_page(bvec->bv_page);
+
 	put_io_block(lc);
 	bio_put(bio);
 }
@@ -201,7 +205,7 @@ static int write_metadata(struct log_writes_c *lc, void *entry,
 	bio->bi_bdev = lc->logdev->bdev;
 	bio->bi_end_io = log_end_io;
 	bio->bi_private = lc;
-	bio_set_op_attrs(bio, REQ_OP_WRITE, 0);
+	set_bit(BIO_UPTODATE, &bio->bi_flags);
 
 	page = alloc_page(GFP_KERNEL);
 	if (!page) {
@@ -223,7 +227,7 @@ static int write_metadata(struct log_writes_c *lc, void *entry,
 		DMERR("Couldn't add page to the log block");
 		goto error_bio;
 	}
-	submit_bio(bio);
+	submit_bio(WRITE, bio);
 	return 0;
 error_bio:
 	bio_put(bio);
@@ -255,18 +259,18 @@ static int log_one_block(struct log_writes_c *lc,
 		goto out;
 	sector++;
 
-	atomic_inc(&lc->io_blocks);
-	bio = bio_alloc(GFP_KERNEL, min(block->vec_cnt, BIO_MAX_PAGES));
+	bio = bio_alloc(GFP_KERNEL, block->vec_cnt);
 	if (!bio) {
 		DMERR("Couldn't alloc log bio");
 		goto error;
 	}
+	atomic_inc(&lc->io_blocks);
 	bio->bi_iter.bi_size = 0;
 	bio->bi_iter.bi_sector = sector;
 	bio->bi_bdev = lc->logdev->bdev;
 	bio->bi_end_io = log_end_io;
 	bio->bi_private = lc;
-	bio_set_op_attrs(bio, REQ_OP_WRITE, 0);
+	set_bit(BIO_UPTODATE, &bio->bi_flags);
 
 	for (i = 0; i < block->vec_cnt; i++) {
 		/*
@@ -277,8 +281,8 @@ static int log_one_block(struct log_writes_c *lc,
 				   block->vecs[i].bv_len, 0);
 		if (ret != block->vecs[i].bv_len) {
 			atomic_inc(&lc->io_blocks);
-			submit_bio(bio);
-			bio = bio_alloc(GFP_KERNEL, min(block->vec_cnt - i, BIO_MAX_PAGES));
+			submit_bio(WRITE, bio);
+			bio = bio_alloc(GFP_KERNEL, block->vec_cnt - i);
 			if (!bio) {
 				DMERR("Couldn't alloc log bio");
 				goto error;
@@ -288,7 +292,7 @@ static int log_one_block(struct log_writes_c *lc,
 			bio->bi_bdev = lc->logdev->bdev;
 			bio->bi_end_io = log_end_io;
 			bio->bi_private = lc;
-			bio_set_op_attrs(bio, REQ_OP_WRITE, 0);
+			set_bit(BIO_UPTODATE, &bio->bi_flags);
 
 			ret = bio_add_page(bio, block->vecs[i].bv_page,
 					   block->vecs[i].bv_len, 0);
@@ -300,7 +304,7 @@ static int log_one_block(struct log_writes_c *lc,
 		}
 		sector += block->vecs[i].bv_len >> SECTOR_SHIFT;
 	}
-	submit_bio(bio);
+	submit_bio(WRITE, bio);
 out:
 	kfree(block->data);
 	kfree(block);
@@ -416,7 +420,6 @@ static int log_writes_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 	struct log_writes_c *lc;
 	struct dm_arg_set as;
 	const char *devname, *logdevname;
-	int ret;
 
 	as.argc = argc;
 	as.argv = argv;
@@ -440,24 +443,20 @@ static int log_writes_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 	atomic_set(&lc->pending_blocks, 0);
 
 	devname = dm_shift_arg(&as);
-	ret = dm_get_device(ti, devname, dm_table_get_mode(ti->table), &lc->dev);
-	if (ret) {
+	if (dm_get_device(ti, devname, dm_table_get_mode(ti->table), &lc->dev)) {
 		ti->error = "Device lookup failed";
 		goto bad;
 	}
 
 	logdevname = dm_shift_arg(&as);
-	ret = dm_get_device(ti, logdevname, dm_table_get_mode(ti->table),
-			    &lc->logdev);
-	if (ret) {
+	if (dm_get_device(ti, logdevname, dm_table_get_mode(ti->table), &lc->logdev)) {
 		ti->error = "Log device lookup failed";
 		dm_put_device(ti, lc->dev);
 		goto bad;
 	}
 
 	lc->log_kthread = kthread_run(log_writes_kthread, lc, "log-write");
-	if (IS_ERR(lc->log_kthread)) {
-		ret = PTR_ERR(lc->log_kthread);
+	if (!lc->log_kthread) {
 		ti->error = "Couldn't alloc kthread";
 		dm_put_device(ti, lc->dev);
 		dm_put_device(ti, lc->logdev);
@@ -474,13 +473,13 @@ static int log_writes_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 	ti->flush_supported = true;
 	ti->num_discard_bios = 1;
 	ti->discards_supported = true;
-	ti->per_io_data_size = sizeof(struct per_bio_data);
+	ti->per_bio_data_size = sizeof(struct per_bio_data);
 	ti->private = lc;
 	return 0;
 
 bad:
 	kfree(lc);
-	return ret;
+	return -EINVAL;
 }
 
 static int log_mark(struct log_writes_c *lc, char *data)
@@ -551,9 +550,9 @@ static int log_writes_map(struct dm_target *ti, struct bio *bio)
 	struct bio_vec bv;
 	size_t alloc_size;
 	int i = 0;
-	bool flush_bio = (bio->bi_opf & REQ_PREFLUSH);
-	bool fua_bio = (bio->bi_opf & REQ_FUA);
-	bool discard_bio = (bio_op(bio) == REQ_OP_DISCARD);
+	bool flush_bio = (bio->bi_rw & REQ_FLUSH);
+	bool fua_bio = (bio->bi_rw & REQ_FUA);
+	bool discard_bio = (bio->bi_rw & REQ_DISCARD);
 
 	pb->block = NULL;
 
@@ -607,7 +606,7 @@ static int log_writes_map(struct dm_target *ti, struct bio *bio)
 		WARN_ON(flush_bio || fua_bio);
 		if (lc->device_supports_discard)
 			goto map_bio;
-		bio_endio(bio);
+		bio_endio(bio, 0);
 		return DM_MAPIO_SUBMITTED;
 	}
 
@@ -713,19 +712,35 @@ static void log_writes_status(struct dm_target *ti, status_type_t type,
 	}
 }
 
-static int log_writes_prepare_ioctl(struct dm_target *ti,
-		struct block_device **bdev, fmode_t *mode)
+static int log_writes_ioctl(struct dm_target *ti, unsigned int cmd,
+			    unsigned long arg)
 {
 	struct log_writes_c *lc = ti->private;
 	struct dm_dev *dev = lc->dev;
+	int r = 0;
 
-	*bdev = dev->bdev;
 	/*
 	 * Only pass ioctls through if the device sizes match exactly.
 	 */
 	if (ti->len != i_size_read(dev->bdev->bd_inode) >> SECTOR_SHIFT)
-		return 1;
-	return 0;
+		r = scsi_verify_blk_ioctl(NULL, cmd);
+
+	return r ? : __blkdev_driver_ioctl(dev->bdev, dev->mode, cmd, arg);
+}
+
+static int log_writes_merge(struct dm_target *ti, struct bvec_merge_data *bvm,
+			    struct bio_vec *biovec, int max_size)
+{
+	struct log_writes_c *lc = ti->private;
+	struct request_queue *q = bdev_get_queue(lc->dev->bdev);
+
+	if (!q->merge_bvec_fn)
+		return max_size;
+
+	bvm->bi_bdev = lc->dev->bdev;
+	bvm->bi_sector = dm_target_offset(ti, bvm->bi_sector);
+
+	return min(max_size, q->merge_bvec_fn(q, bvm, biovec));
 }
 
 static int log_writes_iterate_devices(struct dm_target *ti,
@@ -780,7 +795,8 @@ static struct target_type log_writes_target = {
 	.map    = log_writes_map,
 	.end_io = normal_end_io,
 	.status = log_writes_status,
-	.prepare_ioctl = log_writes_prepare_ioctl,
+	.ioctl	= log_writes_ioctl,
+	.merge	= log_writes_merge,
 	.message = log_writes_message,
 	.iterate_devices = log_writes_iterate_devices,
 	.io_hints = log_writes_io_hints,

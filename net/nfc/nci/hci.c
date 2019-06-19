@@ -70,7 +70,6 @@ struct nci_hcp_packet {
 #define NCI_HCI_ANY_SET_PARAMETER  0x01
 #define NCI_HCI_ANY_GET_PARAMETER  0x02
 #define NCI_HCI_ANY_CLOSE_PIPE     0x04
-#define NCI_HCI_ADM_CLEAR_ALL_PIPE 0x14
 
 #define NCI_HFP_NO_CHAINING        0x80
 
@@ -79,8 +78,6 @@ struct nci_hcp_packet {
 #define NCI_EVT_HOT_PLUG           0x03
 
 #define NCI_HCI_ADMIN_PARAM_SESSION_IDENTITY       0x01
-#define NCI_HCI_ADM_CREATE_PIPE			0x10
-#define NCI_HCI_ADM_DELETE_PIPE			0x11
 
 /* HCP headers */
 #define NCI_HCI_HCP_PACKET_HEADER_LEN      1
@@ -270,20 +267,6 @@ int nci_hci_send_cmd(struct nci_dev *ndev, u8 gate, u8 cmd,
 }
 EXPORT_SYMBOL(nci_hci_send_cmd);
 
-int nci_hci_clear_all_pipes(struct nci_dev *ndev)
-{
-	int r;
-
-	r = nci_hci_send_cmd(ndev, NCI_HCI_ADMIN_GATE,
-			     NCI_HCI_ADM_CLEAR_ALL_PIPE, NULL, 0, NULL);
-	if (r < 0)
-		return r;
-
-	nci_hci_reset_pipes(ndev->hci_dev);
-	return r;
-}
-EXPORT_SYMBOL(nci_hci_clear_all_pipes);
-
 static void nci_hci_event_received(struct nci_dev *ndev, u8 pipe,
 				   u8 event, struct sk_buff *skb)
 {
@@ -407,7 +390,7 @@ static void nci_hci_hcp_message_rx(struct nci_dev *ndev, u8 pipe,
 		break;
 	}
 
-	nci_req_complete(ndev, NCI_STATUS_OK);
+	nci_req_complete(ndev, 0);
 }
 
 static void nci_hci_msg_rx_work(struct work_struct *work)
@@ -525,43 +508,6 @@ int nci_hci_open_pipe(struct nci_dev *ndev, u8 pipe)
 }
 EXPORT_SYMBOL(nci_hci_open_pipe);
 
-static u8 nci_hci_create_pipe(struct nci_dev *ndev, u8 dest_host,
-			      u8 dest_gate, int *result)
-{
-	u8 pipe;
-	struct sk_buff *skb;
-	struct nci_hci_create_pipe_params params;
-	struct nci_hci_create_pipe_resp *resp;
-
-	pr_debug("gate=%d\n", dest_gate);
-
-	params.src_gate = NCI_HCI_ADMIN_GATE;
-	params.dest_host = dest_host;
-	params.dest_gate = dest_gate;
-
-	*result = nci_hci_send_cmd(ndev, NCI_HCI_ADMIN_GATE,
-				   NCI_HCI_ADM_CREATE_PIPE,
-				   (u8 *)&params, sizeof(params), &skb);
-	if (*result < 0)
-		return NCI_HCI_INVALID_PIPE;
-
-	resp = (struct nci_hci_create_pipe_resp *)skb->data;
-	pipe = resp->pipe;
-	kfree_skb(skb);
-
-	pr_debug("pipe created=%d\n", pipe);
-
-	return pipe;
-}
-
-static int nci_hci_delete_pipe(struct nci_dev *ndev, u8 pipe)
-{
-	pr_debug("\n");
-
-	return nci_hci_send_cmd(ndev, NCI_HCI_ADMIN_GATE,
-				NCI_HCI_ADM_DELETE_PIPE, &pipe, 1, NULL);
-}
-
 int nci_hci_set_param(struct nci_dev *ndev, u8 gate, u8 idx,
 		      const u8 *param, size_t param_len)
 {
@@ -655,7 +601,6 @@ EXPORT_SYMBOL(nci_hci_get_param);
 int nci_hci_connect_gate(struct nci_dev *ndev,
 			 u8 dest_host, u8 dest_gate, u8 pipe)
 {
-	bool pipe_created = false;
 	int r;
 
 	if (pipe == NCI_HCI_DO_NOT_OPEN_PIPE)
@@ -674,26 +619,12 @@ int nci_hci_connect_gate(struct nci_dev *ndev,
 	case NCI_HCI_ADMIN_GATE:
 		pipe = NCI_HCI_ADMIN_PIPE;
 	break;
-	default:
-		pipe = nci_hci_create_pipe(ndev, dest_host, dest_gate, &r);
-		if (pipe == NCI_HCI_INVALID_PIPE)
-			return r;
-		pipe_created = true;
-		break;
 	}
 
 open_pipe:
 	r = nci_hci_open_pipe(ndev, pipe);
-	if (r < 0) {
-		if (pipe_created) {
-			if (nci_hci_delete_pipe(ndev, pipe) < 0) {
-				/* TODO: Cannot clean by deleting pipe...
-				 * -> inconsistent state
-				 */
-			}
-		}
+	if (r < 0)
 		return r;
-	}
 
 	ndev->hci_dev->pipes[pipe].gate = dest_gate;
 	ndev->hci_dev->pipes[pipe].host = dest_host;
@@ -746,24 +677,23 @@ int nci_hci_dev_session_init(struct nci_dev *ndev)
 				 ndev->hci_dev->init_data.gates[0].gate,
 				 ndev->hci_dev->init_data.gates[0].pipe);
 	if (r < 0)
-		return r;
+		goto exit;
 
 	r = nci_hci_get_param(ndev, NCI_HCI_ADMIN_GATE,
 			      NCI_HCI_ADMIN_PARAM_SESSION_IDENTITY, &skb);
 	if (r < 0)
-		return r;
+		goto exit;
 
 	if (skb->len &&
 	    skb->len == strlen(ndev->hci_dev->init_data.session_id) &&
-	    !memcmp(ndev->hci_dev->init_data.session_id, skb->data, skb->len) &&
+	    memcmp(ndev->hci_dev->init_data.session_id,
+		   skb->data, skb->len) == 0 &&
 	    ndev->ops->hci_load_session) {
 		/* Restore gate<->pipe table from some proprietary location. */
 		r = ndev->ops->hci_load_session(ndev);
-	} else {
-		r = nci_hci_clear_all_pipes(ndev);
 		if (r < 0)
 			goto exit;
-
+	} else {
 		r = nci_hci_dev_connect_gates(ndev,
 					      ndev->hci_dev->init_data.gate_count,
 					      ndev->hci_dev->init_data.gates);
@@ -775,6 +705,8 @@ int nci_hci_dev_session_init(struct nci_dev *ndev)
 				      ndev->hci_dev->init_data.session_id,
 				      strlen(ndev->hci_dev->init_data.session_id));
 	}
+	if (r == 0)
+		goto exit;
 
 exit:
 	kfree_skb(skb);

@@ -69,17 +69,16 @@ static void tcp_veno_init(struct sock *sk)
 }
 
 /* Do rtt sampling needed for Veno. */
-static void tcp_veno_pkts_acked(struct sock *sk,
-				const struct ack_sample *sample)
+static void tcp_veno_pkts_acked(struct sock *sk, u32 cnt, s32 rtt_us)
 {
 	struct veno *veno = inet_csk_ca(sk);
 	u32 vrtt;
 
-	if (sample->rtt_us < 0)
+	if (rtt_us < 0)
 		return;
 
 	/* Never allow zero rtt or baseRTT */
-	vrtt = sample->rtt_us + 1;
+	vrtt = rtt_us + 1;
 
 	/* Filter to find propagation delay: */
 	if (vrtt < veno->basertt)
@@ -151,7 +150,7 @@ static void tcp_veno_cong_avoid(struct sock *sk, u32 ack, u32 acked)
 
 		veno->diff = (tp->snd_cwnd << V_PARAM_SHIFT) - target_cwnd;
 
-		if (tcp_in_slow_start(tp)) {
+		if (tp->snd_cwnd <= tp->snd_ssthresh) {
 			/* Slow start.  */
 			tcp_slow_start(tp, acked);
 		} else {

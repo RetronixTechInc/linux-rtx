@@ -125,33 +125,21 @@
 		power {
 			label = "Power Button";
 			gpios = <&gpio5 2 GPIO_ACTIVE_LOW>;
-			wakeup-source;
+			gpio-key,wakeup;
 			linux,code = <KEY_POWER>;
 		};
 	};
 
 };
 
-&reg_arm {
-	vin-supply = <&sw1a_reg>;
-	regulator-allow-bypass;
-};
-
-&reg_soc {
-	vin-supply = <&sw1c_reg>;
-	regulator-allow-bypass;
-};
-
-&reg_pu {
-	vin-supply = <&sw1c_reg>;
-	regulator-allow-bypass;
+&cpu0 {
+	arm-supply = <&sw1a_reg>;
+	soc-supply = <&sw1c_reg>;
 };
 
 &clks {
-	assigned-clocks = <&clks IMX6QDL_CLK_LDB_DI0_SEL>,
-			  <&clks IMX6QDL_CLK_LDB_DI1_SEL>;
-	assigned-clock-parents = <&clks IMX6QDL_CLK_MMDC_CH1_AXI>,
-				 <&clks IMX6QDL_CLK_MMDC_CH1_AXI>;
+	fsl,ldb-di0-parent = <&clks IMX6QDL_CLK_PLL2_PFD0_352M>;
+	fsl,ldb-di1-parent = <&clks IMX6QDL_CLK_PLL2_PFD0_352M>;
 };
 
 &ecspi1 {
@@ -163,7 +151,7 @@
 	flash: m25p80@0 {
 		#address-cells = <1>;
 		#size-cells = <1>;
-		compatible = "micron,n25q128a13", "jedec,spi-nor";
+		compatible = "micron,n25q128a13";
 		spi-max-frequency = <20000000>;
 		reg = <0>;
 	};
@@ -182,7 +170,7 @@
 	pinctrl-0 = <&pinctrl_i2c2>;
 	status = "okay";
 
-	hdmi_edid: edid@50 {
+	hdmi: edid@50 {
 		compatible = "fsl,imx6-hdmi-i2c";
 		reg = <0x50>;
 	};
@@ -286,7 +274,7 @@
 
 			vgen6_reg: vgen6 {
 				regulator-min-microvolt = <1800000>;
-				regulator-max-microvolt = <3300000>;
+				regulator-max-microvolt = <3150000>;
 				regulator-always-on;
 			};
 		};
@@ -483,7 +471,7 @@
 
 &hdmi_core {
 	ipu_id = <0>;
-	disp_id = <1>;
+	disp_id = <0>;
 	status = "okay";
 };
 
@@ -605,6 +593,6 @@
 &wdog2 {
 	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl_wdog>;
-	fsl,ext-reset-output;
+	fsl,wdog_b;
 	status = "okay";
 };

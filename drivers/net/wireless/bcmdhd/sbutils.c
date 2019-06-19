@@ -234,10 +234,12 @@ _sb_coresba(si_info_t *sii)
 		break;
 	}
 
+#ifdef BCMSDIO
 	case SPI_BUS:
 	case SDIO_BUS:
 		sbaddr = (uint32)(uintptr)sii->curmap;
 		break;
+#endif
 
 
 	default:
@@ -708,6 +710,7 @@ _sb_setcoreidx(si_info_t *sii, uint coreidx)
 		regs = sii->curmap;
 		break;
 	}
+#ifdef BCMSDIO
 	case SPI_BUS:
 	case SDIO_BUS:
 		/* map new one */
@@ -717,6 +720,7 @@ _sb_setcoreidx(si_info_t *sii, uint coreidx)
 		}
 		regs = cores_info->regs[coreidx];
 		break;
+#endif	/* BCMSDIO */
 
 
 	default:
@@ -986,7 +990,9 @@ sb_set_initiator_to(si_t *sih, uint32 to, uint idx)
 			idx = SI_CC_IDX;
 			break;
 		case PCMCIA_BUS:
+#ifdef BCMSDIO
 		case SDIO_BUS:
+#endif
 			idx = si_findcoreidx(sih, PCMCIA_CORE_ID, 0);
 			break;
 		case SI_BUS:

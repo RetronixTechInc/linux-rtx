@@ -48,55 +48,6 @@ static struct fb_videomode lcdif_modedb[] = {
 	FB_SYNC_CLK_LAT_FALL,
 	FB_VMODE_NONINTERLACED,
 	0,},
-    {
-    "LDB-XGA", 60, 1024, 768, 15385, 220, 40, 21, 7, 60, 10,
-    0,
-    FB_VMODE_NONINTERLACED,
-    FB_MODE_IS_DETAILED,},
-    {
-    "LDB-WXGA", 60, 1360, 768, 14148, 158, 1, 14, 1, 1, 1,
-    0,
-    FB_VMODE_NONINTERLACED,
-    FB_MODE_IS_DETAILED,},
-    {
-    "LDB-1080P60", 60, 1920, 1080, 6734, 148, 88, 36, 4, 44, 5,
-    FB_SYNC_HOR_HIGH_ACT | FB_SYNC_VERT_HIGH_ACT,
-    FB_VMODE_NONINTERLACED,
-    FB_MODE_IS_VESA},
-    {
-    "LDB-WUXGA", 60, 1920, 1200, 6413, 120, 88, 4, 4, 16, 4,
-    FB_SYNC_HOR_HIGH_ACT | FB_SYNC_VERT_HIGH_ACT,
-    FB_VMODE_NONINTERLACED,
-    FB_MODE_IS_VESA},
-#ifdef CONFIG_MACH_ADVANTECH_GF08
-	{
-	"LDB-GRG", 60, 800, 480, 32122,
-	40, 40,
-	32, 13,
-	48, 3,
-	0,
-	FB_VMODE_NONINTERLACED,
-	FB_MODE_IS_DETAILED,},
-
-	{
-	/* VGA 1280x1024 108M pixel clk output -yixuan add*/
-	"LDB-SXGA", 60, 1280, 1024, 9259,
-	358, 38,
-	38, 2,
-	12, 2,
-	0,
-	FB_VMODE_NONINTERLACED,
-	FB_MODE_IS_DETAILED,},
-
-	{
-	"LDB-SVGA", 60, 800, 600, 25132,
-	200, 36,
-	13, 10,
-	20, 5,
-	0,
-	FB_VMODE_NONINTERLACED,
-	FB_MODE_IS_DETAILED,},
-#endif
 };
 static int lcdif_modedb_sz = ARRAY_SIZE(lcdif_modedb);
 

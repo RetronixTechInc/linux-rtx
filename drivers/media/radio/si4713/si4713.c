@@ -1609,10 +1609,8 @@ static int si4713_probe(struct i2c_client *client,
 		return 0;
 
 	si4713_pdev = platform_device_alloc("radio-si4713", -1);
-	if (!si4713_pdev) {
-		rval = -ENOMEM;
+	if (!si4713_pdev)
 		goto put_main_pdev;
-	}
 
 	si4713_pdev_pdata.subdev = client;
 	rval = platform_device_add_data(si4713_pdev, &si4713_pdev_pdata,

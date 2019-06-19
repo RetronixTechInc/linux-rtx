@@ -105,21 +105,15 @@ static void queue_process(struct work_struct *work)
 	while ((skb = skb_dequeue(&npinfo->txq))) {
 		struct net_device *dev = skb->dev;
 		struct netdev_queue *txq;
-		unsigned int q_index;
 
 		if (!netif_device_present(dev) || !netif_running(dev)) {
 			kfree_skb(skb);
 			continue;
 		}
 
+		txq = skb_get_tx_queue(dev, skb);
+
 		local_irq_save(flags);
-		/* check if skb->queue_mapping is still valid */
-		q_index = skb_get_queue_mapping(skb);
-		if (unlikely(q_index >= dev->real_num_tx_queues)) {
-			q_index = q_index % dev->real_num_tx_queues;
-			skb_set_queue_mapping(skb, q_index);
-		}
-		txq = netdev_get_tx_queue(dev, q_index);
 		HARD_TX_LOCK(dev, txq, smp_processor_id());
 		if (netif_xmit_frozen_or_stopped(txq) ||
 		    netpoll_start_xmit(skb, dev, txq) != NETDEV_TX_OK) {
@@ -146,42 +140,36 @@ static void queue_process(struct work_struct *work)
  * case. Further, we test the poll_owner to avoid recursion on UP
  * systems where the lock doesn't exist.
  */
-static void poll_one_napi(struct napi_struct *napi)
+static int poll_one_napi(struct napi_struct *napi, int budget)
 {
-	int work = 0;
+	int work;
 
 	/* net_rx_action's ->poll() invocations and our's are
 	 * synchronized by this test which is only made while
 	 * holding the napi->poll_lock.
 	 */
 	if (!test_bit(NAPI_STATE_SCHED, &napi->state))
-		return;
+		return budget;
 
-	/* If we set this bit but see that it has already been set,
-	 * that indicates that napi has been disabled and we need
-	 * to abort this operation
-	 */
-	if (test_and_set_bit(NAPI_STATE_NPSVC, &napi->state))
-		return;
+	set_bit(NAPI_STATE_NPSVC, &napi->state);
 
-	/* We explicilty pass the polling call a budget of 0 to
-	 * indicate that we are clearing the Tx path only.
-	 */
-	work = napi->poll(napi, 0);
-	WARN_ONCE(work, "%pF exceeded budget in poll\n", napi->poll);
-	trace_napi_poll(napi, work, 0);
+	work = napi->poll(napi, budget);
+	WARN_ONCE(work > budget, "%pF exceeded budget in poll\n", napi->poll);
+	trace_napi_poll(napi);
 
 	clear_bit(NAPI_STATE_NPSVC, &napi->state);
+
+	return budget - work;
 }
 
-static void poll_napi(struct net_device *dev)
+static void poll_napi(struct net_device *dev, int budget)
 {
 	struct napi_struct *napi;
 
 	list_for_each_entry(napi, &dev->napi_list, dev_list) {
 		if (napi->poll_owner != smp_processor_id() &&
 		    spin_trylock(&napi->poll_lock)) {
-			poll_one_napi(napi);
+			budget = poll_one_napi(napi, budget);
 			spin_unlock(&napi->poll_lock);
 		}
 	}
@@ -191,6 +179,7 @@ static void netpoll_poll_dev(struct net_device *dev)
 {
 	const struct net_device_ops *ops;
 	struct netpoll_info *ni = rcu_dereference_bh(dev->npinfo);
+	int budget = 0;
 
 	/* Don't do any rx activity if the dev_lock mutex is held
 	 * the dev_open/close paths use this to block netpoll activity
@@ -213,7 +202,7 @@ static void netpoll_poll_dev(struct net_device *dev)
 	/* Process pending work on NIC */
 	ops->ndo_poll_controller(dev);
 
-	poll_napi(dev);
+	poll_napi(dev, budget);
 
 	up(&ni->dev_lock);
 
@@ -390,8 +379,6 @@ void netpoll_send_udp(struct netpoll *np, const char *msg, int len)
 	struct ethhdr *eth;
 	static atomic_t ip_ident;
 	struct ipv6hdr *ip6h;
-
-	WARN_ON_ONCE(!irqs_disabled());
 
 	udp_len = len + sizeof(*udph);
 	if (np->ipv6)

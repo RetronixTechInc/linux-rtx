@@ -278,7 +278,7 @@ static ssize_t iowarrior_read(struct file *file, char __user *buffer,
 	dev = file->private_data;
 
 	/* verify that the device wasn't unplugged */
-	if (!dev || !dev->present)
+	if (dev == NULL || !dev->present)
 		return -ENODEV;
 
 	dev_dbg(&dev->interface->dev, "minor %d, count = %zd\n",
@@ -413,6 +413,8 @@ static ssize_t iowarrior_write(struct file *file,
 		int_out_urb = usb_alloc_urb(0, GFP_KERNEL);
 		if (!int_out_urb) {
 			retval = -ENOMEM;
+			dev_dbg(&dev->interface->dev,
+				"Unable to allocate urb\n");
 			goto error_no_urb;
 		}
 		buf = usb_alloc_coherent(dev->udev, dev->report_size,
@@ -480,8 +482,9 @@ static long iowarrior_ioctl(struct file *file, unsigned int cmd,
 	int io_res;		/* checks for bytes read/written and copy_to/from_user results */
 
 	dev = file->private_data;
-	if (!dev)
+	if (dev == NULL) {
 		return -ENODEV;
+	}
 
 	buffer = kzalloc(dev->report_size, GFP_KERNEL);
 	if (!buffer)
@@ -554,7 +557,7 @@ static long iowarrior_ioctl(struct file *file, unsigned int cmd,
 			info.revision = le16_to_cpu(dev->udev->descriptor.bcdDevice);
 
 			/* 0==UNKNOWN, 1==LOW(usb1.1) ,2=FULL(usb1.1), 3=HIGH(usb2.0) */
-			info.speed = dev->udev->speed;
+			info.speed = le16_to_cpu(dev->udev->speed);
 			info.if_num = dev->interface->cur_altsetting->desc.bInterfaceNumber;
 			info.report_size = dev->report_size;
 
@@ -651,8 +654,9 @@ static int iowarrior_release(struct inode *inode, struct file *file)
 	int retval = 0;
 
 	dev = file->private_data;
-	if (!dev)
+	if (dev == NULL) {
 		return -ENODEV;
+	}
 
 	dev_dbg(&dev->interface->dev, "minor %d\n", dev->minor);
 
@@ -762,8 +766,10 @@ static int iowarrior_probe(struct usb_interface *interface,
 
 	/* allocate memory for our device state and initialize it */
 	dev = kzalloc(sizeof(struct iowarrior), GFP_KERNEL);
-	if (!dev)
+	if (dev == NULL) {
+		dev_err(&interface->dev, "Out of memory\n");
 		return retval;
+	}
 
 	mutex_init(&dev->mutex);
 
@@ -791,21 +797,6 @@ static int iowarrior_probe(struct usb_interface *interface,
 			/* this one will match for the IOWarrior56 only */
 			dev->int_out_endpoint = endpoint;
 	}
-
-	if (!dev->int_in_endpoint) {
-		dev_err(&interface->dev, "no interrupt-in endpoint found\n");
-		retval = -ENODEV;
-		goto error;
-	}
-
-	if (dev->product_id == USB_DEVICE_ID_CODEMERCS_IOW56) {
-		if (!dev->int_out_endpoint) {
-			dev_err(&interface->dev, "no interrupt-out endpoint found\n");
-			retval = -ENODEV;
-			goto error;
-		}
-	}
-
 	/* we have to check the report_size often, so remember it in the endianness suitable for our machine */
 	dev->report_size = usb_endpoint_maxp(dev->int_in_endpoint);
 	if ((dev->interface->cur_altsetting->desc.bInterfaceNumber == 0) &&
@@ -815,11 +806,15 @@ static int iowarrior_probe(struct usb_interface *interface,
 
 	/* create the urb and buffer for reading */
 	dev->int_in_urb = usb_alloc_urb(0, GFP_KERNEL);
-	if (!dev->int_in_urb)
+	if (!dev->int_in_urb) {
+		dev_err(&interface->dev, "Couldn't allocate interrupt_in_urb\n");
 		goto error;
+	}
 	dev->int_in_buffer = kmalloc(dev->report_size, GFP_KERNEL);
-	if (!dev->int_in_buffer)
+	if (!dev->int_in_buffer) {
+		dev_err(&interface->dev, "Couldn't allocate int_in_buffer\n");
 		goto error;
+	}
 	usb_fill_int_urb(dev->int_in_urb, dev->udev,
 			 usb_rcvintpipe(dev->udev,
 					dev->int_in_endpoint->bEndpointAddress),
@@ -830,8 +825,10 @@ static int iowarrior_probe(struct usb_interface *interface,
 	dev->read_queue =
 	    kmalloc(((dev->report_size + 1) * MAX_INTERRUPT_BUFFER),
 		    GFP_KERNEL);
-	if (!dev->read_queue)
+	if (!dev->read_queue) {
+		dev_err(&interface->dev, "Couldn't allocate read_queue\n");
 		goto error;
+	}
 	/* Get the serial-number of the chip */
 	memset(dev->chip_serial, 0x00, sizeof(dev->chip_serial));
 	usb_string(udev, udev->descriptor.iSerialNumber, dev->chip_serial,

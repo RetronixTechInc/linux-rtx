@@ -124,8 +124,7 @@ int cn_netlink_send_mult(struct cn_msg *msg, u16 len, u32 portid, u32 __group,
 	if (group)
 		return netlink_broadcast(dev->nls, skb, portid, group,
 					 gfp_mask);
-	return netlink_unicast(dev->nls, skb, portid,
-			!gfpflags_allow_blocking(gfp_mask));
+	return netlink_unicast(dev->nls, skb, portid, !(gfp_mask&__GFP_WAIT));
 }
 EXPORT_SYMBOL_GPL(cn_netlink_send_mult);
 
@@ -179,10 +178,13 @@ static int cn_call_callback(struct sk_buff *skb)
  *
  * It checks skb, netlink header and msg sizes, and calls callback helper.
  */
-static void cn_rx_skb(struct sk_buff *skb)
+static void cn_rx_skb(struct sk_buff *__skb)
 {
 	struct nlmsghdr *nlh;
+	struct sk_buff *skb;
 	int len, err;
+
+	skb = skb_get(__skb);
 
 	if (skb->len >= NLMSG_HDRLEN) {
 		nlh = nlmsg_hdr(skb);
@@ -190,10 +192,12 @@ static void cn_rx_skb(struct sk_buff *skb)
 
 		if (len < (int)sizeof(struct cn_msg) ||
 		    skb->len < nlh->nlmsg_len ||
-		    len > CONNECTOR_MAX_MSG_SIZE)
+		    len > CONNECTOR_MAX_MSG_SIZE) {
+			kfree_skb(skb);
 			return;
+		}
 
-		err = cn_call_callback(skb_get(skb));
+		err = cn_call_callback(skb);
 		if (err < 0)
 			kfree_skb(skb);
 	}

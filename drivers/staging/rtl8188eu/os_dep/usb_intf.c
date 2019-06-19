@@ -11,9 +11,14 @@
  * FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for
  * more details.
  *
+ * You should have received a copy of the GNU General Public License along with
+ * this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110, USA
+ *
+ *
  ******************************************************************************/
+#define _HCI_INTF_C_
 
-#define pr_fmt(fmt) "R8188EU: " fmt
 #include <osdep_service.h>
 #include <drv_types.h>
 #include <recv_osdep.h>
@@ -21,13 +26,13 @@
 #include <hal_intf.h>
 #include <linux/usb.h>
 #include <linux/vmalloc.h>
-#include <mon.h>
 #include <osdep_intf.h>
 
 #include <usb_ops_linux.h>
+#include <usb_hal.h>
 #include <rtw_ioctl.h>
 
-#include "rtl8188e_hal.h"
+int ui_pid[3] = {0, 0, 0};
 
 #define USB_VENDER_ID_REALTEK		0x0bda
 
@@ -43,9 +48,7 @@ static struct usb_device_id rtw_usb_id_tbl[] = {
 	{USB_DEVICE(0x2001, 0x330F)}, /* DLink DWA-125 REV D1 */
 	{USB_DEVICE(0x2001, 0x3310)}, /* Dlink DWA-123 REV D1 */
 	{USB_DEVICE(0x2001, 0x3311)}, /* DLink GO-USB-N150 REV B1 */
-	{USB_DEVICE(0x2357, 0x010c)}, /* TP-Link TL-WN722N v2 */
 	{USB_DEVICE(0x0df6, 0x0076)}, /* Sitecom N150 v2 */
-	{USB_DEVICE(USB_VENDER_ID_REALTEK, 0xffef)}, /* Rosewill RNX-N150NUB */
 	{}	/* Terminating entry */
 };
 
@@ -54,6 +57,7 @@ MODULE_DEVICE_TABLE(usb, rtw_usb_id_tbl);
 static struct dvobj_priv *usb_dvobj_init(struct usb_interface *usb_intf)
 {
 	int	i;
+	int	status = _FAIL;
 	struct dvobj_priv *pdvobjpriv;
 	struct usb_host_config		*phost_conf;
 	struct usb_config_descriptor	*pconf_desc;
@@ -62,9 +66,10 @@ static struct dvobj_priv *usb_dvobj_init(struct usb_interface *usb_intf)
 	struct usb_endpoint_descriptor	*pendp_desc;
 	struct usb_device	*pusbd;
 
+
 	pdvobjpriv = kzalloc(sizeof(*pdvobjpriv), GFP_KERNEL);
-	if (!pdvobjpriv)
-		return NULL;
+	if (pdvobjpriv == NULL)
+		goto exit;
 
 	pdvobjpriv->pusbintf = usb_intf;
 	pusbd = interface_to_usbdev(usb_intf);
@@ -82,8 +87,9 @@ static struct dvobj_priv *usb_dvobj_init(struct usb_interface *usb_intf)
 
 	pdvobjpriv->NumInterfaces = pconf_desc->bNumInterfaces;
 	pdvobjpriv->InterfaceNumber = piface_desc->bInterfaceNumber;
+	pdvobjpriv->nr_endpoint = piface_desc->bNumEndpoints;
 
-	for (i = 0; i < piface_desc->bNumEndpoints; i++) {
+	for (i = 0; i < pdvobjpriv->nr_endpoint; i++) {
 		int ep_num;
 		pendp_desc = &phost_iface->endpoint[i].desc;
 
@@ -100,6 +106,7 @@ static struct dvobj_priv *usb_dvobj_init(struct usb_interface *usb_intf)
 				ep_num;
 			pdvobjpriv->RtNumOutPipes++;
 		}
+		pdvobjpriv->ep_num[i] = ep_num;
 	}
 
 	if (pusbd->speed == USB_SPEED_HIGH)
@@ -108,14 +115,29 @@ static struct dvobj_priv *usb_dvobj_init(struct usb_interface *usb_intf)
 		pdvobjpriv->ishighspeed = false;
 
 	mutex_init(&pdvobjpriv->usb_vendor_req_mutex);
+	pdvobjpriv->usb_vendor_req_buf = kzalloc(MAX_USB_IO_CTL_SIZE, GFP_KERNEL);
+
+	if (!pdvobjpriv->usb_vendor_req_buf)
+		goto free_dvobj;
+
 	usb_get_dev(pusbd);
 
+	status = _SUCCESS;
+
+free_dvobj:
+	if (status != _SUCCESS && pdvobjpriv) {
+		usb_set_intfdata(usb_intf, NULL);
+		kfree(pdvobjpriv);
+		pdvobjpriv = NULL;
+	}
+exit:
 	return pdvobjpriv;
 }
 
 static void usb_dvobj_deinit(struct usb_interface *usb_intf)
 {
 	struct dvobj_priv *dvobj = usb_get_intfdata(usb_intf);
+
 
 	usb_set_intfdata(usb_intf, NULL);
 	if (dvobj) {
@@ -130,11 +152,12 @@ static void usb_dvobj_deinit(struct usb_interface *usb_intf)
 				 * on sitesurvey for the first time when
 				 * device is up . Reset usb port for sitesurvey
 				 * fail issue. */
-				pr_debug("usb attached..., try to reset usb device\n");
+				DBG_88E("usb attached..., try to reset usb device\n");
 				usb_reset_device(interface_to_usbdev(usb_intf));
 			}
 		}
 
+		kfree(dvobj->usb_vendor_req_buf);
 		mutex_destroy(&dvobj->usb_vendor_req_mutex);
 		kfree(dvobj);
 	}
@@ -180,7 +203,7 @@ static void rtw_dev_unload(struct adapter *padapter)
 	RT_TRACE(_module_hci_intfs_c_, _drv_err_, ("+rtw_dev_unload\n"));
 
 	if (padapter->bup) {
-		pr_debug("===> rtw_dev_unload\n");
+		DBG_88E("===> rtw_dev_unload\n");
 		padapter->bDriverStopped = true;
 		if (padapter->xmitpriv.ack_tx)
 			rtw_ack_tx_done(&padapter->xmitpriv, RTW_SCTX_DONE_DRV_STOP);
@@ -203,7 +226,7 @@ static void rtw_dev_unload(struct adapter *padapter)
 			 ("r871x_dev_unload():padapter->bup == false\n"));
 	}
 
-	pr_debug("<=== rtw_dev_unload\n");
+	DBG_88E("<=== rtw_dev_unload\n");
 
 	RT_TRACE(_module_hci_intfs_c_, _drv_err_, ("-rtw_dev_unload\n"));
 }
@@ -215,13 +238,16 @@ static int rtw_suspend(struct usb_interface *pusb_intf, pm_message_t message)
 	struct net_device *pnetdev = padapter->pnetdev;
 	struct mlme_priv *pmlmepriv = &padapter->mlmepriv;
 	struct pwrctrl_priv *pwrpriv = &padapter->pwrctrlpriv;
-	unsigned long start_time = jiffies;
 
-	pr_debug("==> %s (%s:%d)\n", __func__, current->comm, current->pid);
+	int ret = 0;
+	u32 start_time = jiffies;
+
+
+	DBG_88E("==> %s (%s:%d)\n", __func__, current->comm, current->pid);
 
 	if ((!padapter->bup) || (padapter->bDriverStopped) ||
 	    (padapter->bSurpriseRemoved)) {
-		pr_debug("padapter->bup=%d bDriverStopped=%d bSurpriseRemoved = %d\n",
+		DBG_88E("padapter->bup=%d bDriverStopped=%d bSurpriseRemoved = %d\n",
 			padapter->bup, padapter->bDriverStopped,
 			padapter->bSurpriseRemoved);
 		goto exit;
@@ -231,7 +257,7 @@ static int rtw_suspend(struct usb_interface *pusb_intf, pm_message_t message)
 	rtw_cancel_all_timer(padapter);
 	LeaveAllPowerSaveMode(padapter);
 
-	mutex_lock(&pwrpriv->mutex_lock);
+	_enter_pwrlock(&pwrpriv->lock);
 	/* s1. */
 	if (pnetdev) {
 		netif_carrier_off(pnetdev);
@@ -243,7 +269,7 @@ static int rtw_suspend(struct usb_interface *pusb_intf, pm_message_t message)
 
 	if (check_fwstate(pmlmepriv, WIFI_STATION_STATE) &&
 	    check_fwstate(pmlmepriv, _FW_LINKED)) {
-		pr_debug("%s:%d %s(%pM), length:%d assoc_ssid.length:%d\n",
+		DBG_88E("%s:%d %s(%pM), length:%d assoc_ssid.length:%d\n",
 			__func__, __LINE__,
 			pmlmepriv->cur_network.network.Ssid.Ssid,
 			pmlmepriv->cur_network.network.MacAddress,
@@ -255,12 +281,12 @@ static int rtw_suspend(struct usb_interface *pusb_intf, pm_message_t message)
 	/* s2-2.  indicate disconnect to os */
 	rtw_indicate_disconnect(padapter);
 	/* s2-3. */
-	rtw_free_assoc_resources(padapter);
+	rtw_free_assoc_resources(padapter, 1);
 	/* s2-4. */
 	rtw_free_network_queue(padapter, true);
 
 	rtw_dev_unload(padapter);
-	mutex_unlock(&pwrpriv->mutex_lock);
+	_exit_pwrlock(&pwrpriv->lock);
 
 	if (check_fwstate(pmlmepriv, _FW_UNDER_SURVEY))
 		rtw_indicate_scan_done(padapter, 1);
@@ -269,10 +295,10 @@ static int rtw_suspend(struct usb_interface *pusb_intf, pm_message_t message)
 		rtw_indicate_disconnect(padapter);
 
 exit:
-	pr_debug("<===  %s .............. in %dms\n", __func__,
-		 jiffies_to_msecs(jiffies - start_time));
+	DBG_88E("<===  %s return %d.............. in %dms\n", __func__
+		, ret, rtw_get_passing_time_ms(start_time));
 
-	return 0;
+	return ret;
 }
 
 static int rtw_resume_process(struct adapter *padapter)
@@ -280,9 +306,9 @@ static int rtw_resume_process(struct adapter *padapter)
 	struct net_device *pnetdev;
 	struct pwrctrl_priv *pwrpriv = NULL;
 	int ret = -1;
-	unsigned long start_time = jiffies;
+	u32 start_time = jiffies;
 
-	pr_debug("==> %s (%s:%d)\n", __func__, current->comm, current->pid);
+	DBG_88E("==> %s (%s:%d)\n", __func__, current->comm, current->pid);
 
 	if (padapter) {
 		pnetdev = padapter->pnetdev;
@@ -291,20 +317,23 @@ static int rtw_resume_process(struct adapter *padapter)
 		goto exit;
 	}
 
-	mutex_lock(&pwrpriv->mutex_lock);
+	_enter_pwrlock(&pwrpriv->lock);
 	rtw_reset_drv_sw(padapter);
 	pwrpriv->bkeepfwalive = false;
 
-	pr_debug("bkeepfwalive(%x)\n", pwrpriv->bkeepfwalive);
-	if (pm_netdev_open(pnetdev, true) != 0) {
-		mutex_unlock(&pwrpriv->mutex_lock);
+	DBG_88E("bkeepfwalive(%x)\n", pwrpriv->bkeepfwalive);
+	if (pm_netdev_open(pnetdev, true) != 0)
 		goto exit;
-	}
 
 	netif_device_attach(pnetdev);
 	netif_carrier_on(pnetdev);
 
-	mutex_unlock(&pwrpriv->mutex_lock);
+	_exit_pwrlock(&pwrpriv->lock);
+
+	if (padapter->pid[1] != 0) {
+		DBG_88E("pid[1]:%d\n", padapter->pid[1]);
+		rtw_signal_process(padapter->pid[1], SIGUSR2);
+	}
 
 	rtw_roaming(padapter, NULL);
 
@@ -312,8 +341,9 @@ static int rtw_resume_process(struct adapter *padapter)
 exit:
 	if (pwrpriv)
 		pwrpriv->bInSuspend = false;
-	pr_debug("<===  %s return %d.............. in %dms\n", __func__,
-		ret, jiffies_to_msecs(jiffies - start_time));
+	DBG_88E("<===  %s return %d.............. in %dms\n", __func__,
+		ret, rtw_get_passing_time_ms(start_time));
+
 
 	return ret;
 }
@@ -339,7 +369,6 @@ static struct adapter *rtw_usb_if1_init(struct dvobj_priv *dvobj,
 {
 	struct adapter *padapter = NULL;
 	struct net_device *pnetdev = NULL;
-	struct net_device *pmondev;
 	int status = _FAIL;
 
 	padapter = (struct adapter *)vzalloc(sizeof(*padapter));
@@ -350,6 +379,7 @@ static struct adapter *rtw_usb_if1_init(struct dvobj_priv *dvobj,
 
 	padapter->bDriverStopped = true;
 	mutex_init(&padapter->hw_init_mutex);
+	padapter->chip_type = RTL8188E;
 
 	pnetdev = rtw_init_netdev(padapter);
 	if (pnetdev == NULL)
@@ -357,16 +387,8 @@ static struct adapter *rtw_usb_if1_init(struct dvobj_priv *dvobj,
 	SET_NETDEV_DEV(pnetdev, dvobj_to_dev(dvobj));
 	padapter = rtw_netdev_priv(pnetdev);
 
-	if (padapter->registrypriv.monitor_enable) {
-		pmondev = rtl88eu_mon_init();
-		if (pmondev == NULL)
-			netdev_warn(pnetdev, "Failed to initialize monitor interface");
-		padapter->pmondev = pmondev;
-	}
-
-	padapter->HalData = kzalloc(sizeof(struct hal_data_8188e), GFP_KERNEL);
-	if (!padapter->HalData)
-		DBG_88E("cant not alloc memory for HAL DATA\n");
+	/* step 2. hook HalFunc, allocate HalData */
+	hal_set_hal_ops(padapter);
 
 	padapter->intf_start = &usb_intf_start;
 	padapter->intf_stop = &usb_intf_stop;
@@ -392,8 +414,8 @@ static struct adapter *rtw_usb_if1_init(struct dvobj_priv *dvobj,
 		dvobj->pusbdev->do_remote_wakeup = 1;
 		pusb_intf->needs_remote_wakeup = 1;
 		device_init_wakeup(&pusb_intf->dev, 1);
-		pr_debug("\n  padapter->pwrctrlpriv.bSupportRemoteWakeup~~~~~~\n");
-		pr_debug("\n  padapter->pwrctrlpriv.bSupportRemoteWakeup~~~[%d]~~~\n",
+		DBG_88E("\n  padapter->pwrctrlpriv.bSupportRemoteWakeup~~~~~~\n");
+		DBG_88E("\n  padapter->pwrctrlpriv.bSupportRemoteWakeup~~~[%d]~~~\n",
 			device_may_wakeup(&pusb_intf->dev));
 	}
 #endif
@@ -401,13 +423,13 @@ static struct adapter *rtw_usb_if1_init(struct dvobj_priv *dvobj,
 	/* 2012-07-11 Move here to prevent the 8723AS-VAU BT auto
 	 * suspend influence */
 	if (usb_autopm_get_interface(pusb_intf) < 0)
-			pr_debug("can't get autopm:\n");
+			DBG_88E("can't get autopm:\n");
 
 	/*  alloc dev name after read efuse. */
 	rtw_init_netdev_name(pnetdev, padapter->registrypriv.ifname);
 	rtw_macaddr_cfg(padapter->eeprompriv.mac_addr);
 	memcpy(pnetdev->dev_addr, padapter->eeprompriv.mac_addr, ETH_ALEN);
-	pr_debug("MAC Address from pnetdev->dev_addr =  %pM\n",
+	DBG_88E("MAC Address from pnetdev->dev_addr =  %pM\n",
 		pnetdev->dev_addr);
 
 	/* step 6. Tell the network stack we exist */
@@ -416,7 +438,7 @@ static struct adapter *rtw_usb_if1_init(struct dvobj_priv *dvobj,
 		goto free_hal_data;
 	}
 
-	pr_debug("bDriverStopped:%d, bSurpriseRemoved:%d, bup:%d, hw_init_completed:%d\n"
+	DBG_88E("bDriverStopped:%d, bSurpriseRemoved:%d, bup:%d, hw_init_completed:%d\n"
 		, padapter->bDriverStopped
 		, padapter->bSurpriseRemoved
 		, padapter->bup
@@ -432,7 +454,7 @@ free_adapter:
 	if (status != _SUCCESS) {
 		if (pnetdev)
 			rtw_free_netdev(pnetdev);
-		else
+		else if (padapter)
 			vfree(padapter);
 		padapter = NULL;
 	}
@@ -452,44 +474,57 @@ static void rtw_usb_if1_deinit(struct adapter *if1)
 	free_mlme_ap_info(if1);
 #endif
 
-	if (pnetdev)
-		unregister_netdev(pnetdev); /* will call netdev_close() */
-
-	rtl88eu_mon_deinit(if1->pmondev);
+	if (pnetdev) {
+		/* will call netdev_close() */
+		unregister_netdev(pnetdev);
+		rtw_proc_remove_one(pnetdev);
+	}
 	rtw_cancel_all_timer(if1);
 
 	rtw_dev_unload(if1);
-	pr_debug("+r871xu_dev_remove, hw_init_completed=%d\n",
+	DBG_88E("+r871xu_dev_remove, hw_init_completed=%d\n",
 		if1->hw_init_completed);
 	rtw_free_drv_sw(if1);
-	rtw_free_netdev(pnetdev);
+	if (pnetdev)
+		rtw_free_netdev(pnetdev);
 }
 
 static int rtw_drv_init(struct usb_interface *pusb_intf, const struct usb_device_id *pdid)
 {
 	struct adapter *if1 = NULL;
+	int status = _FAIL;
 	struct dvobj_priv *dvobj;
+
+	RT_TRACE(_module_hci_intfs_c_, _drv_err_, ("+rtw_drv_init\n"));
 
 	/* Initialize dvobj_priv */
 	dvobj = usb_dvobj_init(pusb_intf);
-	if (!dvobj) {
+	if (dvobj == NULL) {
 		RT_TRACE(_module_hci_intfs_c_, _drv_err_,
 			 ("initialize device object priv Failed!\n"));
 		goto exit;
 	}
 
 	if1 = rtw_usb_if1_init(dvobj, pusb_intf, pdid);
-	if (!if1) {
-		pr_debug("rtw_init_primarystruct adapter Failed!\n");
+	if (if1 == NULL) {
+		DBG_88E("rtw_init_primarystruct adapter Failed!\n");
 		goto free_dvobj;
 	}
 
-	return 0;
+	if (ui_pid[1] != 0) {
+		DBG_88E("ui_pid[1]:%d\n", ui_pid[1]);
+		rtw_signal_process(ui_pid[1], SIGUSR2);
+	}
+
+	RT_TRACE(_module_hci_intfs_c_, _drv_err_, ("-871x_drv - drv_init, success!\n"));
+
+	status = _SUCCESS;
 
 free_dvobj:
-	usb_dvobj_deinit(pusb_intf);
+	if (status != _SUCCESS)
+		usb_dvobj_deinit(pusb_intf);
 exit:
-	return -ENODEV;
+	return status == _SUCCESS ? 0 : -ENODEV;
 }
 
 /*
@@ -501,7 +536,8 @@ static void rtw_dev_remove(struct usb_interface *pusb_intf)
 	struct dvobj_priv *dvobj = usb_get_intfdata(pusb_intf);
 	struct adapter *padapter = dvobj->if1;
 
-	pr_debug("+rtw_dev_remove\n");
+
+	DBG_88E("+rtw_dev_remove\n");
 	RT_TRACE(_module_hci_intfs_c_, _drv_err_, ("+dev_remove()\n"));
 
 	if (!pusb_intf->unregistering)
@@ -517,7 +553,7 @@ static void rtw_dev_remove(struct usb_interface *pusb_intf)
 	usb_dvobj_deinit(pusb_intf);
 
 	RT_TRACE(_module_hci_intfs_c_, _drv_err_, ("-dev_remove()\n"));
-	pr_debug("-r871xu_dev_remove, done\n");
+	DBG_88E("-r871xu_dev_remove, done\n");
 }
 
 static struct usb_driver rtl8188e_usb_drv = {

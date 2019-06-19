@@ -91,30 +91,17 @@ void arch_cpu_idle_exit(void)
 	ledtrig_cpu(CPU_LED_IDLE_END);
 }
 
+#ifdef CONFIG_HOTPLUG_CPU
+void arch_cpu_idle_dead(void)
+{
+	cpu_die();
+}
+#endif
+
 void __show_regs(struct pt_regs *regs)
 {
 	unsigned long flags;
 	char buf[64];
-#ifndef CONFIG_CPU_V7M
-	unsigned int domain, fs;
-#ifdef CONFIG_CPU_SW_DOMAIN_PAN
-	/*
-	 * Get the domain register for the parent context. In user
-	 * mode, we don't save the DACR, so lets use what it should
-	 * be. For other modes, we place it after the pt_regs struct.
-	 */
-	if (user_mode(regs)) {
-		domain = DACR_UACCESS_ENABLE;
-		fs = get_fs();
-	} else {
-		domain = to_svc_pt_regs(regs)->dacr;
-		fs = to_svc_pt_regs(regs)->addr_limit;
-	}
-#else
-	domain = get_domain();
-	fs = get_fs();
-#endif
-#endif
 
 	show_regs_print_info(KERN_DEFAULT);
 
@@ -142,23 +129,12 @@ void __show_regs(struct pt_regs *regs)
 	buf[4] = '\0';
 
 #ifndef CONFIG_CPU_V7M
-	{
-		const char *segment;
-
-		if ((domain & domain_mask(DOMAIN_USER)) ==
-		    domain_val(DOMAIN_USER, DOMAIN_NOACCESS))
-			segment = "none";
-		else if (fs == get_ds())
-			segment = "kernel";
-		else
-			segment = "user";
-
-		printk("Flags: %s  IRQs o%s  FIQs o%s  Mode %s  ISA %s  Segment %s\n",
-			buf, interrupts_enabled(regs) ? "n" : "ff",
-			fast_interrupts_enabled(regs) ? "n" : "ff",
-			processor_modes[processor_mode(regs)],
-			isa_modes[isa_mode(regs)], segment);
-	}
+	printk("Flags: %s  IRQs o%s  FIQs o%s  Mode %s  ISA %s  Segment %s\n",
+		buf, interrupts_enabled(regs) ? "n" : "ff",
+		fast_interrupts_enabled(regs) ? "n" : "ff",
+		processor_modes[processor_mode(regs)],
+		isa_modes[isa_mode(regs)],
+		get_fs() == get_ds() ? "kernel" : "user");
 #else
 	printk("xPSR: %08lx\n", regs->ARM_cpsr);
 #endif
@@ -170,11 +146,12 @@ void __show_regs(struct pt_regs *regs)
 		buf[0] = '\0';
 #ifdef CONFIG_CPU_CP15_MMU
 		{
-			unsigned int transbase;
+			unsigned int transbase, dac;
 			asm("mrc p15, 0, %0, c2, c0\n\t"
-			    : "=r" (transbase));
+			    "mrc p15, 0, %1, c3, c0\n"
+			    : "=r" (transbase), "=r" (dac));
 			snprintf(buf, sizeof(buf), "  Table: %08x  DAC: %08x",
-				transbase, domain);
+			  	transbase, dac);
 		}
 #endif
 		asm("mrc p15, 0, %0, c1, c0\n" : "=r" (ctrl));
@@ -197,9 +174,9 @@ EXPORT_SYMBOL_GPL(thread_notify_head);
 /*
  * Free current thread data structures etc..
  */
-void exit_thread(struct task_struct *tsk)
+void exit_thread(void)
 {
-	thread_notify(THREAD_NOTIFY_EXIT, task_thread_info(tsk));
+	thread_notify(THREAD_NOTIFY_EXIT, current_thread_info());
 }
 
 void flush_thread(void)
@@ -232,16 +209,6 @@ copy_thread(unsigned long clone_flags, unsigned long stack_start,
 	struct pt_regs *childregs = task_pt_regs(p);
 
 	memset(&thread->cpu_context, 0, sizeof(struct cpu_context_save));
-
-#ifdef CONFIG_CPU_USE_DOMAINS
-	/*
-	 * Copy the initial value of the domain access control register
-	 * from the current thread: thread->addr_limit will have been
-	 * copied from the current thread via setup_thread_stack() in
-	 * kernel/fork.c
-	 */
-	thread->cpu_domain = get_domain();
-#endif
 
 	if (likely(!(p->flags & PF_KTHREAD))) {
 		*childregs = *current_pt_regs();
@@ -318,7 +285,8 @@ unsigned long get_wchan(struct task_struct *p)
 
 unsigned long arch_randomize_brk(struct mm_struct *mm)
 {
-	return randomize_page(mm->brk, 0x02000000);
+	unsigned long range_end = mm->brk + 0x02000000;
+	return randomize_range(mm->brk, range_end, 0) ? : mm->brk;
 }
 
 #ifdef CONFIG_MMU
@@ -423,8 +391,7 @@ int arch_setup_additional_pages(struct linux_binprm *bprm, int uses_interp)
 	npages = 1; /* for sigpage */
 	npages += vdso_total_pages;
 
-	if (down_write_killable(&mm->mmap_sem))
-		return -EINTR;
+	down_write(&mm->mmap_sem);
 	hint = sigpage_addr(mm, npages);
 	addr = get_unmapped_area(NULL, hint, npages << PAGE_SHIFT, 0, 0);
 	if (IS_ERR_VALUE(addr)) {

@@ -1,6 +1,5 @@
 /*
- * Copyright (C) 2015-2016 Freescale Semiconductor, Inc.
- * Copyright (C) 2017 NXP
+ * Copyright (C) 2015 Freescale Semiconductor, Inc.
  *
  * derived from the omap-rpmsg implementation.
  * Remote processor messaging transport - tty driver
@@ -29,16 +28,15 @@
 struct rpmsgtty_port {
 	struct tty_port		port;
 	spinlock_t		rx_lock;
-	struct rpmsg_device	*rpdev;
+	struct rpmsg_channel	*rpdev;
 };
 
 static struct rpmsgtty_port rpmsg_tty_port;
 
-/* this needs to be less then (RPMSG_BUF_SIZE - sizeof(struct rpmsg_hdr)) */
-#define RPMSG_MAX_SIZE		256
+#define RPMSG_MAX_SIZE		(512 - sizeof(struct rpmsg_hdr))
 #define MSG		"hello world!"
 
-static int rpmsg_tty_cb(struct rpmsg_device *rpdev, void *data, int len,
+static void rpmsg_tty_cb(struct rpmsg_channel *rpdev, void *data, int len,
 						void *priv, u32 src)
 {
 	int space;
@@ -47,7 +45,7 @@ static int rpmsg_tty_cb(struct rpmsg_device *rpdev, void *data, int len,
 
 	/* flush the recv-ed none-zero data to tty node */
 	if (len == 0)
-		return 0;
+		return;
 
 	dev_dbg(&rpdev->dev, "msg(<- src 0x%x) len %d\n", src, len);
 
@@ -59,14 +57,12 @@ static int rpmsg_tty_cb(struct rpmsg_device *rpdev, void *data, int len,
 	if (space <= 0) {
 		dev_err(&rpdev->dev, "No memory for tty_prepare_flip_string\n");
 		spin_unlock_bh(&cport->rx_lock);
-		return -ENOMEM;
+		return;
 	}
 
 	memcpy(cbuf, data, len);
 	tty_flip_buffer_push(&cport->port);
 	spin_unlock_bh(&cport->rx_lock);
-
-	return 0;
 }
 
 static struct tty_port_operations  rpmsgtty_port_ops = { };
@@ -93,7 +89,7 @@ static int rpmsgtty_write(struct tty_struct *tty, const unsigned char *buf,
 	const unsigned char *tbuf;
 	struct rpmsgtty_port *rptty_port = container_of(tty->port,
 			struct rpmsgtty_port, port);
-	struct rpmsg_device *rpdev = rptty_port->rpdev;
+	struct rpmsg_channel *rpdev = rptty_port->rpdev;
 
 	if (NULL == buf) {
 		pr_err("buf shouldn't be null.\n");
@@ -104,7 +100,7 @@ static int rpmsgtty_write(struct tty_struct *tty, const unsigned char *buf,
 	tbuf = buf;
 	do {
 		/* send a message to our remote processor */
-		ret = rpmsg_send(rpdev->ept, (void *)tbuf,
+		ret = rpmsg_send(rpdev, (void *)tbuf,
 			count > RPMSG_MAX_SIZE ? RPMSG_MAX_SIZE : count);
 		if (ret) {
 			dev_err(&rpdev->dev, "rpmsg_send failed: %d\n", ret);
@@ -138,7 +134,7 @@ static const struct tty_operations imxrpmsgtty_ops = {
 
 static struct tty_driver *rpmsgtty_driver;
 
-static int rpmsg_tty_probe(struct rpmsg_device *rpdev)
+static int rpmsg_tty_probe(struct rpmsg_channel *rpdev)
 {
 	int err;
 	struct rpmsgtty_port *cport = &rpmsg_tty_port;
@@ -150,7 +146,7 @@ static int rpmsg_tty_probe(struct rpmsg_device *rpdev)
 	 * send a message to our remote processor, and tell remote
 	 * processor about this channel
 	 */
-	err = rpmsg_send(rpdev->ept, MSG, strlen(MSG));
+	err = rpmsg_send(rpdev, MSG, strlen(MSG));
 	if (err) {
 		dev_err(&rpdev->dev, "rpmsg_send failed: %d\n", err);
 		return err;
@@ -193,7 +189,7 @@ error:
 	return err;
 }
 
-static void rpmsg_tty_remove(struct rpmsg_device *rpdev)
+static void rpmsg_tty_remove(struct rpmsg_channel *rpdev)
 {
 	struct rpmsgtty_port *cport = &rpmsg_tty_port;
 
@@ -206,8 +202,7 @@ static void rpmsg_tty_remove(struct rpmsg_device *rpdev)
 }
 
 static struct rpmsg_device_id rpmsg_driver_tty_id_table[] = {
-	{ .name	= "rpmsg-virtual-tty-channel" },
-	{ .name = "rpmsg-openamp-demo-channel" },
+	{ .name	= "rpmsg-openamp-demo-channel" },
 	{ },
 };
 MODULE_DEVICE_TABLE(rpmsg, rpmsg_driver_tty_id_table);

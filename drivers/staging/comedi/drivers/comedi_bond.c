@@ -55,16 +55,16 @@
 
 struct bonded_device {
 	struct comedi_device *dev;
-	unsigned int minor;
-	unsigned int subdev;
-	unsigned int nchans;
+	unsigned minor;
+	unsigned subdev;
+	unsigned nchans;
 };
 
 struct comedi_bond_private {
 	char name[256];
 	struct bonded_device **devs;
-	unsigned int ndevs;
-	unsigned int nchans;
+	unsigned ndevs;
+	unsigned nchans;
 };
 
 static int bonding_dio_insn_bits(struct comedi_device *dev,
@@ -101,8 +101,7 @@ static int bonding_dio_insn_bits(struct comedi_device *dev,
 			b_chans = bdev->nchans - base_chan;
 			if (b_chans > n_left)
 				b_chans = n_left;
-			b_mask = (b_chans < 32) ? ((1 << b_chans) - 1)
-						: 0xffffffff;
+			b_mask = (1U << b_chans) - 1;
 			b_write_mask = (write_mask >> n_done) & b_mask;
 			b_data_bits = (data_bits >> n_done) & b_mask;
 			/* Read/Write the new digital lines. */

@@ -70,7 +70,7 @@
 #include <asm/e820.h>
 #include <asm/mce.h>
 #include <asm/io.h>
-#include <asm/fpu/api.h>
+#include <asm/i387.h>
 #include <asm/stackprotector.h>
 #include <asm/reboot.h>		/* for struct machine_ops */
 #include <asm/kvm_para.h>
@@ -90,7 +90,7 @@ struct lguest_data lguest_data = {
 	.noirq_iret = (u32)lguest_noirq_iret,
 	.kernel_address = PAGE_OFFSET,
 	.blocked_interrupts = { 1 }, /* Block timer interrupts */
-	.syscall_vec = IA32_SYSCALL_VECTOR,
+	.syscall_vec = SYSCALL_VECTOR,
 };
 
 /*G:037
@@ -835,46 +835,16 @@ static struct irq_chip lguest_irq_controller = {
 	.irq_unmask	= enable_lguest_irq,
 };
 
-/*
- * Interrupt descriptors are allocated as-needed, but low-numbered ones are
- * reserved by the generic x86 code.  So we ignore irq_alloc_desc_at if it
- * tells us the irq is already used: other errors (ie. ENOMEM) we take
- * seriously.
- */
-static int lguest_setup_irq(unsigned int irq)
-{
-	struct irq_desc *desc;
-	int err;
-
-	/* Returns -ve error or vector number. */
-	err = irq_alloc_desc_at(irq, 0);
-	if (err < 0 && err != -EEXIST)
-		return err;
-
-	/*
-	 * Tell the Linux infrastructure that the interrupt is
-	 * controlled by our level-based lguest interrupt controller.
-	 */
-	irq_set_chip_and_handler_name(irq, &lguest_irq_controller,
-				      handle_level_irq, "level");
-
-	/* Some systems map "vectors" to interrupts weirdly.  Not us! */
-	desc = irq_to_desc(irq);
-	__this_cpu_write(vector_irq[FIRST_EXTERNAL_VECTOR + irq], desc);
-	return 0;
-}
-
 static int lguest_enable_irq(struct pci_dev *dev)
 {
-	int err;
 	u8 line = 0;
 
 	/* We literally use the PCI interrupt line as the irq number. */
 	pci_read_config_byte(dev, PCI_INTERRUPT_LINE, &line);
-	err = lguest_setup_irq(line);
-	if (!err)
-		dev->irq = line;
-	return err;
+	irq_set_chip_and_handler_name(line, &lguest_irq_controller,
+				      handle_level_irq, "level");
+	dev->irq = line;
+	return 0;
 }
 
 /* We don't do hotplug PCI, so this shouldn't be called. */
@@ -885,14 +855,18 @@ static void lguest_disable_irq(struct pci_dev *dev)
 
 /*
  * This sets up the Interrupt Descriptor Table (IDT) entry for each hardware
- * interrupt (except 128, which is used for system calls).
+ * interrupt (except 128, which is used for system calls), and then tells the
+ * Linux infrastructure that each interrupt is controlled by our level-based
+ * lguest interrupt controller.
  */
 static void __init lguest_init_IRQ(void)
 {
 	unsigned int i;
 
 	for (i = FIRST_EXTERNAL_VECTOR; i < FIRST_SYSTEM_VECTOR; i++) {
-		if (i != IA32_SYSCALL_VECTOR)
+		/* Some systems map "vectors" to interrupts weirdly.  Not us! */
+		__this_cpu_write(vector_irq[i], i - FIRST_EXTERNAL_VECTOR);
+		if (i != SYSCALL_VECTOR)
 			set_intr_gate(i, irq_entries_start +
 					8 * (i - FIRST_EXTERNAL_VECTOR));
 	}
@@ -902,6 +876,26 @@ static void __init lguest_init_IRQ(void)
 	 * separate stacks for hard and soft interrupts.
 	 */
 	irq_ctx_init(smp_processor_id());
+}
+
+/*
+ * Interrupt descriptors are allocated as-needed, but low-numbered ones are
+ * reserved by the generic x86 code.  So we ignore irq_alloc_desc_at if it
+ * tells us the irq is already used: other errors (ie. ENOMEM) we take
+ * seriously.
+ */
+int lguest_setup_irq(unsigned int irq)
+{
+	int err;
+
+	/* Returns -ve error or vector number. */
+	err = irq_alloc_desc_at(irq, 0);
+	if (err < 0 && err != -EEXIST)
+		return err;
+
+	irq_set_chip_and_handler_name(irq, &lguest_irq_controller,
+				      handle_level_irq, "level");
+	return 0;
 }
 
 /*
@@ -991,11 +985,23 @@ static int lguest_clockevent_set_next_event(unsigned long delta,
 	return 0;
 }
 
-static int lguest_clockevent_shutdown(struct clock_event_device *evt)
+static void lguest_clockevent_set_mode(enum clock_event_mode mode,
+                                      struct clock_event_device *evt)
 {
-	/* A 0 argument shuts the clock down. */
-	hcall(LHCALL_SET_CLOCKEVENT, 0, 0, 0, 0);
-	return 0;
+	switch (mode) {
+	case CLOCK_EVT_MODE_UNUSED:
+	case CLOCK_EVT_MODE_SHUTDOWN:
+		/* A 0 argument shuts the clock down. */
+		hcall(LHCALL_SET_CLOCKEVENT, 0, 0, 0, 0);
+		break;
+	case CLOCK_EVT_MODE_ONESHOT:
+		/* This is what we expect. */
+		break;
+	case CLOCK_EVT_MODE_PERIODIC:
+		BUG();
+	case CLOCK_EVT_MODE_RESUME:
+		break;
+	}
 }
 
 /* This describes our primitive timer chip. */
@@ -1003,7 +1009,7 @@ static struct clock_event_device lguest_clockevent = {
 	.name                   = "lguest",
 	.features               = CLOCK_EVT_FEAT_ONESHOT,
 	.set_next_event         = lguest_clockevent_set_next_event,
-	.set_state_shutdown	= lguest_clockevent_shutdown,
+	.set_mode               = lguest_clockevent_set_mode,
 	.rating                 = INT_MAX,
 	.mult                   = 1,
 	.shift                  = 0,
@@ -1015,7 +1021,7 @@ static struct clock_event_device lguest_clockevent = {
  * This is the Guest timer interrupt handler (hardware interrupt 0).  We just
  * call the clockevent infrastructure and it does whatever needs doing.
  */
-static void lguest_time_irq(struct irq_desc *desc)
+static void lguest_time_irq(unsigned int irq, struct irq_desc *desc)
 {
 	unsigned long flags;
 
@@ -1034,8 +1040,7 @@ static void lguest_time_irq(struct irq_desc *desc)
 static void lguest_time_init(void)
 {
 	/* Set up the timer interrupt (0) to go to our simple timer routine */
-	if (lguest_setup_irq(0) != 0)
-		panic("Could not set up timer irq");
+	lguest_setup_irq(0);
 	irq_set_handler(0, lguest_time_irq);
 
 	clocksource_register_hz(&lguest_clock, NSEC_PER_SEC);
@@ -1233,6 +1238,8 @@ static void write_bar_via_cfg(u32 cfg_offset, u32 off, u32 val)
 static void probe_pci_console(void)
 {
 	u8 cap, common_cap = 0, device_cap = 0;
+	/* Offset within BAR0 */
+	u32 device_offset;
 	u32 device_len;
 
 	/* Avoid recursive printk into here. */
@@ -1256,16 +1263,24 @@ static void probe_pci_console(void)
 		u8 vndr = read_pci_config_byte(0, 1, 0, cap);
 		if (vndr == PCI_CAP_ID_VNDR) {
 			u8 type, bar;
+			u32 offset, length;
 
 			type = read_pci_config_byte(0, 1, 0,
 			    cap + offsetof(struct virtio_pci_cap, cfg_type));
 			bar = read_pci_config_byte(0, 1, 0,
 			    cap + offsetof(struct virtio_pci_cap, bar));
+			offset = read_pci_config(0, 1, 0,
+			    cap + offsetof(struct virtio_pci_cap, offset));
+			length = read_pci_config(0, 1, 0,
+			    cap + offsetof(struct virtio_pci_cap, length));
 
 			switch (type) {
 			case VIRTIO_PCI_CAP_DEVICE_CFG:
-				if (bar == 0)
+				if (bar == 0) {
 					device_cap = cap;
+					device_offset = offset;
+					device_len = length;
+				}
 				break;
 			case VIRTIO_PCI_CAP_PCI_CFG:
 				console_access_cap = cap;
@@ -1287,16 +1302,13 @@ static void probe_pci_console(void)
 	 * emerg_wr.  If it doesn't support VIRTIO_CONSOLE_F_EMERG_WRITE
 	 * it should ignore the access.
 	 */
-	device_len = read_pci_config(0, 1, 0,
-			device_cap + offsetof(struct virtio_pci_cap, length));
 	if (device_len < (offsetof(struct virtio_console_config, emerg_wr)
 			  + sizeof(u32))) {
 		printk(KERN_ERR "lguest: console missing emerg_wr field\n");
 		return;
 	}
 
-	console_cfg_offset = read_pci_config(0, 1, 0,
-			device_cap + offsetof(struct virtio_pci_cap, offset));
+	console_cfg_offset = device_offset;
 	printk(KERN_INFO "lguest: Console via virtio-pci emerg_wr\n");
 }
 
@@ -1401,6 +1413,8 @@ __init void lguest_init(void)
 {
 	/* We're under lguest. */
 	pv_info.name = "lguest";
+	/* Paravirt is enabled. */
+	pv_info.paravirt_enabled = 1;
 	/* We're running at privilege level 1, not 0 as normal. */
 	pv_info.kernel_rpl = 1;
 	/* Everyone except Xen runs with this set. */
@@ -1463,6 +1477,7 @@ __init void lguest_init(void)
 	pv_mmu_ops.lazy_mode.leave = lguest_leave_lazy_mmu_mode;
 	pv_mmu_ops.lazy_mode.flush = paravirt_flush_lazy_mmu;
 	pv_mmu_ops.pte_update = lguest_pte_update;
+	pv_mmu_ops.pte_update_defer = lguest_pte_update;
 
 #ifdef CONFIG_X86_LOCAL_APIC
 	/* APIC read/write intercepts */
@@ -1510,6 +1525,12 @@ __init void lguest_init(void)
 	 */
 	reserve_top_address(lguest_data.reserve_mem);
 
+	/*
+	 * If we don't initialize the lock dependency checker now, it crashes
+	 * atomic_notifier_chain_register, then paravirt_disable_iospace.
+	 */
+	lockdep_init();
+
 	/* Hook in our special panic hypercall code. */
 	atomic_notifier_chain_register(&panic_notifier_list, &paniced);
 
@@ -1519,7 +1540,7 @@ __init void lguest_init(void)
 	 */
 	cpu_detect(&new_cpu_data);
 	/* head.S usually sets up the first capability word, so do it here. */
-	new_cpu_data.x86_capability[CPUID_1_EDX] = cpuid_edx(1);
+	new_cpu_data.x86_capability[0] = cpuid_edx(1);
 
 	/* Math is always hard! */
 	set_cpu_cap(&new_cpu_data, X86_FEATURE_FPU);

@@ -34,6 +34,12 @@
 #include "usb_osintf.h"
 #include "usb_ops.h"
 
+#define IS_MAC_ADDRESS_BROADCAST(addr) \
+( \
+	((addr[0] == 0xff) && (addr[1] == 0xff) && \
+	 (addr[2] == 0xff) && (addr[3] == 0xff) && \
+	 (addr[4] == 0xff) && (addr[5] == 0xff)) ? true : false \
+)
 
 static u8 validate_ssid(struct ndis_802_11_ssid *ssid)
 {
@@ -130,21 +136,20 @@ u8 r8712_set_802_11_bssid(struct _adapter *padapter, u8 *bssid)
 	}
 	spin_lock_irqsave(&pmlmepriv->lock, irqL);
 	if (check_fwstate(pmlmepriv, _FW_UNDER_SURVEY |
-	    _FW_UNDER_LINKING)) {
+	    _FW_UNDER_LINKING) == true) {
 		status = check_fwstate(pmlmepriv, _FW_UNDER_LINKING);
 		goto _Abort_Set_BSSID;
 	}
 	if (check_fwstate(pmlmepriv,
-	    _FW_LINKED | WIFI_ADHOC_MASTER_STATE)) {
+	    _FW_LINKED|WIFI_ADHOC_MASTER_STATE) == true) {
 		if (!memcmp(&pmlmepriv->cur_network.network.MacAddress, bssid,
 		    ETH_ALEN)) {
 			if (!check_fwstate(pmlmepriv, WIFI_STATION_STATE))
 				goto _Abort_Set_BSSID; /* driver is in
-						* WIFI_ADHOC_MASTER_STATE
-						*/
+						* WIFI_ADHOC_MASTER_STATE */
 		} else {
 			r8712_disassoc_cmd(padapter);
-			if (check_fwstate(pmlmepriv, _FW_LINKED))
+			if (check_fwstate(pmlmepriv, _FW_LINKED) == true)
 				r8712_ind_disconnect(padapter);
 			r8712_free_assoc_resources(padapter);
 			if ((check_fwstate(pmlmepriv,
@@ -175,11 +180,11 @@ void r8712_set_802_11_ssid(struct _adapter *padapter,
 	if (!padapter->hw_init_completed)
 		return;
 	spin_lock_irqsave(&pmlmepriv->lock, irqL);
-	if (check_fwstate(pmlmepriv, _FW_UNDER_SURVEY | _FW_UNDER_LINKING)) {
+	if (check_fwstate(pmlmepriv, _FW_UNDER_SURVEY|_FW_UNDER_LINKING)) {
 		check_fwstate(pmlmepriv, _FW_UNDER_LINKING);
 		goto _Abort_Set_SSID;
 	}
-	if (check_fwstate(pmlmepriv, _FW_LINKED | WIFI_ADHOC_MASTER_STATE)) {
+	if (check_fwstate(pmlmepriv, _FW_LINKED|WIFI_ADHOC_MASTER_STATE)) {
 		if ((pmlmepriv->assoc_ssid.SsidLength == ssid->SsidLength) &&
 		    (!memcmp(&pmlmepriv->assoc_ssid.Ssid, ssid->Ssid,
 		    ssid->SsidLength))) {
@@ -192,7 +197,7 @@ void r8712_set_802_11_ssid(struct _adapter *padapter,
 					 */
 					r8712_disassoc_cmd(padapter);
 					if (check_fwstate(pmlmepriv,
-					    _FW_LINKED))
+					    _FW_LINKED) == true)
 						r8712_ind_disconnect(padapter);
 					r8712_free_assoc_resources(padapter);
 					if (check_fwstate(pmlmepriv,
@@ -202,26 +207,24 @@ void r8712_set_802_11_ssid(struct _adapter *padapter,
 						set_fwstate(pmlmepriv,
 							    WIFI_ADHOC_STATE);
 					}
-				} else {
+				} else
 					goto _Abort_Set_SSID; /* driver is in
-						* WIFI_ADHOC_MASTER_STATE
-						*/
-				}
+						  * WIFI_ADHOC_MASTER_STATE */
 			}
 		} else {
 			r8712_disassoc_cmd(padapter);
-			if (check_fwstate(pmlmepriv, _FW_LINKED))
+			if (check_fwstate(pmlmepriv, _FW_LINKED) == true)
 				r8712_ind_disconnect(padapter);
 			r8712_free_assoc_resources(padapter);
 			if (check_fwstate(pmlmepriv,
-			    WIFI_ADHOC_MASTER_STATE)) {
+			    WIFI_ADHOC_MASTER_STATE) == true) {
 				_clr_fwstate_(pmlmepriv,
 					      WIFI_ADHOC_MASTER_STATE);
 				set_fwstate(pmlmepriv, WIFI_ADHOC_STATE);
 			}
 		}
 	}
-	if (padapter->securitypriv.btkip_countermeasure)
+	if (padapter->securitypriv.btkip_countermeasure == true)
 		goto _Abort_Set_SSID;
 	if (!validate_ssid(ssid))
 		goto _Abort_Set_SSID;
@@ -245,25 +248,23 @@ void r8712_set_802_11_infrastructure_mode(struct _adapter *padapter,
 
 	if (*pold_state != networktype) {
 		spin_lock_irqsave(&pmlmepriv->lock, irqL);
-		if (check_fwstate(pmlmepriv, _FW_LINKED) ||
+		if ((check_fwstate(pmlmepriv, _FW_LINKED) == true) ||
 		    (*pold_state == Ndis802_11IBSS))
 			r8712_disassoc_cmd(padapter);
 		if (check_fwstate(pmlmepriv,
-		    _FW_LINKED | WIFI_ADHOC_MASTER_STATE))
+		    _FW_LINKED|WIFI_ADHOC_MASTER_STATE) == true)
 			r8712_free_assoc_resources(padapter);
-		if (check_fwstate(pmlmepriv, _FW_LINKED) ||
+		if ((check_fwstate(pmlmepriv, _FW_LINKED) == true) ||
 		    (*pold_state == Ndis802_11Infrastructure) ||
 		    (*pold_state == Ndis802_11IBSS)) {
 			/* will clr Linked_state before this function,
 			 * we must have checked whether issue dis-assoc_cmd or
-			 * not
-			 */
+			 * not */
 			r8712_ind_disconnect(padapter);
 		}
 		*pold_state = networktype;
 		/* clear WIFI_STATION_STATE; WIFI_AP_STATE; WIFI_ADHOC_STATE;
-		 * WIFI_ADHOC_MASTER_STATE
-		 */
+		 * WIFI_ADHOC_MASTER_STATE */
 		_clr_fwstate_(pmlmepriv, WIFI_STATION_STATE | WIFI_AP_STATE |
 			      WIFI_ADHOC_STATE | WIFI_ADHOC_MASTER_STATE);
 		switch (networktype) {
@@ -290,7 +291,7 @@ u8 r8712_set_802_11_disassociate(struct _adapter *padapter)
 	struct mlme_priv *pmlmepriv = &padapter->mlmepriv;
 
 	spin_lock_irqsave(&pmlmepriv->lock, irqL);
-	if (check_fwstate(pmlmepriv, _FW_LINKED)) {
+	if (check_fwstate(pmlmepriv, _FW_LINKED) == true) {
 		r8712_disassoc_cmd(padapter);
 		r8712_ind_disconnect(padapter);
 		r8712_free_assoc_resources(padapter);
@@ -311,8 +312,8 @@ u8 r8712_set_802_11_bssid_list_scan(struct _adapter *padapter)
 	if (!padapter->hw_init_completed)
 		return false;
 	spin_lock_irqsave(&pmlmepriv->lock, irqL);
-	if (check_fwstate(pmlmepriv, _FW_UNDER_SURVEY | _FW_UNDER_LINKING) ||
-	    pmlmepriv->sitesurveyctrl.traffic_busy) {
+	if ((check_fwstate(pmlmepriv, _FW_UNDER_SURVEY|_FW_UNDER_LINKING)) ||
+	    (pmlmepriv->sitesurveyctrl.traffic_busy == true)) {
 		/* Scan or linking is in progress, do nothing. */
 		ret = (u8)check_fwstate(pmlmepriv, _FW_UNDER_SURVEY);
 	} else {

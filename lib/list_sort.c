@@ -289,5 +289,5 @@ exit:
 	kfree(elts);
 	return err;
 }
-late_initcall(list_sort_test);
+module_init(list_sort_test);
 #endif /* CONFIG_TEST_LIST_SORT */

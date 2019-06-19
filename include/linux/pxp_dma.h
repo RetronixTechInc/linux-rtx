@@ -35,6 +35,7 @@ struct pxp_tx_desc {
 	struct pxp_proc_data proc_data;
 
 	u32 hist_status;	/* Histogram output status */
+	u32 pixel_nums;		/* total pixel numbers to be updated */
 
 	struct pxp_tx_desc *next;
 };
@@ -67,8 +68,8 @@ void pxp_txd_ack(struct dma_async_tx_descriptor *txd,
 int register_pxp_device(void);
 void unregister_pxp_device(void);
 #else
-static int register_pxp_device(void) { return 0; }
-static void unregister_pxp_device(void) {}
+int register_pxp_device(void) { return 0; }
+void unregister_pxp_device(void) {}
 #endif
 void pxp_fill(
         u32 bpp,

@@ -24,11 +24,11 @@ static void check_preempt_curr_idle(struct rq *rq, struct task_struct *p, int fl
 }
 
 static struct task_struct *
-pick_next_task_idle(struct rq *rq, struct task_struct *prev, struct pin_cookie cookie)
+pick_next_task_idle(struct rq *rq, struct task_struct *prev)
 {
 	put_prev_task(rq, prev);
-	update_idle_core(rq);
-	schedstat_inc(rq->sched_goidle);
+
+	schedstat_inc(rq, sched_goidle);
 	return rq->idle;
 }
 
@@ -47,6 +47,7 @@ dequeue_task_idle(struct rq *rq, struct task_struct *p, int flags)
 
 static void put_prev_task_idle(struct rq *rq, struct task_struct *prev)
 {
+	idle_exit_fair(rq);
 	rq_last_tick_reset(rq);
 }
 
@@ -95,7 +96,6 @@ const struct sched_class idle_sched_class = {
 
 #ifdef CONFIG_SMP
 	.select_task_rq		= select_task_rq_idle,
-	.set_cpus_allowed	= set_cpus_allowed_common,
 #endif
 
 	.set_curr_task          = set_curr_task_idle,

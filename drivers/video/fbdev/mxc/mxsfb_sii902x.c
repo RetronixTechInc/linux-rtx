@@ -60,8 +60,6 @@ struct sii902x_data {
 static void sii902x_poweron(void);
 static void sii902x_poweroff(void);
 
-static int sii902x_in_init_state;
-
 #ifdef DEBUG
 static void dump_fb_videomode(struct fb_videomode *m)
 {
@@ -331,13 +329,6 @@ static int sii902x_fb_event(struct notifier_block *nb, unsigned long val, void *
 
 	dev_dbg(&sii902x.client->dev, "%s event=0x%lx\n", __func__, val);
 
-	if (sii902x_in_init_state) {
-		if (val == FB_EVENT_FB_REGISTERED && !sii902x.fbi)
-			sii902x.fbi = fbi;
-
-		return 0;
-	}
-
 	switch (val) {
 	case FB_EVENT_FB_REGISTERED:
 		if (sii902x.fbi == NULL)
@@ -396,7 +387,6 @@ static int sii902x_probe(struct i2c_client *client,
 {
 	int i, dat, ret;
 	struct fb_info edid_fbi;
-	struct fb_info *init_fbi = sii902x.fbi;
 
 	memset(&sii902x, 0, sizeof(sii902x));
 
@@ -408,8 +398,6 @@ static int sii902x_probe(struct i2c_client *client,
 	ret = device_reset(&sii902x.client->dev);
 	if (ret)
 		dev_warn(&sii902x.client->dev, "No reset pin found\n");
-	if (ret == -EPROBE_DEFER)
-		return ret;
 
 	/* Set 902x in hardware TPI mode on and jump out of D3 state */
 	if (i2c_smbus_write_byte_data(sii902x.client, 0xc7, 0x00) < 0) {
@@ -421,14 +409,14 @@ static int sii902x_probe(struct i2c_client *client,
 	/* read device ID */
 	for (i = 10; i > 0; i--) {
 		dat = i2c_smbus_read_byte_data(sii902x.client, 0x1B);
-		dev_dbg(&sii902x.client->dev, "Sii902x: read id = 0x%02X", dat);
+		printk(KERN_DEBUG "Sii902x: read id = 0x%02X", dat);
 		if (dat == 0xb0) {
 			dat = i2c_smbus_read_byte_data(sii902x.client, 0x1C);
-			dev_dbg(&sii902x.client->dev, "-0x%02X", dat);
+			printk(KERN_DEBUG "-0x%02X", dat);
 			dat = i2c_smbus_read_byte_data(sii902x.client, 0x1D);
-			dev_dbg(&sii902x.client->dev, "-0x%02X", dat);
+			printk(KERN_DEBUG "-0x%02X", dat);
 			dat = i2c_smbus_read_byte_data(sii902x.client, 0x30);
-			dev_dbg(&sii902x.client->dev, "-0x%02X\n", dat);
+			printk(KERN_DEBUG "-0x%02X\n", dat);
 			break;
 		}
 	}
@@ -441,13 +429,10 @@ static int sii902x_probe(struct i2c_client *client,
 	/* enable hmdi audio */
 	sii902x_audio_setup();
 
-	/* try to read edid, only if cable is plugged in */
-	dat = i2c_smbus_read_byte_data(sii902x.client, 0x3D);
-	if (dat & 0x04) {
-		ret = sii902x_read_edid(&edid_fbi);
-		if (ret < 0)
-			dev_warn(&sii902x.client->dev, "Can not read edid\n");
-	}
+	/* try to read edid */
+	ret = sii902x_read_edid(&edid_fbi);
+	if (ret < 0)
+		dev_warn(&sii902x.client->dev, "Can not read edid\n");
 
 	if (sii902x.client->irq) {
 		ret = request_irq(sii902x.client->irq, sii902x_detect_handler,
@@ -478,15 +463,7 @@ static int sii902x_probe(struct i2c_client *client,
 	}
 
 	mxsfb_get_of_property();
-
-	if (init_fbi) {
-		sii902x.fbi = init_fbi;
-
-		/* Manually trigger a plugin/plugout interrupter to check cable state */
-		schedule_delayed_work(&(sii902x.det_work), msecs_to_jiffies(50));
-	}
-
-	sii902x_in_init_state = 0;
+	fb_register_client(&nb);
 
 	return 0;
 }
@@ -519,14 +496,6 @@ static void sii902x_poweroff(void)
 
 	return;
 }
-
-static int __init sii902x_init(void)
-{
-	sii902x_in_init_state = 1;
-
-	return fb_register_client(&nb);
-}
-fs_initcall_sync(sii902x_init);
 
 static const struct i2c_device_id sii902x_id[] = {
 	{ DRV_NAME, 0},

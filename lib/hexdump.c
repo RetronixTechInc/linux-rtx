@@ -11,7 +11,6 @@
 #include <linux/ctype.h>
 #include <linux/kernel.h>
 #include <linux/export.h>
-#include <asm/unaligned.h>
 
 const char hex_asc[] = "0123456789abcdef";
 EXPORT_SYMBOL(hex_asc);
@@ -140,7 +139,7 @@ int hex_dump_to_buffer(const void *buf, size_t len, int rowsize, int groupsize,
 		for (j = 0; j < ngroups; j++) {
 			ret = snprintf(linebuf + lx, linebuflen - lx,
 				       "%s%16.16llx", j ? " " : "",
-				       get_unaligned(ptr8 + j));
+				       (unsigned long long)*(ptr8 + j));
 			if (ret >= linebuflen - lx)
 				goto overflow1;
 			lx += ret;
@@ -151,7 +150,7 @@ int hex_dump_to_buffer(const void *buf, size_t len, int rowsize, int groupsize,
 		for (j = 0; j < ngroups; j++) {
 			ret = snprintf(linebuf + lx, linebuflen - lx,
 				       "%s%8.8x", j ? " " : "",
-				       get_unaligned(ptr4 + j));
+				       *(ptr4 + j));
 			if (ret >= linebuflen - lx)
 				goto overflow1;
 			lx += ret;
@@ -162,22 +161,18 @@ int hex_dump_to_buffer(const void *buf, size_t len, int rowsize, int groupsize,
 		for (j = 0; j < ngroups; j++) {
 			ret = snprintf(linebuf + lx, linebuflen - lx,
 				       "%s%4.4x", j ? " " : "",
-				       get_unaligned(ptr2 + j));
+				       *(ptr2 + j));
 			if (ret >= linebuflen - lx)
 				goto overflow1;
 			lx += ret;
 		}
 	} else {
 		for (j = 0; j < len; j++) {
-			if (linebuflen < lx + 2)
+			if (linebuflen < lx + 3)
 				goto overflow2;
 			ch = ptr[j];
 			linebuf[lx++] = hex_asc_hi(ch);
-			if (linebuflen < lx + 2)
-				goto overflow2;
 			linebuf[lx++] = hex_asc_lo(ch);
-			if (linebuflen < lx + 2)
-				goto overflow2;
 			linebuf[lx++] = ' ';
 		}
 		if (j)

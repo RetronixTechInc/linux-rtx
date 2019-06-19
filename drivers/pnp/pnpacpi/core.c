@@ -207,7 +207,7 @@ struct pnp_protocol pnpacpi_protocol = {
 };
 EXPORT_SYMBOL(pnpacpi_protocol);
 
-static const char *__init pnpacpi_get_id(struct acpi_device *device)
+static char *__init pnpacpi_get_id(struct acpi_device *device)
 {
 	struct acpi_hardware_id *id;
 
@@ -222,7 +222,7 @@ static const char *__init pnpacpi_get_id(struct acpi_device *device)
 static int __init pnpacpi_add_device(struct acpi_device *device)
 {
 	struct pnp_dev *dev;
-	const char *pnpid;
+	char *pnpid;
 	struct acpi_hardware_id *id;
 	int error;
 

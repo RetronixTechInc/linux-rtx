@@ -194,7 +194,7 @@ static int dn_neigh_output(struct neighbour *neigh, struct sk_buff *skb)
 	return err;
 }
 
-static int dn_neigh_output_packet(struct net *net, struct sock *sk, struct sk_buff *skb)
+static int dn_neigh_output_packet(struct sock *sk, struct sk_buff *skb)
 {
 	struct dst_entry *dst = skb_dst(skb);
 	struct dn_route *rt = (struct dn_route *)dst;
@@ -246,9 +246,8 @@ static int dn_long_output(struct neighbour *neigh, struct sock *sk,
 
 	skb_reset_network_header(skb);
 
-	return NF_HOOK(NFPROTO_DECNET, NF_DN_POST_ROUTING,
-		       &init_net, sk, skb, NULL, neigh->dev,
-		       dn_neigh_output_packet);
+	return NF_HOOK(NFPROTO_DECNET, NF_DN_POST_ROUTING, sk, skb,
+		       NULL, neigh->dev, dn_neigh_output_packet);
 }
 
 /*
@@ -287,9 +286,8 @@ static int dn_short_output(struct neighbour *neigh, struct sock *sk,
 
 	skb_reset_network_header(skb);
 
-	return NF_HOOK(NFPROTO_DECNET, NF_DN_POST_ROUTING,
-		       &init_net, sk, skb, NULL, neigh->dev,
-		       dn_neigh_output_packet);
+	return NF_HOOK(NFPROTO_DECNET, NF_DN_POST_ROUTING, sk, skb,
+		       NULL, neigh->dev, dn_neigh_output_packet);
 }
 
 /*
@@ -329,12 +327,11 @@ static int dn_phase3_output(struct neighbour *neigh, struct sock *sk,
 
 	skb_reset_network_header(skb);
 
-	return NF_HOOK(NFPROTO_DECNET, NF_DN_POST_ROUTING,
-		       &init_net, sk, skb, NULL, neigh->dev,
-		       dn_neigh_output_packet);
+	return NF_HOOK(NFPROTO_DECNET, NF_DN_POST_ROUTING, sk, skb,
+		       NULL, neigh->dev, dn_neigh_output_packet);
 }
 
-int dn_to_neigh_output(struct net *net, struct sock *sk, struct sk_buff *skb)
+int dn_to_neigh_output(struct sock *sk, struct sk_buff *skb)
 {
 	struct dst_entry *dst = skb_dst(skb);
 	struct dn_route *rt = (struct dn_route *) dst;
@@ -378,7 +375,7 @@ void dn_neigh_pointopoint_hello(struct sk_buff *skb)
 /*
  * Ethernet router hello message received
  */
-int dn_neigh_router_hello(struct net *net, struct sock *sk, struct sk_buff *skb)
+int dn_neigh_router_hello(struct sock *sk, struct sk_buff *skb)
 {
 	struct rtnode_hello_message *msg = (struct rtnode_hello_message *)skb->data;
 
@@ -440,7 +437,7 @@ int dn_neigh_router_hello(struct net *net, struct sock *sk, struct sk_buff *skb)
 /*
  * Endnode hello message received
  */
-int dn_neigh_endnode_hello(struct net *net, struct sock *sk, struct sk_buff *skb)
+int dn_neigh_endnode_hello(struct sock *sk, struct sk_buff *skb)
 {
 	struct endnode_hello_message *msg = (struct endnode_hello_message *)skb->data;
 	struct neighbour *neigh;

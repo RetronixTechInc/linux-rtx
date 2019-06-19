@@ -80,10 +80,16 @@ int aic_common_set_type(struct irq_data *d, unsigned type, unsigned *val)
 	return 0;
 }
 
-void aic_common_set_priority(int priority, unsigned *val)
+int aic_common_set_priority(int priority, unsigned *val)
 {
-	*val &= ~AT91_AIC_PRIOR;
+	if (priority < AT91_AIC_IRQ_MIN_PRIORITY ||
+	    priority > AT91_AIC_IRQ_MAX_PRIORITY)
+		return -EINVAL;
+
+	*val &= AT91_AIC_PRIOR;
 	*val |= priority;
+
+	return 0;
 }
 
 int aic_common_irq_domain_xlate(struct irq_domain *d,
@@ -108,7 +114,7 @@ int aic_common_irq_domain_xlate(struct irq_domain *d,
 
 static void __init aic_common_ext_irq_of_init(struct irq_domain *domain)
 {
-	struct device_node *node = irq_domain_get_of_node(domain);
+	struct device_node *node = domain->of_node;
 	struct irq_chip_generic *gc;
 	struct aic_chip_data *aic;
 	struct property *prop;
@@ -142,9 +148,9 @@ void __init aic_common_rtc_irq_fixup(struct device_node *root)
 	struct device_node *np;
 	void __iomem *regs;
 
-	np = of_find_compatible_node(NULL, NULL, "atmel,at91rm9200-rtc");
+	np = of_find_compatible_node(root, NULL, "atmel,at91rm9200-rtc");
 	if (!np)
-		np = of_find_compatible_node(NULL, NULL,
+		np = of_find_compatible_node(root, NULL,
 					     "atmel,at91sam9x5-rtc");
 
 	if (!np)
@@ -187,7 +193,7 @@ void __init aic_common_rtt_irq_fixup(struct device_node *root)
 	}
 }
 
-static void __init aic_common_irq_fixup(const struct of_device_id *matches)
+void __init aic_common_irq_fixup(const struct of_device_id *matches)
 {
 	struct device_node *root = of_find_node_by_path("/");
 	const struct of_device_id *match;
@@ -196,6 +202,7 @@ static void __init aic_common_irq_fixup(const struct of_device_id *matches)
 		return;
 
 	match = of_match_node(matches, root);
+	of_node_put(root);
 
 	if (match) {
 		void (*fixup)(struct device_node *) = match->data;
@@ -207,8 +214,7 @@ static void __init aic_common_irq_fixup(const struct of_device_id *matches)
 
 struct irq_domain *__init aic_common_of_init(struct device_node *node,
 					     const struct irq_domain_ops *ops,
-					     const char *name, int nirqs,
-					     const struct of_device_id *matches)
+					     const char *name, int nirqs)
 {
 	struct irq_chip_generic *gc;
 	struct irq_domain *domain;
@@ -258,7 +264,6 @@ struct irq_domain *__init aic_common_of_init(struct device_node *node,
 	}
 
 	aic_common_ext_irq_of_init(domain);
-	aic_common_irq_fixup(matches);
 
 	return domain;
 

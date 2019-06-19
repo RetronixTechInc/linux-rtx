@@ -22,8 +22,7 @@
 	compatible = "altr,socfpga-cyclone5", "altr,socfpga";
 
 	chosen {
-		bootargs = "earlyprintk";
-		stdout-path = "serial0:115200n8";
+		bootargs = "console=ttyS0,115200";
 	};
 
 	memory {
@@ -84,7 +83,6 @@
 	cd-gpios = <&portb 18 0>;
 	vmmc-supply = <&regulator_3_3v>;
 	vqmmc-supply = <&regulator_3_3v>;
-	status = "okay";
 };
 
 &usb1 {

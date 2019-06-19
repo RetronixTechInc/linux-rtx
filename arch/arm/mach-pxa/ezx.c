@@ -15,7 +15,6 @@
 #include <linux/init.h>
 #include <linux/platform_device.h>
 #include <linux/delay.h>
-#include <linux/pwm.h>
 #include <linux/pwm_backlight.h>
 #include <linux/input.h>
 #include <linux/gpio.h>
@@ -29,12 +28,12 @@
 #include <asm/mach-types.h>
 #include <asm/mach/arch.h>
 
-#include "pxa27x.h"
+#include <mach/pxa27x.h>
 #include <linux/platform_data/video-pxafb.h>
 #include <linux/platform_data/usb-ohci-pxa27x.h>
 #include <mach/hardware.h>
 #include <linux/platform_data/keypad-pxa27x.h>
-#include <linux/platform_data/media/camera-pxa.h>
+#include <linux/platform_data/camera-pxa.h>
 
 #include "devices.h"
 #include "generic.h"
@@ -50,14 +49,11 @@
 #define GPIO19_GEN1_CAM_RST		19
 #define GPIO28_GEN2_CAM_RST		28
 
-static struct pwm_lookup ezx_pwm_lookup[] __maybe_unused = {
-	PWM_LOOKUP("pxa27x-pwm.0", 0, "pwm-backlight.0", NULL, 78700,
-		   PWM_POLARITY_NORMAL),
-};
-
 static struct platform_pwm_backlight_data ezx_backlight_data = {
+	.pwm_id		= 0,
 	.max_brightness	= 1023,
 	.dft_brightness	= 1023,
+	.pwm_period_ns	= 78770,
 	.enable_gpio	= -1,
 };
 
@@ -83,7 +79,7 @@ static struct pxafb_mode_info mode_ezx_old = {
 	.sync			= 0,
 };
 
-static struct pxafb_mach_info ezx_fb_info_1 __maybe_unused = {
+static struct pxafb_mach_info ezx_fb_info_1 = {
 	.modes		= &mode_ezx_old,
 	.num_modes	= 1,
 	.lcd_conn	= LCD_COLOR_TFT_16BPP,
@@ -104,17 +100,17 @@ static struct pxafb_mode_info mode_72r89803y01 = {
 	.sync			= 0,
 };
 
-static struct pxafb_mach_info ezx_fb_info_2 __maybe_unused = {
+static struct pxafb_mach_info ezx_fb_info_2 = {
 	.modes		= &mode_72r89803y01,
 	.num_modes	= 1,
 	.lcd_conn	= LCD_COLOR_TFT_18BPP,
 };
 
-static struct platform_device *ezx_devices[] __initdata __maybe_unused = {
+static struct platform_device *ezx_devices[] __initdata = {
 	&ezx_backlight_device,
 };
 
-static unsigned long ezx_pin_config[] __initdata __maybe_unused = {
+static unsigned long ezx_pin_config[] __initdata = {
 	/* PWM backlight */
 	GPIO16_PWM0_OUT,
 
@@ -821,7 +817,6 @@ static void __init a780_init(void)
 		platform_device_register(&a780_camera);
 	}
 
-	pwm_add_table(ezx_pwm_lookup, ARRAY_SIZE(ezx_pwm_lookup));
 	platform_add_devices(ARRAY_AND_SIZE(ezx_devices));
 	platform_add_devices(ARRAY_AND_SIZE(a780_devices));
 }
@@ -889,7 +884,6 @@ static void __init e680_init(void)
 
 	pxa_set_keypad_info(&e680_keypad_platform_data);
 
-	pwm_add_table(ezx_pwm_lookup, ARRAY_SIZE(ezx_pwm_lookup));
 	platform_add_devices(ARRAY_AND_SIZE(ezx_devices));
 	platform_add_devices(ARRAY_AND_SIZE(e680_devices));
 }
@@ -957,7 +951,6 @@ static void __init a1200_init(void)
 
 	pxa_set_keypad_info(&a1200_keypad_platform_data);
 
-	pwm_add_table(ezx_pwm_lookup, ARRAY_SIZE(ezx_pwm_lookup));
 	platform_add_devices(ARRAY_AND_SIZE(ezx_devices));
 	platform_add_devices(ARRAY_AND_SIZE(a1200_devices));
 }
@@ -1150,7 +1143,6 @@ static void __init a910_init(void)
 		platform_device_register(&a910_camera);
 	}
 
-	pwm_add_table(ezx_pwm_lookup, ARRAY_SIZE(ezx_pwm_lookup));
 	platform_add_devices(ARRAY_AND_SIZE(ezx_devices));
 	platform_add_devices(ARRAY_AND_SIZE(a910_devices));
 }
@@ -1218,7 +1210,6 @@ static void __init e6_init(void)
 
 	pxa_set_keypad_info(&e6_keypad_platform_data);
 
-	pwm_add_table(ezx_pwm_lookup, ARRAY_SIZE(ezx_pwm_lookup));
 	platform_add_devices(ARRAY_AND_SIZE(ezx_devices));
 	platform_add_devices(ARRAY_AND_SIZE(e6_devices));
 }
@@ -1260,7 +1251,6 @@ static void __init e2_init(void)
 
 	pxa_set_keypad_info(&e2_keypad_platform_data);
 
-	pwm_add_table(ezx_pwm_lookup, ARRAY_SIZE(ezx_pwm_lookup));
 	platform_add_devices(ARRAY_AND_SIZE(ezx_devices));
 	platform_add_devices(ARRAY_AND_SIZE(e2_devices));
 }

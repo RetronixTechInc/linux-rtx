@@ -23,17 +23,17 @@
 
 / {
 	model = "Retronix i.MX6 Quad A6PLUS Board";
-	compatible = "fsl,rtx-imx6q-a6plus", "fsl,imx6q";
-
+	compatible = "rtx,rtx-imx6q-a6plus", "fsl,imx6q";
+	
 	aliases {
 		mxcfb0 = &hdmi_display;
 		mxcfb1 = &lcd_display;
 	};
-
+	
 	memory {
 		reg = <0x10000000 0x40000000>;
 	};
-
+	
 	clocks {
 		#address-cells = <1>;
 		#size-cells = <0>;
@@ -44,12 +44,12 @@
 			clock-frequency = <24000000>;
 		};
 	};
-
+	
 	regulators {
 		compatible = "simple-bus";
 		#address-cells = <1>;
 		#size-cells = <0>;
-
+		
 		reg_1p8v: 1p8v {
 			compatible = "regulator-fixed";
 			reg = <0>;
@@ -104,7 +104,7 @@
 			gpio = <&gpio1 9 0>;
 			startup-delay-us = <5000>;
 			enable-active-high;
-		};
+		};		
 	};
 
 	gpio-keys {
@@ -130,7 +130,7 @@
 			"Ext Spk", "LINE_OUT";
 		mux-int-port = <1>;
 		mux-ext-port = <3>;
-
+		
 		hp-det-gpios = <&gpio7 8 1>;
 		#mic-det-gpios = <&gpio7 8 1>;
 	};
@@ -152,7 +152,7 @@
 		late_init = <0>;
 		status = "okay";
 	};
-
+	
 	lcd_display: fb@1 {
 		compatible = "fsl,mxc_sdc_fb";
 		disp_dev = "lcd";
@@ -194,7 +194,7 @@
 		compatible = "fsl,mxc_v4l2_output";
 		status = "okay";
 	};
-
+	
 	lvds0_pwm {
 		compatible = "pwm-backlight";
 		pwms = <&pwm4 0 5000000>;
@@ -206,21 +206,14 @@
 	};
 };
 
-&audmux {
-	pinctrl-names = "default";
-	pinctrl-0 = <&pinctrl_audmux_2>;
-	status = "okay";
-};
-
 &cpu0 {
 	arm-supply = <&sw1a_reg>;
 	soc-supply = <&sw1c_reg>;
 };
 
-&fec {
+&audmux {
 	pinctrl-names = "default";
-	pinctrl-0 = <&pinctrl_enet_4>;
-	phy-mode = "rgmii";
+	pinctrl-0 = <&pinctrl_audmux_2>;
 	status = "okay";
 };
 
@@ -230,12 +223,20 @@
 	status = "okay";
 };
 
+&hdmi_audio {
+	status = "okay";
+};
+
 &gpc {
-	fsl,ldo-bypass = <0>; /* use ldo-bypass, u-boot will check it and configure */
+	fsl,ldo-bypass = <1>; /* use ldo-bypass, u-boot will check it and configure */
 	fsl,wdog-reset = <2>; /* watchdog select of reset source */
 };
 
-&hdmi_audio {
+
+&fec {
+	pinctrl-names = "default";
+	pinctrl-0 = <&pinctrl_enet_4>;
+	phy-mode = "rgmii";
 	status = "okay";
 };
 
@@ -386,11 +387,11 @@
 	pinctrl-0 = <&pinctrl_i2c3_2>;
 	status = "okay";
 
-	hdmi_edid: edid@50 {
+	hdmi: edid@50 {
 		compatible = "fsl,imx6-hdmi-i2c";
 		reg = <0x50>;
 	};
-
+	
 	rtc@0c {
 		compatible = "rtx,efm32-a6plus";
 		power-on-gpio = <&gpio4 7 0>;
@@ -402,7 +403,7 @@
 
 &pcie {
 	pinctrl-names = "default";
-
+	
 	power-on-gpio = <&gpio3 18 0>;
 	reset-gpio = <&gpio7 11 0>;
 	wake-up-gpio = <&gpio1 8 1>;
@@ -420,9 +421,6 @@
 &uart3 {
 	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl_uart3_1>;
-	fsl,azrs3080;
-	fsl,azrs3080-cts-dir    = <&gpio3 31 0> ;
-	fsl,azrs3080-rts-dir    = <&gpio3 23 0> ;
 	status = "okay";
 };
 
@@ -434,22 +432,10 @@
 };
 
 &uart5 {
-	pinctrl-names = "default", "rs422";
-	pinctrl-0 = <&pinctrl_uart5_dte_rs232>;
-	pinctrl-1 = <&pinctrl_uart5_dte_rs422>;
-	/* fsl,dte-mode;
-	DTE mode : CSI0_DAT14 is RX; CSI0_DAT15 is TX; KEY_ROW4 is RTS; KEY_COL4 is CTS;
-	DCE mode : CSI0_DAT14 is TX; CSI0_DAT15 is RX; KEY_ROW4 is CTS; KEY_COL4 is RTS;
-	*/
-	/* fsl,dte-mode; */
-	/* fsl,uart-has-rtscts; */
-	fsl,sp339e;
-	fsl,sp339e-dir    = <&gpio4 15 0> ;
-	fsl,sp339e-enable = <&gpio3 16 0> ;
-	fsl,sp339e-m0     = <&gpio2 23 0> ;
-	fsl,sp339e-m1     = <&gpio2 24 0> ;
-	fsl,sp339e-tm     = <&gpio6 31 0> ;
-	fsl,sp339e-slew   = <&gpio3 17 0> ;
+	pinctrl-names = "default";
+	pinctrl-0 = <&pinctrl_uart5_1>;
+	fsl,dte-mode;
+	fsl,uart-has-rtscts;
 	status = "okay";
 };
 
@@ -471,7 +457,7 @@
 	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl_usdhc3_50mhz &pinctrl_usdhc3_cd_wp>;
 	bus-width = <4>;
-	cd-gpios = <&gpio2 0 1>;
+	cd-gpios = <&gpio2 0 0>;
 	wp-gpios = <&gpio2 1 0>;
 	no-1-8-v;
 	keep-power-in-suspend;

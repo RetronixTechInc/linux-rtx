@@ -305,16 +305,14 @@ struct scatterlist *ccp_crypto_sg_table_add(struct sg_table *table,
 	for (sg = table->sgl; sg; sg = sg_next(sg))
 		if (!sg_page(sg))
 			break;
-	if (WARN_ON(!sg))
-		return NULL;
+	BUG_ON(!sg);
 
 	for (; sg && sg_add; sg = sg_next(sg), sg_add = sg_next(sg_add)) {
 		sg_set_page(sg, sg_page(sg_add), sg_add->length,
 			    sg_add->offset);
 		sg_last = sg;
 	}
-	if (WARN_ON(sg_add))
-		return NULL;
+	BUG_ON(sg_add);
 
 	return sg_last;
 }

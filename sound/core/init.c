@@ -100,28 +100,35 @@ int (*snd_mixer_oss_notify_callback)(struct snd_card *card, int free_flag);
 EXPORT_SYMBOL(snd_mixer_oss_notify_callback);
 #endif
 
-#ifdef CONFIG_SND_PROC_FS
+#ifdef CONFIG_PROC_FS
 static void snd_card_id_read(struct snd_info_entry *entry,
 			     struct snd_info_buffer *buffer)
 {
 	snd_iprintf(buffer, "%s\n", entry->card->id);
 }
 
-static int init_info_for_card(struct snd_card *card)
+static inline int init_info_for_card(struct snd_card *card)
 {
+	int err;
 	struct snd_info_entry *entry;
 
-	entry = snd_info_create_card_entry(card, "id", card->proc_root);
-	if (!entry) {
+	if ((err = snd_info_card_register(card)) < 0) {
+		dev_dbg(card->dev, "unable to create card info\n");
+		return err;
+	}
+	if ((entry = snd_info_create_card_entry(card, "id", card->proc_root)) == NULL) {
 		dev_dbg(card->dev, "unable to create card entry\n");
-		return -ENOMEM;
+		return err;
 	}
 	entry->c.text.read = snd_card_id_read;
+	if (snd_info_register(entry) < 0) {
+		snd_info_free_entry(entry);
+		entry = NULL;
+	}
 	card->proc_id = entry;
-
-	return snd_info_card_register(card);
+	return 0;
 }
-#else /* !CONFIG_SND_PROC_FS */
+#else /* !CONFIG_PROC_FS */
 #define init_info_for_card(card)
 #endif
 
@@ -267,9 +274,6 @@ int snd_card_new(struct device *parent, int idx, const char *xid,
 	err = kobject_set_name(&card->card_dev.kobj, "card%d", idx);
 	if (err < 0)
 		goto __error;
-
-	snprintf(card->irq_descr, sizeof(card->irq_descr), "%s:%s",
-		 dev_driver_string(card->dev), dev_name(&card->card_dev));
 
 	/* the control interface cannot be accessed from the user space until */
 	/* snd_cards_bitmask and snd_cards are set with snd_card_register */
@@ -752,7 +756,7 @@ int snd_card_register(struct snd_card *card)
 	if (snd_cards[card->number]) {
 		/* already registered */
 		mutex_unlock(&snd_card_mutex);
-		return snd_info_card_register(card); /* register pending info */
+		return 0;
 	}
 	if (*card->id) {
 		/* make a unique id name from the given string */
@@ -778,7 +782,9 @@ int snd_card_register(struct snd_card *card)
 
 EXPORT_SYMBOL(snd_card_register);
 
-#ifdef CONFIG_SND_PROC_FS
+#ifdef CONFIG_PROC_FS
+static struct snd_info_entry *snd_card_info_entry;
+
 static void snd_card_info_read(struct snd_info_entry *entry,
 			       struct snd_info_buffer *buffer)
 {
@@ -804,6 +810,7 @@ static void snd_card_info_read(struct snd_info_entry *entry,
 }
 
 #ifdef CONFIG_SND_OSSEMUL
+
 void snd_card_info_read_oss(struct snd_info_buffer *buffer)
 {
 	int idx, count;
@@ -825,6 +832,7 @@ void snd_card_info_read_oss(struct snd_info_buffer *buffer)
 #endif
 
 #ifdef MODULE
+static struct snd_info_entry *snd_card_module_info_entry;
 static void snd_card_module_info_read(struct snd_info_entry *entry,
 				      struct snd_info_buffer *buffer)
 {
@@ -849,21 +857,36 @@ int __init snd_card_info_init(void)
 	if (! entry)
 		return -ENOMEM;
 	entry->c.text.read = snd_card_info_read;
-	if (snd_info_register(entry) < 0)
-		return -ENOMEM; /* freed in error path */
+	if (snd_info_register(entry) < 0) {
+		snd_info_free_entry(entry);
+		return -ENOMEM;
+	}
+	snd_card_info_entry = entry;
 
 #ifdef MODULE
 	entry = snd_info_create_module_entry(THIS_MODULE, "modules", NULL);
-	if (!entry)
-		return -ENOMEM;
-	entry->c.text.read = snd_card_module_info_read;
-	if (snd_info_register(entry) < 0)
-		return -ENOMEM; /* freed in error path */
+	if (entry) {
+		entry->c.text.read = snd_card_module_info_read;
+		if (snd_info_register(entry) < 0)
+			snd_info_free_entry(entry);
+		else
+			snd_card_module_info_entry = entry;
+	}
 #endif
 
 	return 0;
 }
-#endif /* CONFIG_SND_PROC_FS */
+
+int __exit snd_card_info_done(void)
+{
+	snd_info_free_entry(snd_card_info_entry);
+#ifdef MODULE
+	snd_info_free_entry(snd_card_module_info_entry);
+#endif
+	return 0;
+}
+
+#endif /* CONFIG_PROC_FS */
 
 /**
  *  snd_component_add - add a component string

@@ -85,7 +85,6 @@
 			regulator-min-microvolt = <3000000>;
 			regulator-max-microvolt = <3000000>;
 			gpio = <&gpio2 11 GPIO_ACTIVE_HIGH>;
-			off-on-delay = <20000>;
 			enable-active-high;
 		};
 
@@ -137,7 +136,7 @@
 			regulator-name = "peri_3v3";
 			regulator-min-microvolt = <3300000>;
 			regulator-max-microvolt = <3300000>;
-			gpio = <&gpio4 16 GPIO_ACTIVE_HIGH>;
+			gpios = <&gpio4 16 GPIO_ACTIVE_HIGH>;
 			enable-active-high;
 			regulator-always-on;
 		};
@@ -500,19 +499,10 @@
 		396000	1175000
 		198000	1175000
 	>;
+	arm-supply = <&sw1a_reg>;
+	soc-supply = <&sw1a_reg>;
 	fsl,arm-soc-shared = <1>;
 };
-
-&reg_arm {
-	vin-supply = <&sw1a_reg>;
-	regulator-allow-bypass;
-};
-
-&reg_soc {
-	vin-supply = <&sw1a_reg>;
-	regulator-allow-bypass;
-};
-
 
 &qspi2 {
 	pinctrl-names = "default";
@@ -549,7 +539,7 @@
 	display = <&display0>;
 	status = "disabled";
 
-	display0: display@0 {
+	display0: display {
 		bits-per-pixel = <16>;
 		bus-width = <24>;
 
@@ -579,7 +569,7 @@
 	disp-dev = "ldb";
 	status = "okay";
 
-	display1: display@1 {
+	display1: display {
 		bits-per-pixel = <16>;
 		bus-width = <18>;
 	};
@@ -631,12 +621,6 @@
 	status = "okay";
 };
 
-&sai1 {
-	pinctrl-names = "default";
-	pinctrl-0 = <&pinctrl_sai1>;
-	status = "disabled";
-};
-
 &spdif {
 	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl_spdif>;
@@ -675,7 +659,7 @@
 	wifi-host;
 	no-1-8-v;
 	keep-power-in-suspend;
-	wakeup-source;
+	enable-sdio-wakeup;
 	status = "okay";
 };
 
@@ -688,7 +672,7 @@
 	cd-gpios = <>;
 	wp-gpios = <>;
 	keep-power-in-suspend;
-	wakeup-source;
+	enable-sdio-wakeup;
 	pm-ignore-notify;
 	vmmc-supply = <>;
 	status = "okay";

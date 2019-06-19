@@ -2694,6 +2694,7 @@ struct scsi_host_template scsi_esp_template = {
 	.use_clustering		= ENABLE_CLUSTERING,
 	.max_sectors		= 0xffff,
 	.skip_settle_delay	= 1,
+	.use_blk_tags		= 1,
 };
 EXPORT_SYMBOL(scsi_esp_template);
 

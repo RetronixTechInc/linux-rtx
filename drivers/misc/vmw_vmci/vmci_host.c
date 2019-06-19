@@ -381,12 +381,18 @@ static int vmci_host_do_send_datagram(struct vmci_host_dev *vmci_host_dev,
 		return -EINVAL;
 	}
 
-	dg = memdup_user((void __user *)(uintptr_t)send_info.addr,
-			 send_info.len);
-	if (IS_ERR(dg)) {
+	dg = kmalloc(send_info.len, GFP_KERNEL);
+	if (!dg) {
 		vmci_ioctl_err(
 			"cannot allocate memory to dispatch datagram\n");
-		return PTR_ERR(dg);
+		return -ENOMEM;
+	}
+
+	if (copy_from_user(dg, (void __user *)(uintptr_t)send_info.addr,
+			   send_info.len)) {
+		vmci_ioctl_err("error getting datagram\n");
+		kfree(dg);
+		return -EFAULT;
 	}
 
 	if (VMCI_DG_SIZE(dg) != send_info.len) {
@@ -1025,9 +1031,14 @@ int __init vmci_host_init(void)
 
 void __exit vmci_host_exit(void)
 {
+	int error;
+
 	vmci_host_device_initialized = false;
 
-	misc_deregister(&vmci_host_miscdev);
+	error = misc_deregister(&vmci_host_miscdev);
+	if (error)
+		pr_warn("Error unregistering character device: %d\n", error);
+
 	vmci_ctx_destroy(host_context);
 	vmci_qp_broker_exit();
 

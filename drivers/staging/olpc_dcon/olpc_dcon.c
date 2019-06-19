@@ -60,7 +60,7 @@ static s32 dcon_read(struct dcon_priv *dcon, u8 reg)
 
 static int dcon_hw_init(struct dcon_priv *dcon, int is_init)
 {
-	u16 ver;
+	uint16_t ver;
 	int rc = 0;
 
 	ver = dcon_read(dcon, DCON_REG_ID);
@@ -99,6 +99,7 @@ static int dcon_hw_init(struct dcon_priv *dcon, int is_init)
 				MODE_CSWIZZLE | MODE_COL_AA;
 	}
 	dcon_write(dcon, DCON_REG_MODE, dcon->disp_mode);
+
 
 	/* Set the scanline to interrupt on during resume */
 	dcon_write(dcon, DCON_REG_SCAN_INT, resumeline);
@@ -237,13 +238,15 @@ static void dcon_sleep(struct dcon_priv *dcon, bool sleep)
  */
 static void dcon_load_holdoff(struct dcon_priv *dcon)
 {
-	ktime_t delta_t, now;
+	struct timespec delta_t, now;
 
 	while (1) {
-		now = ktime_get();
-		delta_t = ktime_sub(now, dcon->load_time);
-		if (ktime_to_ns(delta_t) > NSEC_PER_MSEC * 20)
+		getnstimeofday(&now);
+		delta_t = timespec_sub(now, dcon->load_time);
+		if (delta_t.tv_sec != 0 ||
+			delta_t.tv_nsec > NSEC_PER_MSEC * 20) {
 			break;
+		}
 		mdelay(4);
 	}
 }
@@ -322,19 +325,19 @@ static void dcon_source_switch(struct work_struct *work)
 
 		/* And turn off the DCON */
 		pdata->set_dconload(1);
-		dcon->load_time = ktime_get();
+		getnstimeofday(&dcon->load_time);
 
 		pr_info("The CPU has control\n");
 		break;
 	case DCON_SOURCE_DCON:
 	{
-		ktime_t delta_t;
+		struct timespec delta_t;
 
 		pr_info("dcon_source_switch to DCON\n");
 
 		/* Clear DCONLOAD - this implies that the DCON is in control */
 		pdata->set_dconload(0);
-		dcon->load_time = ktime_get();
+		getnstimeofday(&dcon->load_time);
 
 		wait_event_timeout(dcon->waitq, dcon->switched, HZ/2);
 
@@ -352,14 +355,14 @@ static void dcon_source_switch(struct work_struct *work)
 			 * deassert and reassert, and hope for the best.
 			 * see http://dev.laptop.org/ticket/9664
 			 */
-			delta_t = ktime_sub(dcon->irq_time, dcon->load_time);
-			if (dcon->switched && ktime_to_ns(delta_t)
-			    < NSEC_PER_MSEC * 20) {
+			delta_t = timespec_sub(dcon->irq_time, dcon->load_time);
+			if (dcon->switched && delta_t.tv_sec == 0 &&
+					delta_t.tv_nsec < NSEC_PER_MSEC * 20) {
 				pr_err("missed loading, retrying\n");
 				pdata->set_dconload(1);
 				mdelay(41);
 				pdata->set_dconload(0);
-				dcon->load_time = ktime_get();
+				getnstimeofday(&dcon->load_time);
 				mdelay(41);
 			}
 		}
@@ -616,7 +619,7 @@ static int dcon_probe(struct i2c_client *client, const struct i2c_device_id *id)
 
 	dcon_device = platform_device_alloc("dcon", -1);
 
-	if (!dcon_device) {
+	if (dcon_device == NULL) {
 		pr_err("Unable to create the DCON device\n");
 		rc = -ENOMEM;
 		goto eirq;
@@ -679,7 +682,7 @@ static int dcon_remove(struct i2c_client *client)
 
 	backlight_device_unregister(dcon->bl_dev);
 
-	if (dcon_device)
+	if (dcon_device != NULL)
 		platform_device_unregister(dcon_device);
 	cancel_work_sync(&dcon->switch_source);
 
@@ -722,6 +725,7 @@ static int dcon_resume(struct device *dev)
 
 #endif /* CONFIG_PM */
 
+
 irqreturn_t dcon_interrupt(int irq, void *id)
 {
 	struct dcon_priv *dcon = id;
@@ -738,7 +742,7 @@ irqreturn_t dcon_interrupt(int irq, void *id)
 	case 2:	/* switch to DCON mode */
 	case 1: /* switch to CPU mode */
 		dcon->switched = true;
-		dcon->irq_time = ktime_get();
+		getnstimeofday(&dcon->irq_time);
 		wake_up(&dcon->waitq);
 		break;
 
@@ -752,7 +756,7 @@ irqreturn_t dcon_interrupt(int irq, void *id)
 		 */
 		if (dcon->curr_src != dcon->pending_src && !dcon->switched) {
 			dcon->switched = true;
-			dcon->irq_time = ktime_get();
+			getnstimeofday(&dcon->irq_time);
 			wake_up(&dcon->waitq);
 			pr_debug("switching w/ status 0/0\n");
 		} else {

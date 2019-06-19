@@ -181,15 +181,15 @@ static inline int entry_matches(struct ppc_plt_entry *entry, Elf32_Addr val)
 /* Set up a trampoline in the PLT to bounce us to the distant function */
 static uint32_t do_plt_call(void *location,
 			    Elf32_Addr val,
-			    const Elf32_Shdr *sechdrs,
+			    Elf32_Shdr *sechdrs,
 			    struct module *mod)
 {
 	struct ppc_plt_entry *entry;
 
 	pr_debug("Doing plt for call to 0x%x at 0x%x\n", val, (unsigned int)location);
 	/* Init, or core PLT? */
-	if (location >= mod->core_layout.base
-	    && location < mod->core_layout.base + mod->core_layout.size)
+	if (location >= mod->module_core
+	    && location < mod->module_core + mod->core_size)
 		entry = (void *)sechdrs[mod->arch.core_plt_section].sh_addr;
 	else
 		entry = (void *)sechdrs[mod->arch.init_plt_section].sh_addr;
@@ -294,19 +294,11 @@ int apply_relocate_add(Elf32_Shdr *sechdrs,
 			return -ENOEXEC;
 		}
 	}
-
-	return 0;
-}
-
 #ifdef CONFIG_DYNAMIC_FTRACE
-int module_finalize_ftrace(struct module *module, const Elf_Shdr *sechdrs)
-{
-	module->arch.tramp = do_plt_call(module->core_layout.base,
-					 (unsigned long)ftrace_caller,
-					 sechdrs, module);
-	if (!module->arch.tramp)
-		return -ENOENT;
-
+	module->arch.tramp =
+		do_plt_call(module->module_core,
+			    (unsigned long)ftrace_caller,
+			    sechdrs, module);
+#endif
 	return 0;
 }
-#endif

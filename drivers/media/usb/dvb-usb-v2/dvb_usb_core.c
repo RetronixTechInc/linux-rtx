@@ -1,7 +1,7 @@
 /*
  * DVB USB framework
  *
- * Copyright (C) 2004-6 Patrick Boettcher <patrick.boettcher@posteo.de>
+ * Copyright (C) 2004-6 Patrick Boettcher <patrick.boettcher@desy.de>
  * Copyright (C) 2012 Antti Palosaari <crope@iki.fi>
  *
  *    This program is free software; you can redistribute it and/or modify
@@ -20,7 +20,6 @@
  */
 
 #include "dvb_usb_common.h"
-#include <media/media-device.h>
 
 static int dvb_usbv2_disable_rc_polling;
 module_param_named(disable_rc_polling, dvb_usbv2_disable_rc_polling, int, 0644);
@@ -82,6 +81,8 @@ static int dvb_usbv2_i2c_init(struct dvb_usb_device *d)
 	ret = i2c_add_adapter(&d->i2c_adap);
 	if (ret < 0) {
 		d->i2c_adap.algo = NULL;
+		dev_err(&d->udev->dev, "%s: i2c_add_adapter() failed=%d\n",
+				KBUILD_MODNAME, ret);
 		goto err;
 	}
 
@@ -399,32 +400,39 @@ skip_feed_stop:
 	return ret;
 }
 
-static int dvb_usbv2_media_device_init(struct dvb_usb_adapter *adap)
+static void dvb_usbv2_media_device_register(struct dvb_usb_adapter *adap)
 {
 #ifdef CONFIG_MEDIA_CONTROLLER_DVB
 	struct media_device *mdev;
 	struct dvb_usb_device *d = adap_to_d(adap);
 	struct usb_device *udev = d->udev;
+	int ret;
 
 	mdev = kzalloc(sizeof(*mdev), GFP_KERNEL);
 	if (!mdev)
-		return -ENOMEM;
+		return;
 
-	media_device_usb_init(mdev, udev, d->name);
+	mdev->dev = &udev->dev;
+	strlcpy(mdev->model, d->name, sizeof(mdev->model));
+	if (udev->serial)
+		strlcpy(mdev->serial, udev->serial, sizeof(mdev->serial));
+	strcpy(mdev->bus_info, udev->devpath);
+	mdev->hw_revision = le16_to_cpu(udev->descriptor.bcdDevice);
+	mdev->driver_version = LINUX_VERSION_CODE;
+
+	ret = media_device_register(mdev);
+	if (ret) {
+		dev_err(&d->udev->dev,
+			"Couldn't create a media device. Error: %d\n",
+			ret);
+		kfree(mdev);
+		return;
+	}
 
 	dvb_register_media_controller(&adap->dvb_adap, mdev);
 
 	dev_info(&d->udev->dev, "media controller created\n");
-#endif
-	return 0;
-}
 
-static int dvb_usbv2_media_device_register(struct dvb_usb_adapter *adap)
-{
-#ifdef CONFIG_MEDIA_CONTROLLER_DVB
-	return media_device_register(adap->dvb_adap.mdev);
-#else
-	return 0;
 #endif
 }
 
@@ -436,7 +444,6 @@ static void dvb_usbv2_media_device_unregister(struct dvb_usb_adapter *adap)
 		return;
 
 	media_device_unregister(adap->dvb_adap.mdev);
-	media_device_cleanup(adap->dvb_adap.mdev);
 	kfree(adap->dvb_adap.mdev);
 	adap->dvb_adap.mdev = NULL;
 
@@ -460,12 +467,7 @@ static int dvb_usbv2_adapter_dvb_init(struct dvb_usb_adapter *adap)
 
 	adap->dvb_adap.priv = adap;
 
-	ret = dvb_usbv2_media_device_init(adap);
-	if (ret < 0) {
-		dev_dbg(&d->udev->dev, "%s: dvb_usbv2_media_device_init() failed=%d\n",
-				__func__, ret);
-		goto err_dvb_register_mc;
-	}
+	dvb_usbv2_media_device_register(adap);
 
 	if (d->props->read_mac_address) {
 		ret = d->props->read_mac_address(adap,
@@ -516,7 +518,6 @@ err_dvb_dmxdev_init:
 	dvb_dmx_release(&adap->demux);
 err_dvb_dmx_init:
 	dvb_usbv2_media_device_unregister(adap);
-err_dvb_register_mc:
 	dvb_unregister_adapter(&adap->dvb_adap);
 err_dvb_register_adapter:
 	adap->dvb_adap.priv = NULL;
@@ -533,6 +534,7 @@ static int dvb_usbv2_adapter_dvb_exit(struct dvb_usb_adapter *adap)
 		adap->demux.dmx.close(&adap->demux.dmx);
 		dvb_dmxdev_release(&adap->dmxdev);
 		dvb_dmx_release(&adap->demux);
+		dvb_usbv2_media_device_unregister(adap);
 		dvb_unregister_adapter(&adap->dvb_adap);
 	}
 
@@ -696,13 +698,9 @@ static int dvb_usbv2_adapter_frontend_init(struct dvb_usb_adapter *adap)
 		}
 	}
 
-	ret = dvb_create_media_graph(&adap->dvb_adap, true);
-	if (ret < 0)
-		goto err_dvb_unregister_frontend;
+	dvb_create_media_graph(&adap->dvb_adap);
 
-	ret = dvb_usbv2_media_device_register(adap);
-
-	return ret;
+	return 0;
 
 err_dvb_unregister_frontend:
 	for (i = count_registered - 1; i >= 0; i--)
@@ -842,7 +840,6 @@ static int dvb_usbv2_adapter_exit(struct dvb_usb_device *d)
 			dvb_usbv2_adapter_dvb_exit(&d->adapter[i]);
 			dvb_usbv2_adapter_stream_exit(&d->adapter[i]);
 			dvb_usbv2_adapter_frontend_exit(&d->adapter[i]);
-			dvb_usbv2_media_device_unregister(&d->adapter[i]);
 		}
 	}
 
@@ -1013,8 +1010,8 @@ EXPORT_SYMBOL(dvb_usbv2_probe);
 void dvb_usbv2_disconnect(struct usb_interface *intf)
 {
 	struct dvb_usb_device *d = usb_get_intfdata(intf);
-	const char *devname = kstrdup(dev_name(&d->udev->dev), GFP_KERNEL);
-	const char *drvname = d->name;
+	const char *name = d->name;
+	struct device dev = d->udev->dev;
 
 	dev_dbg(&d->udev->dev, "%s: bInterfaceNumber=%d\n", __func__,
 			intf->cur_altsetting->desc.bInterfaceNumber);
@@ -1024,9 +1021,8 @@ void dvb_usbv2_disconnect(struct usb_interface *intf)
 
 	dvb_usbv2_exit(d);
 
-	pr_info("%s: '%s:%s' successfully deinitialized and disconnected\n",
-		KBUILD_MODNAME, drvname, devname);
-	kfree(devname);
+	dev_info(&dev, "%s: '%s' successfully deinitialized and disconnected\n",
+			KBUILD_MODNAME, name);
 }
 EXPORT_SYMBOL(dvb_usbv2_disconnect);
 
@@ -1121,7 +1117,7 @@ int dvb_usbv2_reset_resume(struct usb_interface *intf)
 EXPORT_SYMBOL(dvb_usbv2_reset_resume);
 
 MODULE_VERSION("2.0");
-MODULE_AUTHOR("Patrick Boettcher <patrick.boettcher@posteo.de>");
+MODULE_AUTHOR("Patrick Boettcher <patrick.boettcher@desy.de>");
 MODULE_AUTHOR("Antti Palosaari <crope@iki.fi>");
 MODULE_DESCRIPTION("DVB USB common");
 MODULE_LICENSE("GPL");

@@ -42,7 +42,6 @@ struct irq_chip no_irq_chip = {
 	.irq_enable	= noop,
 	.irq_disable	= noop,
 	.irq_ack	= ack_bad,
-	.flags		= IRQCHIP_SKIP_SET_WAKE,
 };
 
 /*

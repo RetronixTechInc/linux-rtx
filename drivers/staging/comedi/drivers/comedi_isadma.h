@@ -16,10 +16,6 @@
 #ifndef _COMEDI_ISADMA_H
 #define _COMEDI_ISADMA_H
 
-#include <linux/types.h>
-
-struct comedi_device;
-
 /*
  * These are used to avoid issues when <asm/dma.h> and the DMA_MODE_
  * defines are not available.

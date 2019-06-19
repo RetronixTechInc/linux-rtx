@@ -179,13 +179,14 @@
 #define BCM2048_DEFAULT_TIMEOUT		1500
 #define BCM2048_AUTO_SEARCH_TIMEOUT	3000
 
+
 #define BCM2048_FREQDEV_UNIT		10000
 #define BCM2048_FREQV4L2_MULTI		625
 #define dev_to_v4l2(f)	((f * BCM2048_FREQDEV_UNIT) / BCM2048_FREQV4L2_MULTI)
 #define v4l2_to_dev(f)	((f * BCM2048_FREQV4L2_MULTI) / BCM2048_FREQDEV_UNIT)
 
-#define msb(x)                  ((u8)((u16)x >> 8))
-#define lsb(x)                  ((u8)((u16)x &  0x00FF))
+#define msb(x)                  ((u8)((u16) x >> 8))
+#define lsb(x)                  ((u8)((u16) x &  0x00FF))
 #define compose_u16(msb, lsb)	(((u16)msb << 8) | lsb)
 
 #define BCM2048_DEFAULT_POWERING_DELAY	20
@@ -216,7 +217,7 @@
 #define BCM2048_FREQ_ERROR_FLOOR	-20
 #define BCM2048_FREQ_ERROR_ROOF		20
 
-/* -60 dB is reported as full signal strength */
+/* -60 dB is reported as full signal strenght */
 #define BCM2048_RSSI_LEVEL_BASE		-60
 #define BCM2048_RSSI_LEVEL_ROOF		-100
 #define BCM2048_RSSI_LEVEL_ROOF_NEG	100
@@ -308,7 +309,7 @@ module_param(radio_nr, int, 0);
 MODULE_PARM_DESC(radio_nr,
 		 "Minor number for radio device (-1 ==> auto assign)");
 
-static const struct region_info region_configs[] = {
+static struct region_info region_configs[] = {
 	/* USA */
 	{
 		.channel_spacing	= 20,
@@ -341,13 +342,21 @@ static const struct region_info region_configs[] = {
 		.deemphasis		= 50,
 		.region			= 3,
 	},
+	/* Japan wide band */
+	{
+		.channel_spacing	= 10,
+		.bottom_frequency	= 76000,
+		.top_frequency		= 108000,
+		.deemphasis		= 50,
+		.region			= 4,
+	},
 };
 
 /*
  *	I2C Interface read / write
  */
 static int bcm2048_send_command(struct bcm2048_device *bdev, unsigned int reg,
-				unsigned int value)
+					unsigned int value)
 {
 	struct i2c_client *client = bdev->client;
 	u8 data[2];
@@ -369,7 +378,7 @@ static int bcm2048_send_command(struct bcm2048_device *bdev, unsigned int reg,
 }
 
 static int bcm2048_recv_command(struct bcm2048_device *bdev, unsigned int reg,
-				u8 *value)
+			u8 *value)
 {
 	struct i2c_client *client = bdev->client;
 
@@ -384,7 +393,7 @@ static int bcm2048_recv_command(struct bcm2048_device *bdev, unsigned int reg,
 }
 
 static int bcm2048_recv_duples(struct bcm2048_device *bdev, unsigned int reg,
-			       u8 *value, u8 duples)
+			u8 *value, u8 duples)
 {
 	struct i2c_client *client = bdev->client;
 	struct i2c_adapter *adap = client->adapter;
@@ -435,7 +444,7 @@ static int bcm2048_set_power_state(struct bcm2048_device *bdev, u8 power)
 	 */
 	if (power)
 		err = bcm2048_send_command(bdev, BCM2048_I2C_FM_RDS_SYSTEM,
-					   bdev->cache_fm_rds_system);
+					bdev->cache_fm_rds_system);
 	msleep(BCM2048_DEFAULT_POWERING_DELAY);
 
 	if (!power)
@@ -474,19 +483,19 @@ static int bcm2048_set_rds_no_lock(struct bcm2048_device *bdev, u8 rds_on)
 		bdev->rds_state = BCM2048_RDS_ON;
 		flags =	BCM2048_RDS_FLAG_FIFO_WLINE;
 		err = bcm2048_send_command(bdev, BCM2048_I2C_FM_RDS_MASK1,
-					   flags);
+						flags);
 	} else {
 		flags =	0;
 		bdev->rds_state = 0;
 		err = bcm2048_send_command(bdev, BCM2048_I2C_FM_RDS_MASK1,
-					   flags);
+						flags);
 		memset(&bdev->rds_info, 0, sizeof(bdev->rds_info));
 	}
-	if (err)
-		return err;
 
-	return bcm2048_send_command(bdev, BCM2048_I2C_FM_RDS_SYSTEM,
-				    bdev->cache_fm_rds_system);
+	err = bcm2048_send_command(bdev, BCM2048_I2C_FM_RDS_SYSTEM,
+					bdev->cache_fm_rds_system);
+
+	return err;
 }
 
 static int bcm2048_get_rds_no_lock(struct bcm2048_device *bdev)
@@ -544,14 +553,14 @@ static int bcm2048_set_fm_automatic_stereo_mono(struct bcm2048_device *bdev,
 		bdev->cache_fm_ctrl |= BCM2048_STEREO_MONO_AUTO_SELECT;
 
 	err = bcm2048_send_command(bdev, BCM2048_I2C_FM_CTRL,
-				   bdev->cache_fm_ctrl);
+					bdev->cache_fm_ctrl);
 
 	mutex_unlock(&bdev->mutex);
 	return err;
 }
 
 static int bcm2048_set_fm_hi_lo_injection(struct bcm2048_device *bdev,
-					  u8 hi_lo)
+						u8 hi_lo)
 {
 	int err;
 
@@ -563,7 +572,7 @@ static int bcm2048_set_fm_hi_lo_injection(struct bcm2048_device *bdev,
 		bdev->cache_fm_ctrl |= BCM2048_HI_LO_INJECTION;
 
 	err = bcm2048_send_command(bdev, BCM2048_I2C_FM_CTRL,
-				   bdev->cache_fm_ctrl);
+					bdev->cache_fm_ctrl);
 
 	mutex_unlock(&bdev->mutex);
 	return err;
@@ -591,7 +600,7 @@ static int bcm2048_set_fm_frequency(struct bcm2048_device *bdev, u32 frequency)
 	int err;
 
 	if (frequency < bdev->region_info.bottom_frequency ||
-	    frequency > bdev->region_info.top_frequency)
+		frequency > bdev->region_info.top_frequency)
 		return -EDOM;
 
 	frequency -= BCM2048_FREQUENCY_BASE;
@@ -600,7 +609,7 @@ static int bcm2048_set_fm_frequency(struct bcm2048_device *bdev, u32 frequency)
 
 	err = bcm2048_send_command(bdev, BCM2048_I2C_FM_FREQ0, lsb(frequency));
 	err |= bcm2048_send_command(bdev, BCM2048_I2C_FM_FREQ1,
-				    msb(frequency));
+					msb(frequency));
 
 	if (!err)
 		bdev->frequency = frequency;
@@ -612,7 +621,7 @@ static int bcm2048_set_fm_frequency(struct bcm2048_device *bdev, u32 frequency)
 static int bcm2048_get_fm_frequency(struct bcm2048_device *bdev)
 {
 	int err;
-	u8 lsb = 0, msb = 0;
+	u8 lsb, msb;
 
 	mutex_lock(&bdev->mutex);
 
@@ -631,12 +640,12 @@ static int bcm2048_get_fm_frequency(struct bcm2048_device *bdev)
 }
 
 static int bcm2048_set_fm_af_frequency(struct bcm2048_device *bdev,
-				       u32 frequency)
+						u32 frequency)
 {
 	int err;
 
 	if (frequency < bdev->region_info.bottom_frequency ||
-	    frequency > bdev->region_info.top_frequency)
+		frequency > bdev->region_info.top_frequency)
 		return -EDOM;
 
 	frequency -= BCM2048_FREQUENCY_BASE;
@@ -644,9 +653,9 @@ static int bcm2048_set_fm_af_frequency(struct bcm2048_device *bdev,
 	mutex_lock(&bdev->mutex);
 
 	err = bcm2048_send_command(bdev, BCM2048_I2C_FM_AF_FREQ0,
-				   lsb(frequency));
+					lsb(frequency));
 	err |= bcm2048_send_command(bdev, BCM2048_I2C_FM_AF_FREQ1,
-				    msb(frequency));
+					msb(frequency));
 	if (!err)
 		bdev->frequency = frequency;
 
@@ -657,7 +666,7 @@ static int bcm2048_set_fm_af_frequency(struct bcm2048_device *bdev,
 static int bcm2048_get_fm_af_frequency(struct bcm2048_device *bdev)
 {
 	int err;
-	u8 lsb = 0, msb = 0;
+	u8 lsb, msb;
 
 	mutex_lock(&bdev->mutex);
 
@@ -691,7 +700,7 @@ static int bcm2048_set_fm_deemphasis(struct bcm2048_device *bdev, int d)
 	bdev->cache_fm_audio_ctrl0 |= deemphasis;
 
 	err = bcm2048_send_command(bdev, BCM2048_I2C_FM_AUDIO_CTRL0,
-				   bdev->cache_fm_audio_ctrl0);
+		bdev->cache_fm_audio_ctrl0);
 
 	if (!err)
 		bdev->region_info.deemphasis = d;
@@ -732,22 +741,10 @@ static int bcm2048_set_region(struct bcm2048_device *bdev, u8 region)
 
 	mutex_lock(&bdev->mutex);
 	bdev->region_info = region_configs[region];
-
-	if (region_configs[region].bottom_frequency < 87500)
-		bdev->cache_fm_ctrl |= BCM2048_BAND_SELECT;
-	else
-		bdev->cache_fm_ctrl &= ~BCM2048_BAND_SELECT;
-
-	err = bcm2048_send_command(bdev, BCM2048_I2C_FM_CTRL,
-				   bdev->cache_fm_ctrl);
-	if (err) {
-		mutex_unlock(&bdev->mutex);
-		goto done;
-	}
 	mutex_unlock(&bdev->mutex);
 
 	if (bdev->frequency < region_configs[region].bottom_frequency ||
-	    bdev->frequency > region_configs[region].top_frequency)
+		bdev->frequency > region_configs[region].top_frequency)
 		new_frequency = region_configs[region].bottom_frequency;
 
 	if (new_frequency > 0) {
@@ -758,7 +755,7 @@ static int bcm2048_set_region(struct bcm2048_device *bdev, u8 region)
 	}
 
 	err = bcm2048_set_fm_deemphasis(bdev,
-					region_configs[region].deemphasis);
+			region_configs[region].deemphasis);
 
 done:
 	return err;
@@ -785,10 +782,10 @@ static int bcm2048_set_mute(struct bcm2048_device *bdev, u16 mute)
 
 	if (mute)
 		bdev->cache_fm_audio_ctrl0 |= (BCM2048_RF_MUTE |
-					       BCM2048_MANUAL_MUTE);
+						BCM2048_MANUAL_MUTE);
 
 	err = bcm2048_send_command(bdev, BCM2048_I2C_FM_AUDIO_CTRL0,
-				   bdev->cache_fm_audio_ctrl0);
+					bdev->cache_fm_audio_ctrl0);
 
 	if (!err)
 		bdev->mute_state = mute;
@@ -806,7 +803,7 @@ static int bcm2048_get_mute(struct bcm2048_device *bdev)
 
 	if (bdev->power_state) {
 		err = bcm2048_recv_command(bdev, BCM2048_I2C_FM_AUDIO_CTRL0,
-					   &value);
+						&value);
 		if (!err)
 			err = value & (BCM2048_RF_MUTE | BCM2048_MANUAL_MUTE);
 	} else {
@@ -825,11 +822,11 @@ static int bcm2048_set_audio_route(struct bcm2048_device *bdev, u8 route)
 
 	route &= (BCM2048_AUDIO_ROUTE_DAC | BCM2048_AUDIO_ROUTE_I2S);
 	bdev->cache_fm_audio_ctrl0 &= ~(BCM2048_AUDIO_ROUTE_DAC |
-					BCM2048_AUDIO_ROUTE_I2S);
+		BCM2048_AUDIO_ROUTE_I2S);
 	bdev->cache_fm_audio_ctrl0 |= route;
 
 	err = bcm2048_send_command(bdev, BCM2048_I2C_FM_AUDIO_CTRL0,
-				   bdev->cache_fm_audio_ctrl0);
+					bdev->cache_fm_audio_ctrl0);
 
 	mutex_unlock(&bdev->mutex);
 	return err;
@@ -848,7 +845,7 @@ static int bcm2048_get_audio_route(struct bcm2048_device *bdev)
 
 	if (!err)
 		return value & (BCM2048_AUDIO_ROUTE_DAC |
-				BCM2048_AUDIO_ROUTE_I2S);
+			BCM2048_AUDIO_ROUTE_I2S);
 
 	return err;
 }
@@ -864,7 +861,7 @@ static int bcm2048_set_dac_output(struct bcm2048_device *bdev, u8 channels)
 	bdev->cache_fm_audio_ctrl0 |= channels;
 
 	err = bcm2048_send_command(bdev, BCM2048_I2C_FM_AUDIO_CTRL0,
-				   bdev->cache_fm_audio_ctrl0);
+					bdev->cache_fm_audio_ctrl0);
 
 	mutex_unlock(&bdev->mutex);
 	return err;
@@ -883,13 +880,13 @@ static int bcm2048_get_dac_output(struct bcm2048_device *bdev)
 
 	if (!err)
 		return value & (BCM2048_DAC_OUTPUT_LEFT |
-				BCM2048_DAC_OUTPUT_RIGHT);
+			BCM2048_DAC_OUTPUT_RIGHT);
 
 	return err;
 }
 
 static int bcm2048_set_fm_search_rssi_threshold(struct bcm2048_device *bdev,
-						u8 threshold)
+							u8 threshold)
 {
 	int err;
 
@@ -900,7 +897,7 @@ static int bcm2048_set_fm_search_rssi_threshold(struct bcm2048_device *bdev,
 	bdev->cache_fm_search_ctrl0 |= threshold;
 
 	err = bcm2048_send_command(bdev, BCM2048_I2C_FM_SEARCH_CTRL0,
-				   bdev->cache_fm_search_ctrl0);
+					bdev->cache_fm_search_ctrl0);
 
 	mutex_unlock(&bdev->mutex);
 	return err;
@@ -936,7 +933,7 @@ static int bcm2048_set_fm_search_mode_direction(struct bcm2048_device *bdev,
 		bdev->cache_fm_search_ctrl0 |= BCM2048_SEARCH_DIRECTION;
 
 	err = bcm2048_send_command(bdev, BCM2048_I2C_FM_SEARCH_CTRL0,
-				   bdev->cache_fm_search_ctrl0);
+					bdev->cache_fm_search_ctrl0);
 
 	mutex_unlock(&bdev->mutex);
 	return err;
@@ -960,7 +957,7 @@ static int bcm2048_get_fm_search_mode_direction(struct bcm2048_device *bdev)
 }
 
 static int bcm2048_set_fm_search_tune_mode(struct bcm2048_device *bdev,
-					   u8 mode)
+						u8 mode)
 {
 	int err, timeout, restart_rds = 0;
 	u8 value, flags;
@@ -999,8 +996,8 @@ static int bcm2048_set_fm_search_tune_mode(struct bcm2048_device *bdev,
 		timeout = BCM2048_AUTO_SEARCH_TIMEOUT;
 
 	if (!wait_for_completion_timeout(&bdev->compl,
-		msecs_to_jiffies(timeout)))
-		dev_err(&bdev->client->dev, "IRQ timeout.\n");
+			msecs_to_jiffies(timeout)))
+			dev_err(&bdev->client->dev, "IRQ timeout.\n");
 
 	if (value)
 		if (!bdev->scan_state)
@@ -1023,7 +1020,7 @@ static int bcm2048_get_fm_search_tune_mode(struct bcm2048_device *bdev)
 	mutex_lock(&bdev->mutex);
 
 	err = bcm2048_recv_command(bdev, BCM2048_I2C_FM_SEARCH_TUNE_MODE,
-				   &value);
+					&value);
 
 	mutex_unlock(&bdev->mutex);
 
@@ -1039,10 +1036,10 @@ static int bcm2048_set_rds_b_block_mask(struct bcm2048_device *bdev, u16 mask)
 
 	mutex_lock(&bdev->mutex);
 
-	err = bcm2048_send_command(bdev, BCM2048_I2C_RDS_BLKB_MASK0,
-				   lsb(mask));
-	err |= bcm2048_send_command(bdev, BCM2048_I2C_RDS_BLKB_MASK1,
-				    msb(mask));
+	err = bcm2048_send_command(bdev,
+			BCM2048_I2C_RDS_BLKB_MASK0, lsb(mask));
+	err |= bcm2048_send_command(bdev,
+			BCM2048_I2C_RDS_BLKB_MASK1, msb(mask));
 
 	mutex_unlock(&bdev->mutex);
 	return err;
@@ -1051,12 +1048,14 @@ static int bcm2048_set_rds_b_block_mask(struct bcm2048_device *bdev, u16 mask)
 static int bcm2048_get_rds_b_block_mask(struct bcm2048_device *bdev)
 {
 	int err;
-	u8 lsb = 0, msb = 0;
+	u8 lsb, msb;
 
 	mutex_lock(&bdev->mutex);
 
-	err = bcm2048_recv_command(bdev, BCM2048_I2C_RDS_BLKB_MASK0, &lsb);
-	err |= bcm2048_recv_command(bdev, BCM2048_I2C_RDS_BLKB_MASK1, &msb);
+	err = bcm2048_recv_command(bdev,
+			BCM2048_I2C_RDS_BLKB_MASK0, &lsb);
+	err |= bcm2048_recv_command(bdev,
+			BCM2048_I2C_RDS_BLKB_MASK1, &msb);
 
 	mutex_unlock(&bdev->mutex);
 
@@ -1067,16 +1066,16 @@ static int bcm2048_get_rds_b_block_mask(struct bcm2048_device *bdev)
 }
 
 static int bcm2048_set_rds_b_block_match(struct bcm2048_device *bdev,
-					 u16 match)
+						u16 match)
 {
 	int err;
 
 	mutex_lock(&bdev->mutex);
 
-	err = bcm2048_send_command(bdev, BCM2048_I2C_RDS_BLKB_MATCH0,
-				   lsb(match));
-	err |= bcm2048_send_command(bdev, BCM2048_I2C_RDS_BLKB_MATCH1,
-				    msb(match));
+	err = bcm2048_send_command(bdev,
+			BCM2048_I2C_RDS_BLKB_MATCH0, lsb(match));
+	err |= bcm2048_send_command(bdev,
+			BCM2048_I2C_RDS_BLKB_MATCH1, msb(match));
 
 	mutex_unlock(&bdev->mutex);
 	return err;
@@ -1085,12 +1084,14 @@ static int bcm2048_set_rds_b_block_match(struct bcm2048_device *bdev,
 static int bcm2048_get_rds_b_block_match(struct bcm2048_device *bdev)
 {
 	int err;
-	u8 lsb = 0, msb = 0;
+	u8 lsb, msb;
 
 	mutex_lock(&bdev->mutex);
 
-	err = bcm2048_recv_command(bdev, BCM2048_I2C_RDS_BLKB_MATCH0, &lsb);
-	err |= bcm2048_recv_command(bdev, BCM2048_I2C_RDS_BLKB_MATCH1, &msb);
+	err = bcm2048_recv_command(bdev,
+			BCM2048_I2C_RDS_BLKB_MATCH0, &lsb);
+	err |= bcm2048_recv_command(bdev,
+			BCM2048_I2C_RDS_BLKB_MATCH1, &msb);
 
 	mutex_unlock(&bdev->mutex);
 
@@ -1106,8 +1107,10 @@ static int bcm2048_set_rds_pi_mask(struct bcm2048_device *bdev, u16 mask)
 
 	mutex_lock(&bdev->mutex);
 
-	err = bcm2048_send_command(bdev, BCM2048_I2C_RDS_PI_MASK0, lsb(mask));
-	err |= bcm2048_send_command(bdev, BCM2048_I2C_RDS_PI_MASK1, msb(mask));
+	err = bcm2048_send_command(bdev,
+			BCM2048_I2C_RDS_PI_MASK0, lsb(mask));
+	err |= bcm2048_send_command(bdev,
+			BCM2048_I2C_RDS_PI_MASK1, msb(mask));
 
 	mutex_unlock(&bdev->mutex);
 	return err;
@@ -1116,12 +1119,14 @@ static int bcm2048_set_rds_pi_mask(struct bcm2048_device *bdev, u16 mask)
 static int bcm2048_get_rds_pi_mask(struct bcm2048_device *bdev)
 {
 	int err;
-	u8 lsb = 0, msb = 0;
+	u8 lsb, msb;
 
 	mutex_lock(&bdev->mutex);
 
-	err = bcm2048_recv_command(bdev, BCM2048_I2C_RDS_PI_MASK0, &lsb);
-	err |= bcm2048_recv_command(bdev, BCM2048_I2C_RDS_PI_MASK1, &msb);
+	err = bcm2048_recv_command(bdev,
+			BCM2048_I2C_RDS_PI_MASK0, &lsb);
+	err |= bcm2048_recv_command(bdev,
+			BCM2048_I2C_RDS_PI_MASK1, &msb);
 
 	mutex_unlock(&bdev->mutex);
 
@@ -1137,10 +1142,10 @@ static int bcm2048_set_rds_pi_match(struct bcm2048_device *bdev, u16 match)
 
 	mutex_lock(&bdev->mutex);
 
-	err = bcm2048_send_command(bdev, BCM2048_I2C_RDS_PI_MATCH0,
-				   lsb(match));
-	err |= bcm2048_send_command(bdev, BCM2048_I2C_RDS_PI_MATCH1,
-				    msb(match));
+	err = bcm2048_send_command(bdev,
+			BCM2048_I2C_RDS_PI_MATCH0, lsb(match));
+	err |= bcm2048_send_command(bdev,
+			BCM2048_I2C_RDS_PI_MATCH1, msb(match));
 
 	mutex_unlock(&bdev->mutex);
 	return err;
@@ -1149,12 +1154,14 @@ static int bcm2048_set_rds_pi_match(struct bcm2048_device *bdev, u16 match)
 static int bcm2048_get_rds_pi_match(struct bcm2048_device *bdev)
 {
 	int err;
-	u8 lsb = 0, msb = 0;
+	u8 lsb, msb;
 
 	mutex_lock(&bdev->mutex);
 
-	err = bcm2048_recv_command(bdev, BCM2048_I2C_RDS_PI_MATCH0, &lsb);
-	err |= bcm2048_recv_command(bdev, BCM2048_I2C_RDS_PI_MATCH1, &msb);
+	err = bcm2048_recv_command(bdev,
+			BCM2048_I2C_RDS_PI_MATCH0, &lsb);
+	err |= bcm2048_recv_command(bdev,
+			BCM2048_I2C_RDS_PI_MATCH1, &msb);
 
 	mutex_unlock(&bdev->mutex);
 
@@ -1170,8 +1177,10 @@ static int bcm2048_set_fm_rds_mask(struct bcm2048_device *bdev, u16 mask)
 
 	mutex_lock(&bdev->mutex);
 
-	err = bcm2048_send_command(bdev, BCM2048_I2C_FM_RDS_MASK0, lsb(mask));
-	err |= bcm2048_send_command(bdev, BCM2048_I2C_FM_RDS_MASK1, msb(mask));
+	err = bcm2048_send_command(bdev,
+			BCM2048_I2C_FM_RDS_MASK0, lsb(mask));
+	err |= bcm2048_send_command(bdev,
+			BCM2048_I2C_FM_RDS_MASK1, msb(mask));
 
 	mutex_unlock(&bdev->mutex);
 	return err;
@@ -1180,7 +1189,7 @@ static int bcm2048_set_fm_rds_mask(struct bcm2048_device *bdev, u16 mask)
 static int bcm2048_get_fm_rds_mask(struct bcm2048_device *bdev)
 {
 	int err;
-	u8 value0 = 0, value1 = 0;
+	u8 value0, value1;
 
 	mutex_lock(&bdev->mutex);
 
@@ -1198,7 +1207,7 @@ static int bcm2048_get_fm_rds_mask(struct bcm2048_device *bdev)
 static int bcm2048_get_fm_rds_flags(struct bcm2048_device *bdev)
 {
 	int err;
-	u8 value0 = 0, value1 = 0;
+	u8 value0, value1;
 
 	mutex_lock(&bdev->mutex);
 
@@ -1226,19 +1235,19 @@ static int bcm2048_get_region_top_frequency(struct bcm2048_device *bdev)
 static int bcm2048_set_fm_best_tune_mode(struct bcm2048_device *bdev, u8 mode)
 {
 	int err;
-	u8 value = 0;
+	u8 value;
 
 	mutex_lock(&bdev->mutex);
 
 	/* Perform read as the manual indicates */
 	err = bcm2048_recv_command(bdev, BCM2048_I2C_FM_BEST_TUNE_MODE,
-				   &value);
+					&value);
 	value &= ~BCM2048_BEST_TUNE_MODE;
 
 	if (mode)
 		value |= BCM2048_BEST_TUNE_MODE;
 	err |= bcm2048_send_command(bdev, BCM2048_I2C_FM_BEST_TUNE_MODE,
-				    value);
+					value);
 
 	mutex_unlock(&bdev->mutex);
 	return err;
@@ -1252,7 +1261,7 @@ static int bcm2048_get_fm_best_tune_mode(struct bcm2048_device *bdev)
 	mutex_lock(&bdev->mutex);
 
 	err = bcm2048_recv_command(bdev, BCM2048_I2C_FM_BEST_TUNE_MODE,
-				   &value);
+					&value);
 
 	mutex_unlock(&bdev->mutex);
 
@@ -1339,7 +1348,7 @@ static int bcm2048_checkrev(struct bcm2048_device *bdev)
 
 	if (!err) {
 		dev_info(&bdev->client->dev, "BCM2048 Version 0x%x\n",
-			 version);
+			version);
 		return version;
 	}
 
@@ -1349,7 +1358,7 @@ static int bcm2048_checkrev(struct bcm2048_device *bdev)
 static int bcm2048_get_rds_rt(struct bcm2048_device *bdev, char *data)
 {
 	int err = 0, i, j = 0, ce = 0, cr = 0;
-	char data_buffer[BCM2048_MAX_RDS_RT + 1];
+	char data_buffer[BCM2048_MAX_RDS_RT+1];
 
 	mutex_lock(&bdev->mutex);
 
@@ -1399,7 +1408,7 @@ unlock:
 static int bcm2048_get_rds_ps(struct bcm2048_device *bdev, char *data)
 {
 	int err = 0, i, j = 0;
-	char data_buffer[BCM2048_MAX_RDS_PS + 1];
+	char data_buffer[BCM2048_MAX_RDS_PS+1];
 
 	mutex_lock(&bdev->mutex);
 
@@ -1435,10 +1444,12 @@ static void bcm2048_parse_rds_pi(struct bcm2048_device *bdev)
 	u16 pi;
 
 	for (i = 0; i < bdev->fifo_size; i += BCM2048_RDS_FIFO_DUPLE_SIZE) {
+
 		/* Block A match, only data without crc errors taken */
 		if (bdev->rds_info.radio_text[i] == BCM2048_RDS_BLOCK_A) {
-			pi = (bdev->rds_info.radio_text[i + 1] << 8) +
-				bdev->rds_info.radio_text[i + 2];
+
+			pi = (bdev->rds_info.radio_text[i+1] << 8) +
+				bdev->rds_info.radio_text[i+2];
 
 			if (!bdev->rds_info.rds_pi) {
 				bdev->rds_info.rds_pi = pi;
@@ -1463,21 +1474,20 @@ static int bcm2048_rds_block_crc(struct bcm2048_device *bdev, int i)
 }
 
 static void bcm2048_parse_rds_rt_block(struct bcm2048_device *bdev, int i,
-				       int index, int crc)
+					int index, int crc)
 {
 	/* Good data will overwrite poor data */
 	if (crc) {
 		if (!bdev->rds_info.rds_rt[index])
 			bdev->rds_info.rds_rt[index] =
-				bdev->rds_info.radio_text[i + 1];
-		if (!bdev->rds_info.rds_rt[index + 1])
-			bdev->rds_info.rds_rt[index + 1] =
-				bdev->rds_info.radio_text[i + 2];
+				bdev->rds_info.radio_text[i+1];
+		if (!bdev->rds_info.rds_rt[index+1])
+			bdev->rds_info.rds_rt[index+1] =
+				bdev->rds_info.radio_text[i+2];
 	} else {
-		bdev->rds_info.rds_rt[index] =
-			bdev->rds_info.radio_text[i + 1];
-		bdev->rds_info.rds_rt[index + 1] =
-			bdev->rds_info.radio_text[i + 2];
+		bdev->rds_info.rds_rt[index] = bdev->rds_info.radio_text[i+1];
+		bdev->rds_info.rds_rt[index+1] =
+			bdev->rds_info.radio_text[i+2];
 	}
 }
 
@@ -1491,17 +1501,18 @@ static int bcm2048_parse_rt_match_b(struct bcm2048_device *bdev, int i)
 		return -EIO;
 
 	if ((bdev->rds_info.radio_text[i] & BCM2048_RDS_BLOCK_MASK) ==
-	    BCM2048_RDS_BLOCK_B) {
-		rt_id = bdev->rds_info.radio_text[i + 1] &
+		BCM2048_RDS_BLOCK_B) {
+
+		rt_id = bdev->rds_info.radio_text[i+1] &
 			BCM2048_RDS_BLOCK_MASK;
-		rt_group_b = bdev->rds_info.radio_text[i + 1] &
+		rt_group_b = bdev->rds_info.radio_text[i+1] &
 			BCM2048_RDS_GROUP_AB_MASK;
-		rt_ab = bdev->rds_info.radio_text[i + 2] &
+		rt_ab = bdev->rds_info.radio_text[i+2] &
 				BCM2048_RDS_RT_AB_MASK;
 
 		if (rt_group_b != bdev->rds_info.rds_rt_group_b) {
 			memset(bdev->rds_info.rds_rt, 0,
-			       sizeof(bdev->rds_info.rds_rt));
+				sizeof(bdev->rds_info.rds_rt));
 			bdev->rds_info.rds_rt_group_b = rt_group_b;
 		}
 
@@ -1509,11 +1520,11 @@ static int bcm2048_parse_rt_match_b(struct bcm2048_device *bdev, int i)
 			/* A to B or (vice versa), means: clear screen */
 			if (rt_ab != bdev->rds_info.rds_rt_ab) {
 				memset(bdev->rds_info.rds_rt, 0,
-				       sizeof(bdev->rds_info.rds_rt));
+					sizeof(bdev->rds_info.rds_rt));
 				bdev->rds_info.rds_rt_ab = rt_ab;
 			}
 
-			index = bdev->rds_info.radio_text[i + 2] &
+			index = bdev->rds_info.radio_text[i+2] &
 					BCM2048_RDS_RT_INDEX;
 
 			if (bdev->rds_info.rds_rt_group_b)
@@ -1529,7 +1540,7 @@ static int bcm2048_parse_rt_match_b(struct bcm2048_device *bdev, int i)
 }
 
 static int bcm2048_parse_rt_match_c(struct bcm2048_device *bdev, int i,
-				    int index)
+					int index)
 {
 	int crc;
 
@@ -1552,7 +1563,7 @@ static int bcm2048_parse_rt_match_c(struct bcm2048_device *bdev, int i,
 }
 
 static void bcm2048_parse_rt_match_d(struct bcm2048_device *bdev, int i,
-				     int index)
+					int index)
 {
 	int crc;
 
@@ -1564,8 +1575,8 @@ static void bcm2048_parse_rt_match_d(struct bcm2048_device *bdev, int i,
 	BUG_ON((index+4) >= BCM2048_MAX_RDS_RT);
 
 	if ((bdev->rds_info.radio_text[i] & BCM2048_RDS_BLOCK_MASK) ==
-	    BCM2048_RDS_BLOCK_D)
-		bcm2048_parse_rds_rt_block(bdev, i, index + 2, crc);
+		BCM2048_RDS_BLOCK_D)
+		bcm2048_parse_rds_rt_block(bdev, i, index+2, crc);
 }
 
 static void bcm2048_parse_rds_rt(struct bcm2048_device *bdev)
@@ -1573,6 +1584,7 @@ static void bcm2048_parse_rds_rt(struct bcm2048_device *bdev)
 	int i, index = 0, crc, match_b = 0, match_c = 0, match_d = 0;
 
 	for (i = 0; i < bdev->fifo_size; i += BCM2048_RDS_FIFO_DUPLE_SIZE) {
+
 		if (match_b) {
 			match_b = 0;
 			index = bcm2048_parse_rt_match_b(bdev, i);
@@ -1591,41 +1603,40 @@ static void bcm2048_parse_rds_rt(struct bcm2048_device *bdev)
 		}
 
 		/* Skip erroneous blocks due to messed up A block altogether */
-		if ((bdev->rds_info.radio_text[i] & BCM2048_RDS_BLOCK_MASK) ==
-		    BCM2048_RDS_BLOCK_A) {
+		if ((bdev->rds_info.radio_text[i] & BCM2048_RDS_BLOCK_MASK)
+			== BCM2048_RDS_BLOCK_A) {
 			crc = bcm2048_rds_block_crc(bdev, i);
 			if (crc == BCM2048_RDS_CRC_UNRECOVARABLE)
 				continue;
-			/* Synchronize to a good RDS PI */
-			if (((bdev->rds_info.radio_text[i + 1] << 8) +
-			    bdev->rds_info.radio_text[i + 2]) ==
-			    bdev->rds_info.rds_pi)
-				match_b = 1;
+			/* Syncronize to a good RDS PI */
+			if (((bdev->rds_info.radio_text[i+1] << 8) +
+				bdev->rds_info.radio_text[i+2]) ==
+				bdev->rds_info.rds_pi)
+					match_b = 1;
 		}
 	}
 }
 
 static void bcm2048_parse_rds_ps_block(struct bcm2048_device *bdev, int i,
-				       int index, int crc)
+					int index, int crc)
 {
 	/* Good data will overwrite poor data */
 	if (crc) {
 		if (!bdev->rds_info.rds_ps[index])
 			bdev->rds_info.rds_ps[index] =
-				bdev->rds_info.radio_text[i + 1];
-		if (!bdev->rds_info.rds_ps[index + 1])
-			bdev->rds_info.rds_ps[index + 1] =
-				bdev->rds_info.radio_text[i + 2];
+				bdev->rds_info.radio_text[i+1];
+		if (!bdev->rds_info.rds_ps[index+1])
+			bdev->rds_info.rds_ps[index+1] =
+				bdev->rds_info.radio_text[i+2];
 	} else {
-		bdev->rds_info.rds_ps[index] =
-			bdev->rds_info.radio_text[i + 1];
-		bdev->rds_info.rds_ps[index + 1] =
-			bdev->rds_info.radio_text[i + 2];
+		bdev->rds_info.rds_ps[index] = bdev->rds_info.radio_text[i+1];
+		bdev->rds_info.rds_ps[index+1] =
+			bdev->rds_info.radio_text[i+2];
 	}
 }
 
 static int bcm2048_parse_ps_match_c(struct bcm2048_device *bdev, int i,
-				    int index)
+					int index)
 {
 	int crc;
 
@@ -1635,14 +1646,14 @@ static int bcm2048_parse_ps_match_c(struct bcm2048_device *bdev, int i,
 		return 0;
 
 	if ((bdev->rds_info.radio_text[i] & BCM2048_RDS_BLOCK_MASK) ==
-	    BCM2048_RDS_BLOCK_C)
+		BCM2048_RDS_BLOCK_C)
 		return 1;
 
 	return 0;
 }
 
 static void bcm2048_parse_ps_match_d(struct bcm2048_device *bdev, int i,
-				     int index)
+					int index)
 {
 	int crc;
 
@@ -1652,7 +1663,7 @@ static void bcm2048_parse_ps_match_d(struct bcm2048_device *bdev, int i,
 		return;
 
 	if ((bdev->rds_info.radio_text[i] & BCM2048_RDS_BLOCK_MASK) ==
-	    BCM2048_RDS_BLOCK_D)
+		BCM2048_RDS_BLOCK_D)
 		bcm2048_parse_rds_ps_block(bdev, i, index, crc);
 }
 
@@ -1667,10 +1678,10 @@ static int bcm2048_parse_ps_match_b(struct bcm2048_device *bdev, int i)
 
 	/* Block B Radio PS match */
 	if ((bdev->rds_info.radio_text[i] & BCM2048_RDS_BLOCK_MASK) ==
-	    BCM2048_RDS_BLOCK_B) {
-		ps_id = bdev->rds_info.radio_text[i + 1] &
+		BCM2048_RDS_BLOCK_B) {
+		ps_id = bdev->rds_info.radio_text[i+1] &
 			BCM2048_RDS_BLOCK_MASK;
-		ps_group = bdev->rds_info.radio_text[i + 1] &
+		ps_group = bdev->rds_info.radio_text[i+1] &
 			BCM2048_RDS_GROUP_AB_MASK;
 
 		/*
@@ -1694,7 +1705,7 @@ static int bcm2048_parse_ps_match_b(struct bcm2048_device *bdev, int i)
 		}
 
 		if (ps_id == BCM2048_RDS_PS) {
-			index = bdev->rds_info.radio_text[i + 2] &
+			index = bdev->rds_info.radio_text[i+2] &
 				BCM2048_RDS_PS_INDEX;
 			index <<= 1;
 			return index;
@@ -1709,6 +1720,7 @@ static void bcm2048_parse_rds_ps(struct bcm2048_device *bdev)
 	int i, index = 0, crc, match_b = 0, match_c = 0, match_d = 0;
 
 	for (i = 0; i < bdev->fifo_size; i += BCM2048_RDS_FIFO_DUPLE_SIZE) {
+
 		if (match_b) {
 			match_b = 0;
 			index = bcm2048_parse_ps_match_b(bdev, i);
@@ -1727,16 +1739,16 @@ static void bcm2048_parse_rds_ps(struct bcm2048_device *bdev)
 		}
 
 		/* Skip erroneous blocks due to messed up A block altogether */
-		if ((bdev->rds_info.radio_text[i] & BCM2048_RDS_BLOCK_MASK) ==
-		    BCM2048_RDS_BLOCK_A) {
+		if ((bdev->rds_info.radio_text[i] & BCM2048_RDS_BLOCK_MASK)
+			== BCM2048_RDS_BLOCK_A) {
 			crc = bcm2048_rds_block_crc(bdev, i);
 			if (crc == BCM2048_RDS_CRC_UNRECOVARABLE)
 				continue;
-			/* Synchronize to a good RDS PI */
-			if (((bdev->rds_info.radio_text[i + 1] << 8) +
-			    bdev->rds_info.radio_text[i + 2]) ==
-			    bdev->rds_info.rds_pi)
-				match_b = 1;
+			/* Syncronize to a good RDS PI */
+			if (((bdev->rds_info.radio_text[i+1] << 8) +
+				bdev->rds_info.radio_text[i+2]) ==
+				bdev->rds_info.rds_pi)
+					match_b = 1;
 		}
 	}
 }
@@ -1748,7 +1760,7 @@ static void bcm2048_rds_fifo_receive(struct bcm2048_device *bdev)
 	mutex_lock(&bdev->mutex);
 
 	err = bcm2048_recv_duples(bdev, BCM2048_I2C_RDS_DATA,
-				  bdev->rds_info.radio_text, bdev->fifo_size);
+				bdev->rds_info.radio_text, bdev->fifo_size);
 	if (err != 2) {
 		dev_err(&bdev->client->dev, "RDS Read problem\n");
 		mutex_unlock(&bdev->mutex);
@@ -1785,8 +1797,8 @@ static int bcm2048_get_rds_data(struct bcm2048_device *bdev, char *data)
 	}
 
 	for (i = 0; i < bdev->rds_info.text_len; i++) {
-		p += sprintf(data_buffer + p, "%x ",
-			     bdev->rds_info.radio_text[i]);
+		p += sprintf(data_buffer+p, "%x ",
+			bdev->rds_info.radio_text[i]);
 	}
 
 	memcpy(data, data_buffer, p);
@@ -1813,7 +1825,7 @@ static int bcm2048_init(struct bcm2048_device *bdev)
 		goto exit;
 
 	err = bcm2048_set_dac_output(bdev, BCM2048_DAC_OUTPUT_LEFT |
-				     BCM2048_DAC_OUTPUT_RIGHT);
+		BCM2048_DAC_OUTPUT_RIGHT);
 
 exit:
 	return err;
@@ -1828,13 +1840,18 @@ static int bcm2048_deinit(struct bcm2048_device *bdev)
 
 	err = bcm2048_set_audio_route(bdev, 0);
 	if (err < 0)
-		return err;
+		goto exit;
 
 	err = bcm2048_set_dac_output(bdev, 0);
 	if (err < 0)
-		return err;
+		goto exit;
 
-	return bcm2048_set_power_state(bdev, BCM2048_POWER_OFF);
+	err = bcm2048_set_power_state(bdev, BCM2048_POWER_OFF);
+	if (err < 0)
+		goto exit;
+
+exit:
+	return err;
 }
 
 /*
@@ -1892,7 +1909,7 @@ unlock:
 static void bcm2048_work(struct work_struct *work)
 {
 	struct bcm2048_device *bdev;
-	u8 flag_lsb = 0, flag_msb = 0, flags;
+	u8 flag_lsb, flag_msb, flags;
 
 	bdev = container_of(work, struct bcm2048_device, work);
 	bcm2048_recv_command(bdev, BCM2048_I2C_FM_RDS_FLAG0, &flag_lsb);
@@ -1900,6 +1917,7 @@ static void bcm2048_work(struct work_struct *work)
 
 	if (flag_lsb & (BCM2048_FM_FLAG_SEARCH_TUNE_FINISHED |
 			BCM2048_FM_FLAG_SEARCH_TUNE_FAIL)) {
+
 		if (flag_lsb & BCM2048_FM_FLAG_SEARCH_TUNE_FAIL)
 			bdev->scan_state = BCM2048_SCAN_FAIL;
 		else
@@ -1913,7 +1931,7 @@ static void bcm2048_work(struct work_struct *work)
 		if (bdev->rds_state) {
 			flags =	BCM2048_RDS_FLAG_FIFO_WLINE;
 			bcm2048_send_command(bdev, BCM2048_I2C_FM_RDS_MASK1,
-					     flags);
+						flags);
 		}
 		bdev->rds_data_available = 1;
 		bdev->rd_index = 0; /* new data, new start */
@@ -1993,7 +2011,9 @@ static ssize_t bcm2048_##prop##_read(struct device *dev,		\
 									\
 	value = bcm2048_get_##prop(bdev);				\
 									\
-	return sprintf(buf, mask "\n", value);				\
+	value = sprintf(buf, mask "\n", value);				\
+									\
+	return value;							\
 }
 
 #define DEFINE_SYSFS_PROPERTY(prop, signal, size, mask, check)		\
@@ -2050,7 +2070,7 @@ property_str_read(rds_rt, (BCM2048_MAX_RDS_RT + 1))
 property_str_read(rds_ps, (BCM2048_MAX_RDS_PS + 1))
 
 property_read(fm_rds_flags, unsigned int, "%u")
-property_str_read(rds_data, BCM2048_MAX_RDS_RADIO_TEXT * 5)
+property_str_read(rds_data, BCM2048_MAX_RDS_RADIO_TEXT*5)
 
 property_read(region_bottom_frequency, unsigned int, "%u")
 property_read(region_top_frequency, unsigned int, "%u")
@@ -2060,70 +2080,70 @@ DEFINE_SYSFS_PROPERTY(region, unsigned, int, "%u", 0)
 
 static struct device_attribute attrs[] = {
 	__ATTR(power_state, S_IRUGO | S_IWUSR, bcm2048_power_state_read,
-	       bcm2048_power_state_write),
+		bcm2048_power_state_write),
 	__ATTR(mute, S_IRUGO | S_IWUSR, bcm2048_mute_read,
-	       bcm2048_mute_write),
+		bcm2048_mute_write),
 	__ATTR(audio_route, S_IRUGO | S_IWUSR, bcm2048_audio_route_read,
-	       bcm2048_audio_route_write),
+		bcm2048_audio_route_write),
 	__ATTR(dac_output, S_IRUGO | S_IWUSR, bcm2048_dac_output_read,
-	       bcm2048_dac_output_write),
+		bcm2048_dac_output_write),
 	__ATTR(fm_hi_lo_injection, S_IRUGO | S_IWUSR,
-	       bcm2048_fm_hi_lo_injection_read,
-	       bcm2048_fm_hi_lo_injection_write),
+		bcm2048_fm_hi_lo_injection_read,
+		bcm2048_fm_hi_lo_injection_write),
 	__ATTR(fm_frequency, S_IRUGO | S_IWUSR, bcm2048_fm_frequency_read,
-	       bcm2048_fm_frequency_write),
+		bcm2048_fm_frequency_write),
 	__ATTR(fm_af_frequency, S_IRUGO | S_IWUSR,
-	       bcm2048_fm_af_frequency_read,
-	       bcm2048_fm_af_frequency_write),
+		bcm2048_fm_af_frequency_read,
+		bcm2048_fm_af_frequency_write),
 	__ATTR(fm_deemphasis, S_IRUGO | S_IWUSR, bcm2048_fm_deemphasis_read,
-	       bcm2048_fm_deemphasis_write),
+		bcm2048_fm_deemphasis_write),
 	__ATTR(fm_rds_mask, S_IRUGO | S_IWUSR, bcm2048_fm_rds_mask_read,
-	       bcm2048_fm_rds_mask_write),
+		bcm2048_fm_rds_mask_write),
 	__ATTR(fm_best_tune_mode, S_IRUGO | S_IWUSR,
-	       bcm2048_fm_best_tune_mode_read,
-	       bcm2048_fm_best_tune_mode_write),
+		bcm2048_fm_best_tune_mode_read,
+		bcm2048_fm_best_tune_mode_write),
 	__ATTR(fm_search_rssi_threshold, S_IRUGO | S_IWUSR,
-	       bcm2048_fm_search_rssi_threshold_read,
-	       bcm2048_fm_search_rssi_threshold_write),
+		bcm2048_fm_search_rssi_threshold_read,
+		bcm2048_fm_search_rssi_threshold_write),
 	__ATTR(fm_search_mode_direction, S_IRUGO | S_IWUSR,
-	       bcm2048_fm_search_mode_direction_read,
-	       bcm2048_fm_search_mode_direction_write),
+		bcm2048_fm_search_mode_direction_read,
+		bcm2048_fm_search_mode_direction_write),
 	__ATTR(fm_search_tune_mode, S_IRUGO | S_IWUSR,
-	       bcm2048_fm_search_tune_mode_read,
-	       bcm2048_fm_search_tune_mode_write),
+		bcm2048_fm_search_tune_mode_read,
+		bcm2048_fm_search_tune_mode_write),
 	__ATTR(rds, S_IRUGO | S_IWUSR, bcm2048_rds_read,
-	       bcm2048_rds_write),
+		bcm2048_rds_write),
 	__ATTR(rds_b_block_mask, S_IRUGO | S_IWUSR,
-	       bcm2048_rds_b_block_mask_read,
-	       bcm2048_rds_b_block_mask_write),
+		bcm2048_rds_b_block_mask_read,
+		bcm2048_rds_b_block_mask_write),
 	__ATTR(rds_b_block_match, S_IRUGO | S_IWUSR,
-	       bcm2048_rds_b_block_match_read,
-	       bcm2048_rds_b_block_match_write),
+		bcm2048_rds_b_block_match_read,
+		bcm2048_rds_b_block_match_write),
 	__ATTR(rds_pi_mask, S_IRUGO | S_IWUSR, bcm2048_rds_pi_mask_read,
-	       bcm2048_rds_pi_mask_write),
+		bcm2048_rds_pi_mask_write),
 	__ATTR(rds_pi_match, S_IRUGO | S_IWUSR, bcm2048_rds_pi_match_read,
-	       bcm2048_rds_pi_match_write),
+		bcm2048_rds_pi_match_write),
 	__ATTR(rds_wline, S_IRUGO | S_IWUSR, bcm2048_rds_wline_read,
-	       bcm2048_rds_wline_write),
+		bcm2048_rds_wline_write),
 	__ATTR(rds_pi, S_IRUGO, bcm2048_rds_pi_read, NULL),
 	__ATTR(rds_rt, S_IRUGO, bcm2048_rds_rt_read, NULL),
 	__ATTR(rds_ps, S_IRUGO, bcm2048_rds_ps_read, NULL),
 	__ATTR(fm_rds_flags, S_IRUGO, bcm2048_fm_rds_flags_read, NULL),
 	__ATTR(region_bottom_frequency, S_IRUGO,
-	       bcm2048_region_bottom_frequency_read, NULL),
+		bcm2048_region_bottom_frequency_read, NULL),
 	__ATTR(region_top_frequency, S_IRUGO,
-	       bcm2048_region_top_frequency_read, NULL),
+		bcm2048_region_top_frequency_read, NULL),
 	__ATTR(fm_carrier_error, S_IRUGO,
-	       bcm2048_fm_carrier_error_read, NULL),
+		bcm2048_fm_carrier_error_read, NULL),
 	__ATTR(fm_rssi, S_IRUGO,
-	       bcm2048_fm_rssi_read, NULL),
+		bcm2048_fm_rssi_read, NULL),
 	__ATTR(region, S_IRUGO | S_IWUSR, bcm2048_region_read,
-	       bcm2048_region_write),
+		bcm2048_region_write),
 	__ATTR(rds_data, S_IRUGO, bcm2048_rds_data_read, NULL),
 };
 
 static int bcm2048_sysfs_unregister_properties(struct bcm2048_device *bdev,
-					       int size)
+						int size)
 {
 	int i;
 
@@ -2141,7 +2161,7 @@ static int bcm2048_sysfs_register_properties(struct bcm2048_device *bdev)
 	for (i = 0; i < ARRAY_SIZE(attrs); i++) {
 		if (device_create_file(&bdev->client->dev, &attrs[i]) != 0) {
 			dev_err(&bdev->client->dev,
-				"could not register sysfs entry\n");
+					"could not register sysfs entry\n");
 			err = -EBUSY;
 			bcm2048_sysfs_unregister_properties(bdev, i);
 			break;
@@ -2150,6 +2170,7 @@ static int bcm2048_sysfs_register_properties(struct bcm2048_device *bdev)
 
 	return err;
 }
+
 
 static int bcm2048_fops_open(struct file *file)
 {
@@ -2172,7 +2193,7 @@ static int bcm2048_fops_release(struct file *file)
 }
 
 static unsigned int bcm2048_fops_poll(struct file *file,
-				      struct poll_table_struct *pts)
+		struct poll_table_struct *pts)
 {
 	struct bcm2048_device *bdev = video_drvdata(file);
 	int retval = 0;
@@ -2186,7 +2207,7 @@ static unsigned int bcm2048_fops_poll(struct file *file,
 }
 
 static ssize_t bcm2048_fops_read(struct file *file, char __user *buf,
-				 size_t count, loff_t *ppos)
+	size_t count, loff_t *ppos)
 {
 	struct bcm2048_device *bdev = video_drvdata(file);
 	int i;
@@ -2204,7 +2225,7 @@ static ssize_t bcm2048_fops_read(struct file *file, char __user *buf,
 		}
 		/* interruptible_sleep_on(&bdev->read_queue); */
 		if (wait_event_interruptible(bdev->read_queue,
-		    bdev->rds_data_available) < 0) {
+			bdev->rds_data_available) < 0) {
 			retval = -EINTR;
 			goto done;
 		}
@@ -2220,16 +2241,13 @@ static ssize_t bcm2048_fops_read(struct file *file, char __user *buf,
 	while (i < count) {
 		unsigned char tmpbuf[3];
 
-		tmpbuf[i] = bdev->rds_info.radio_text[bdev->rd_index + i + 2];
-		tmpbuf[i + 1] =
-			bdev->rds_info.radio_text[bdev->rd_index + i + 1];
-		tmpbuf[i + 2] =
-			(bdev->rds_info.radio_text[bdev->rd_index + i] &
-			 0xf0) >> 4;
-		if ((bdev->rds_info.radio_text[bdev->rd_index + i] &
-		    BCM2048_RDS_CRC_MASK) == BCM2048_RDS_CRC_UNRECOVARABLE)
-			tmpbuf[i + 2] |= 0x80;
-		if (copy_to_user(buf + i, tmpbuf, 3)) {
+		tmpbuf[i] = bdev->rds_info.radio_text[bdev->rd_index+i+2];
+		tmpbuf[i+1] = bdev->rds_info.radio_text[bdev->rd_index+i+1];
+		tmpbuf[i+2] = (bdev->rds_info.radio_text[bdev->rd_index + i] & 0xf0) >> 4;
+		if ((bdev->rds_info.radio_text[bdev->rd_index+i] &
+			BCM2048_RDS_CRC_MASK) == BCM2048_RDS_CRC_UNRECOVARABLE)
+			tmpbuf[i+2] |= 0x80;
+		if (copy_to_user(buf+i, tmpbuf, 3)) {
 			retval = -EFAULT;
 			break;
 		}
@@ -2297,7 +2315,7 @@ static struct v4l2_queryctrl bcm2048_v4l2_queryctrl[] = {
 };
 
 static int bcm2048_vidioc_querycap(struct file *file, void *priv,
-				   struct v4l2_capability *capability)
+		struct v4l2_capability *capability)
 {
 	struct bcm2048_device *bdev = video_get_drvdata(video_devdata(file));
 
@@ -2315,7 +2333,7 @@ static int bcm2048_vidioc_querycap(struct file *file, void *priv,
 }
 
 static int bcm2048_vidioc_g_input(struct file *filp, void *priv,
-				  unsigned int *i)
+		unsigned int *i)
 {
 	*i = 0;
 
@@ -2323,7 +2341,7 @@ static int bcm2048_vidioc_g_input(struct file *filp, void *priv,
 }
 
 static int bcm2048_vidioc_s_input(struct file *filp, void *priv,
-				  unsigned int i)
+					unsigned int i)
 {
 	if (i)
 		return -EINVAL;
@@ -2332,7 +2350,7 @@ static int bcm2048_vidioc_s_input(struct file *filp, void *priv,
 }
 
 static int bcm2048_vidioc_queryctrl(struct file *file, void *priv,
-				    struct v4l2_queryctrl *qc)
+		struct v4l2_queryctrl *qc)
 {
 	int i;
 
@@ -2347,7 +2365,7 @@ static int bcm2048_vidioc_queryctrl(struct file *file, void *priv,
 }
 
 static int bcm2048_vidioc_g_ctrl(struct file *file, void *priv,
-				 struct v4l2_control *ctrl)
+		struct v4l2_control *ctrl)
 {
 	struct bcm2048_device *bdev = video_get_drvdata(video_devdata(file));
 	int err = 0;
@@ -2367,7 +2385,7 @@ static int bcm2048_vidioc_g_ctrl(struct file *file, void *priv,
 }
 
 static int bcm2048_vidioc_s_ctrl(struct file *file, void *priv,
-				 struct v4l2_control *ctrl)
+		struct v4l2_control *ctrl)
 {
 	struct bcm2048_device *bdev = video_get_drvdata(video_devdata(file));
 	int err = 0;
@@ -2395,7 +2413,7 @@ static int bcm2048_vidioc_s_ctrl(struct file *file, void *priv,
 }
 
 static int bcm2048_vidioc_g_audio(struct file *file, void *priv,
-				  struct v4l2_audio *audio)
+		struct v4l2_audio *audio)
 {
 	if (audio->index > 1)
 		return -EINVAL;
@@ -2407,7 +2425,7 @@ static int bcm2048_vidioc_g_audio(struct file *file, void *priv,
 }
 
 static int bcm2048_vidioc_s_audio(struct file *file, void *priv,
-				  const struct v4l2_audio *audio)
+		const struct v4l2_audio *audio)
 {
 	if (audio->index != 0)
 		return -EINVAL;
@@ -2416,7 +2434,7 @@ static int bcm2048_vidioc_s_audio(struct file *file, void *priv,
 }
 
 static int bcm2048_vidioc_g_tuner(struct file *file, void *priv,
-				  struct v4l2_tuner *tuner)
+		struct v4l2_tuner *tuner)
 {
 	struct bcm2048_device *bdev = video_get_drvdata(video_devdata(file));
 	s8 f_error;
@@ -2450,7 +2468,7 @@ static int bcm2048_vidioc_g_tuner(struct file *file, void *priv,
 		} else {
 			/*
 			 * RSSI level -60 dB is defined to report full
-			 * signal strength
+			 * signal strenght
 			 */
 			rssi = bcm2048_get_fm_rssi(bdev);
 			if (rssi >= BCM2048_RSSI_LEVEL_BASE) {
@@ -2471,7 +2489,7 @@ static int bcm2048_vidioc_g_tuner(struct file *file, void *priv,
 }
 
 static int bcm2048_vidioc_s_tuner(struct file *file, void *priv,
-				  const struct v4l2_tuner *tuner)
+		const struct v4l2_tuner *tuner)
 {
 	struct bcm2048_device *bdev = video_get_drvdata(video_devdata(file));
 
@@ -2485,7 +2503,7 @@ static int bcm2048_vidioc_s_tuner(struct file *file, void *priv,
 }
 
 static int bcm2048_vidioc_g_frequency(struct file *file, void *priv,
-				      struct v4l2_frequency *freq)
+		struct v4l2_frequency *freq)
 {
 	struct bcm2048_device *bdev = video_get_drvdata(video_devdata(file));
 	int err = 0;
@@ -2506,7 +2524,7 @@ static int bcm2048_vidioc_g_frequency(struct file *file, void *priv,
 }
 
 static int bcm2048_vidioc_s_frequency(struct file *file, void *priv,
-				      const struct v4l2_frequency *freq)
+		const struct v4l2_frequency *freq)
 {
 	struct bcm2048_device *bdev = video_get_drvdata(video_devdata(file));
 	int err;
@@ -2524,7 +2542,7 @@ static int bcm2048_vidioc_s_frequency(struct file *file, void *priv,
 }
 
 static int bcm2048_vidioc_s_hw_freq_seek(struct file *file, void *priv,
-					 const struct v4l2_hw_freq_seek *seek)
+					const struct v4l2_hw_freq_seek *seek)
 {
 	struct bcm2048_device *bdev = video_get_drvdata(video_devdata(file));
 	int err;
@@ -2537,7 +2555,7 @@ static int bcm2048_vidioc_s_hw_freq_seek(struct file *file, void *priv,
 
 	err = bcm2048_set_fm_search_mode_direction(bdev, seek->seek_upward);
 	err |= bcm2048_set_fm_search_tune_mode(bdev,
-					       BCM2048_FM_AUTO_SEARCH_MODE);
+			BCM2048_FM_AUTO_SEARCH_MODE);
 
 	return err;
 }
@@ -2572,10 +2590,10 @@ static struct video_device bcm2048_viddev_template = {
  *	I2C driver interface
  */
 static int bcm2048_i2c_driver_probe(struct i2c_client *client,
-				    const struct i2c_device_id *id)
+					const struct i2c_device_id *id)
 {
 	struct bcm2048_device *bdev;
-	int err;
+	int err, skip_release = 0;
 
 	bdev = kzalloc(sizeof(*bdev), GFP_KERNEL);
 	if (!bdev) {
@@ -2591,8 +2609,8 @@ static int bcm2048_i2c_driver_probe(struct i2c_client *client,
 
 	if (client->irq) {
 		err = request_irq(client->irq,
-				  bcm2048_handler, IRQF_TRIGGER_FALLING,
-				  client->name, bdev);
+			bcm2048_handler, IRQF_TRIGGER_FALLING,
+			client->name, bdev);
 		if (err < 0) {
 			dev_err(&client->dev, "Could not request IRQ\n");
 			goto free_bdev;
@@ -2628,6 +2646,7 @@ free_sysfs:
 	bcm2048_sysfs_unregister_properties(bdev, ARRAY_SIZE(attrs));
 free_registration:
 	video_unregister_device(&bdev->videodev);
+	skip_release = 1;
 free_irq:
 	if (client->irq)
 		free_irq(client->irq, bdev);

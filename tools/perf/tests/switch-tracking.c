@@ -305,7 +305,7 @@ out_free_nodes:
  * evsel->system_wide and evsel->tracking flags (respectively) with other events
  * sometimes enabled or disabled.
  */
-int test__switch_tracking(int subtest __maybe_unused)
+int test__switch_tracking(void)
 {
 	const char *sched_switch = "sched:sched_switch";
 	struct switch_tracking switch_tracking = { .tids = NULL, };
@@ -347,7 +347,7 @@ int test__switch_tracking(int subtest __maybe_unused)
 	perf_evlist__set_maps(evlist, cpus, threads);
 
 	/* First event */
-	err = parse_events(evlist, "cpu-clock:u", NULL);
+	err = parse_events(evlist, "cpu-clock:u");
 	if (err) {
 		pr_debug("Failed to parse event dummy:u\n");
 		goto out_err;
@@ -356,7 +356,7 @@ int test__switch_tracking(int subtest __maybe_unused)
 	cpu_clocks_evsel = perf_evlist__last(evlist);
 
 	/* Second event */
-	err = parse_events(evlist, "cycles:u", NULL);
+	err = parse_events(evlist, "cycles:u");
 	if (err) {
 		pr_debug("Failed to parse event cycles:u\n");
 		goto out_err;
@@ -366,12 +366,12 @@ int test__switch_tracking(int subtest __maybe_unused)
 
 	/* Third event */
 	if (!perf_evlist__can_select_event(evlist, sched_switch)) {
-		pr_debug("No sched_switch\n");
+		fprintf(stderr, " (no sched_switch)");
 		err = 0;
 		goto out;
 	}
 
-	err = parse_events(evlist, sched_switch, NULL);
+	err = parse_events(evlist, sched_switch);
 	if (err) {
 		pr_debug("Failed to parse event %s\n", sched_switch);
 		goto out_err;
@@ -401,7 +401,7 @@ int test__switch_tracking(int subtest __maybe_unused)
 	perf_evsel__set_sample_bit(cycles_evsel, TIME);
 
 	/* Fourth event */
-	err = parse_events(evlist, "dummy:u", NULL);
+	err = parse_events(evlist, "dummy:u");
 	if (err) {
 		pr_debug("Failed to parse event dummy:u\n");
 		goto out_err;
@@ -417,7 +417,7 @@ int test__switch_tracking(int subtest __maybe_unused)
 	perf_evsel__set_sample_bit(tracking_evsel, TIME);
 
 	/* Config events */
-	perf_evlist__config(evlist, &opts, NULL);
+	perf_evlist__config(evlist, &opts);
 
 	/* Check moved event is still at the front */
 	if (cycles_evsel != perf_evlist__first(evlist)) {
@@ -432,7 +432,7 @@ int test__switch_tracking(int subtest __maybe_unused)
 	}
 
 	/* Check non-tracking events are not tracking */
-	evlist__for_each_entry(evlist, evsel) {
+	evlist__for_each(evlist, evsel) {
 		if (evsel != tracking_evsel) {
 			if (evsel->attr.mmap || evsel->attr.comm) {
 				pr_debug("Non-tracking event is tracking\n");
@@ -442,7 +442,7 @@ int test__switch_tracking(int subtest __maybe_unused)
 	}
 
 	if (perf_evlist__open(evlist) < 0) {
-		pr_debug("Not supported\n");
+		fprintf(stderr, " (not supported)");
 		err = 0;
 		goto out;
 	}
@@ -455,7 +455,7 @@ int test__switch_tracking(int subtest __maybe_unused)
 
 	perf_evlist__enable(evlist);
 
-	err = perf_evsel__disable(cpu_clocks_evsel);
+	err = perf_evlist__disable_event(evlist, cpu_clocks_evsel);
 	if (err) {
 		pr_debug("perf_evlist__disable_event failed!\n");
 		goto out_err;
@@ -474,7 +474,7 @@ int test__switch_tracking(int subtest __maybe_unused)
 		goto out_err;
 	}
 
-	err = perf_evsel__disable(cycles_evsel);
+	err = perf_evlist__disable_event(evlist, cycles_evsel);
 	if (err) {
 		pr_debug("perf_evlist__disable_event failed!\n");
 		goto out_err;
@@ -500,7 +500,7 @@ int test__switch_tracking(int subtest __maybe_unused)
 		goto out_err;
 	}
 
-	err = perf_evsel__enable(cycles_evsel);
+	err = perf_evlist__enable_event(evlist, cycles_evsel);
 	if (err) {
 		pr_debug("perf_evlist__disable_event failed!\n");
 		goto out_err;
@@ -560,8 +560,8 @@ out:
 		perf_evlist__disable(evlist);
 		perf_evlist__delete(evlist);
 	} else {
-		cpu_map__put(cpus);
-		thread_map__put(threads);
+		cpu_map__delete(cpus);
+		thread_map__delete(threads);
 	}
 
 	return err;

@@ -35,6 +35,7 @@
 #include <linux/syscalls.h>
 #include <linux/uaccess.h>
 #include <linux/kdebug.h>
+#include <linux/context_tracking.h>
 
 #include <asm/pgalloc.h>
 #include <asm/sections.h>
@@ -353,9 +354,9 @@ static int handle_page_fault(struct pt_regs *regs,
 
 	/*
 	 * If we're in an interrupt, have no user context or are running in an
-	 * region with pagefaults disabled then we must not take the fault.
+	 * atomic region then we must not take the fault.
 	 */
-	if (pagefault_disabled() || !mm) {
+	if (in_atomic() || !mm) {
 		vma = NULL;  /* happy compiler */
 		goto bad_area_nosemaphore;
 	}
@@ -434,7 +435,7 @@ good_area:
 	 * make sure we exit gracefully rather than endlessly redo
 	 * the fault.
 	 */
-	fault = handle_mm_fault(vma, address, flags);
+	fault = handle_mm_fault(mm, vma, address, flags);
 
 	if ((fault & VM_FAULT_RETRY) && fatal_signal_pending(current))
 		return 0;
@@ -698,10 +699,11 @@ struct intvec_state do_page_fault_ics(struct pt_regs *regs, int fault_num,
  * interrupt away appropriately and return immediately.  We can't do
  * page faults for user code while in kernel mode.
  */
-static inline void __do_page_fault(struct pt_regs *regs, int fault_num,
-				   unsigned long address, unsigned long write)
+void do_page_fault(struct pt_regs *regs, int fault_num,
+		   unsigned long address, unsigned long write)
 {
 	int is_page_fault;
+	enum ctx_state prev_state = exception_enter();
 
 #ifdef CONFIG_KPROBES
 	/*
@@ -711,7 +713,7 @@ static inline void __do_page_fault(struct pt_regs *regs, int fault_num,
 	 */
 	if (notify_die(DIE_PAGE_FAULT, "page fault", regs, -1,
 		       regs->faultnum, SIGSEGV) == NOTIFY_STOP)
-		return;
+		goto done;
 #endif
 
 #ifdef __tilegx__
@@ -833,19 +835,17 @@ static inline void __do_page_fault(struct pt_regs *regs, int fault_num,
 			async->is_fault = is_page_fault;
 			async->is_write = write;
 			async->address = address;
-			return;
+			goto done;
 		}
 	}
 #endif
 
 	handle_page_fault(regs, fault_num, is_page_fault, address, write);
+
+done:
+	exception_exit(prev_state);
 }
 
-void do_page_fault(struct pt_regs *regs, int fault_num,
-		   unsigned long address, unsigned long write)
-{
-	__do_page_fault(regs, fault_num, address, write);
-}
 
 #if CHIP_HAS_TILE_DMA()
 /*

@@ -21,15 +21,10 @@
 /*
  * User space memory access functions
  */
-#include <linux/bitops.h>
-#include <linux/kasan-checks.h>
 #include <linux/string.h>
 #include <linux/thread_info.h>
 
-#include <asm/alternative.h>
-#include <asm/cpufeature.h>
 #include <asm/ptrace.h>
-#include <asm/sysreg.h>
 #include <asm/errno.h>
 #include <asm/memory.h>
 #include <asm/compiler.h>
@@ -38,11 +33,11 @@
 #define VERIFY_WRITE 1
 
 /*
- * The exception table consists of pairs of relative offsets: the first
- * is the relative offset to an instruction that is allowed to fault,
- * and the second is the relative offset at which the program should
- * continue. No registers are modified, so it is entirely up to the
- * continuation code to figure out what to do.
+ * The exception table consists of pairs of addresses: the first is the
+ * address of an instruction that is allowed to fault, and the second is
+ * the address at which the program should continue.  No registers are
+ * modified, so it is entirely up to the continuation code to figure out
+ * what to do.
  *
  * All the routines below use bits of fixup code that are out of line
  * with the main instruction path.  This means when everything is well,
@@ -52,10 +47,8 @@
 
 struct exception_table_entry
 {
-	int insn, fixup;
+	unsigned long insn, fixup;
 };
-
-#define ARCH_HAS_RELATIVE_EXTABLE
 
 extern int fixup_exception(struct pt_regs *regs);
 
@@ -68,19 +61,22 @@ extern int fixup_exception(struct pt_regs *regs);
 static inline void set_fs(mm_segment_t fs)
 {
 	current_thread_info()->addr_limit = fs;
-
-	/*
-	 * Enable/disable UAO so that copy_to_user() etc can access
-	 * kernel memory with the unprivileged instructions.
-	 */
-	if (IS_ENABLED(CONFIG_ARM64_UAO) && fs == KERNEL_DS)
-		asm(ALTERNATIVE("nop", SET_PSTATE_UAO(1), ARM64_HAS_UAO));
-	else
-		asm(ALTERNATIVE("nop", SET_PSTATE_UAO(0), ARM64_HAS_UAO,
-				CONFIG_ARM64_UAO));
 }
 
 #define segment_eq(a, b)	((a) == (b))
+
+/*
+ * Return 1 if addr < current->addr_limit, 0 otherwise.
+ */
+#define __addr_ok(addr)							\
+({									\
+	unsigned long flag;						\
+	asm("cmp %1, %0; cset %0, lo"					\
+		: "=&r" (flag)						\
+		: "r" (addr), "0" (current_thread_info()->addr_limit)	\
+		: "cc");						\
+	flag;								\
+})
 
 /*
  * Test whether a block of memory is a valid user space address.
@@ -93,32 +89,18 @@ static inline void set_fs(mm_segment_t fs)
  */
 #define __range_ok(addr, size)						\
 ({									\
-	unsigned long __addr = (unsigned long __force)(addr);		\
 	unsigned long flag, roksum;					\
 	__chk_user_ptr(addr);						\
 	asm("adds %1, %1, %3; ccmp %1, %4, #2, cc; cset %0, ls"		\
 		: "=&r" (flag), "=&r" (roksum)				\
-		: "1" (__addr), "Ir" (size),				\
+		: "1" (addr), "Ir" (size),				\
 		  "r" (current_thread_info()->addr_limit)		\
 		: "cc");						\
 	flag;								\
 })
 
-/*
- * When dealing with data aborts, watchpoints, or instruction traps we may end
- * up with a tagged userland pointer. Clear the tag to get a sane pointer to
- * pass on to access_ok(), for instance.
- */
-#define untagged_addr(addr)		sign_extend64(addr, 55)
-
 #define access_ok(type, addr, size)	__range_ok(addr, size)
 #define user_addr_max			get_fs
-
-#define _ASM_EXTABLE(from, to)						\
-	"	.pushsection	__ex_table, \"a\"\n"			\
-	"	.align		3\n"					\
-	"	.long		(" #from " - .), (" #to " - .)\n"	\
-	"	.popsection\n"
 
 /*
  * The "__xxx" versions of the user access functions do not verify the address
@@ -128,10 +110,9 @@ static inline void set_fs(mm_segment_t fs)
  * The "__xxx_error" versions set the third argument to -EFAULT if an error
  * occurs, and leave it unchanged on success.
  */
-#define __get_user_asm(instr, alt_instr, reg, x, addr, err, feature)	\
+#define __get_user_asm(instr, reg, x, addr, err)			\
 	asm volatile(							\
-	"1:"ALTERNATIVE(instr "     " reg "1, [%2]\n",			\
-			alt_instr " " reg "1, [%2]\n", feature)		\
+	"1:	" instr "	" reg "1, [%2]\n"			\
 	"2:\n"								\
 	"	.section .fixup, \"ax\"\n"				\
 	"	.align	2\n"						\
@@ -139,7 +120,10 @@ static inline void set_fs(mm_segment_t fs)
 	"	mov	%1, #0\n"					\
 	"	b	2b\n"						\
 	"	.previous\n"						\
-	_ASM_EXTABLE(1b, 3b)						\
+	"	.section __ex_table,\"a\"\n"				\
+	"	.align	3\n"						\
+	"	.quad	1b, 3b\n"					\
+	"	.previous"						\
 	: "+r" (err), "=&r" (x)						\
 	: "r" (addr), "i" (-EFAULT))
 
@@ -147,31 +131,23 @@ static inline void set_fs(mm_segment_t fs)
 do {									\
 	unsigned long __gu_val;						\
 	__chk_user_ptr(ptr);						\
-	asm(ALTERNATIVE("nop", SET_PSTATE_PAN(0), ARM64_ALT_PAN_NOT_UAO,\
-			CONFIG_ARM64_PAN));				\
 	switch (sizeof(*(ptr))) {					\
 	case 1:								\
-		__get_user_asm("ldrb", "ldtrb", "%w", __gu_val, (ptr),  \
-			       (err), ARM64_HAS_UAO);			\
+		__get_user_asm("ldrb", "%w", __gu_val, (ptr), (err));	\
 		break;							\
 	case 2:								\
-		__get_user_asm("ldrh", "ldtrh", "%w", __gu_val, (ptr),  \
-			       (err), ARM64_HAS_UAO);			\
+		__get_user_asm("ldrh", "%w", __gu_val, (ptr), (err));	\
 		break;							\
 	case 4:								\
-		__get_user_asm("ldr", "ldtr", "%w", __gu_val, (ptr),	\
-			       (err), ARM64_HAS_UAO);			\
+		__get_user_asm("ldr", "%w", __gu_val, (ptr), (err));	\
 		break;							\
 	case 8:								\
-		__get_user_asm("ldr", "ldtr", "%",  __gu_val, (ptr),	\
-			       (err), ARM64_HAS_UAO);			\
+		__get_user_asm("ldr", "%",  __gu_val, (ptr), (err));	\
 		break;							\
 	default:							\
 		BUILD_BUG();						\
 	}								\
 	(x) = (__force __typeof__(*(ptr)))__gu_val;			\
-	asm(ALTERNATIVE("nop", SET_PSTATE_PAN(1), ARM64_ALT_PAN_NOT_UAO,\
-			CONFIG_ARM64_PAN));				\
 } while (0)
 
 #define __get_user(x, ptr)						\
@@ -198,17 +174,19 @@ do {									\
 		((x) = 0, -EFAULT);					\
 })
 
-#define __put_user_asm(instr, alt_instr, reg, x, addr, err, feature)	\
+#define __put_user_asm(instr, reg, x, addr, err)			\
 	asm volatile(							\
-	"1:"ALTERNATIVE(instr "     " reg "1, [%2]\n",			\
-			alt_instr " " reg "1, [%2]\n", feature)		\
+	"1:	" instr "	" reg "1, [%2]\n"			\
 	"2:\n"								\
 	"	.section .fixup,\"ax\"\n"				\
 	"	.align	2\n"						\
 	"3:	mov	%w0, %3\n"					\
 	"	b	2b\n"						\
 	"	.previous\n"						\
-	_ASM_EXTABLE(1b, 3b)						\
+	"	.section __ex_table,\"a\"\n"				\
+	"	.align	3\n"						\
+	"	.quad	1b, 3b\n"					\
+	"	.previous"						\
 	: "+r" (err)							\
 	: "r" (x), "r" (addr), "i" (-EFAULT))
 
@@ -216,30 +194,22 @@ do {									\
 do {									\
 	__typeof__(*(ptr)) __pu_val = (x);				\
 	__chk_user_ptr(ptr);						\
-	asm(ALTERNATIVE("nop", SET_PSTATE_PAN(0), ARM64_ALT_PAN_NOT_UAO,\
-			CONFIG_ARM64_PAN));				\
 	switch (sizeof(*(ptr))) {					\
 	case 1:								\
-		__put_user_asm("strb", "sttrb", "%w", __pu_val, (ptr),	\
-			       (err), ARM64_HAS_UAO);			\
+		__put_user_asm("strb", "%w", __pu_val, (ptr), (err));	\
 		break;							\
 	case 2:								\
-		__put_user_asm("strh", "sttrh", "%w", __pu_val, (ptr),	\
-			       (err), ARM64_HAS_UAO);			\
+		__put_user_asm("strh", "%w", __pu_val, (ptr), (err));	\
 		break;							\
 	case 4:								\
-		__put_user_asm("str", "sttr", "%w", __pu_val, (ptr),	\
-			       (err), ARM64_HAS_UAO);			\
+		__put_user_asm("str",  "%w", __pu_val, (ptr), (err));	\
 		break;							\
 	case 8:								\
-		__put_user_asm("str", "sttr", "%", __pu_val, (ptr),	\
-			       (err), ARM64_HAS_UAO);			\
+		__put_user_asm("str",  "%", __pu_val, (ptr), (err));	\
 		break;							\
 	default:							\
 		BUILD_BUG();						\
 	}								\
-	asm(ALTERNATIVE("nop", SET_PSTATE_PAN(1), ARM64_ALT_PAN_NOT_UAO,\
-			CONFIG_ARM64_PAN));				\
 } while (0)
 
 #define __put_user(x, ptr)						\
@@ -266,47 +236,24 @@ do {									\
 		-EFAULT;						\
 })
 
-extern unsigned long __must_check __arch_copy_from_user(void *to, const void __user *from, unsigned long n);
-extern unsigned long __must_check __arch_copy_to_user(void __user *to, const void *from, unsigned long n);
+extern unsigned long __must_check __copy_from_user(void *to, const void __user *from, unsigned long n);
+extern unsigned long __must_check __copy_to_user(void __user *to, const void *from, unsigned long n);
 extern unsigned long __must_check __copy_in_user(void __user *to, const void __user *from, unsigned long n);
 extern unsigned long __must_check __clear_user(void __user *addr, unsigned long n);
 
-static inline unsigned long __must_check __copy_from_user(void *to, const void __user *from, unsigned long n)
-{
-	kasan_check_write(to, n);
-	check_object_size(to, n, false);
-	return __arch_copy_from_user(to, from, n);
-}
-
-static inline unsigned long __must_check __copy_to_user(void __user *to, const void *from, unsigned long n)
-{
-	kasan_check_read(from, n);
-	check_object_size(from, n, true);
-	return __arch_copy_to_user(to, from, n);
-}
-
 static inline unsigned long __must_check copy_from_user(void *to, const void __user *from, unsigned long n)
 {
-	unsigned long res = n;
-	kasan_check_write(to, n);
-
-	if (access_ok(VERIFY_READ, from, n)) {
-		check_object_size(to, n, false);
-		res = __arch_copy_from_user(to, from, n);
-	}
-	if (unlikely(res))
-		memset(to + (n - res), 0, res);
-	return res;
+	if (access_ok(VERIFY_READ, from, n))
+		n = __copy_from_user(to, from, n);
+	else /* security hole - plug it */
+		memset(to, 0, n);
+	return n;
 }
 
 static inline unsigned long __must_check copy_to_user(void __user *to, const void *from, unsigned long n)
 {
-	kasan_check_read(from, n);
-
-	if (access_ok(VERIFY_WRITE, to, n)) {
-		check_object_size(from, n, true);
-		n = __arch_copy_to_user(to, from, n);
-	}
+	if (access_ok(VERIFY_WRITE, to, n))
+		n = __copy_to_user(to, from, n);
 	return n;
 }
 

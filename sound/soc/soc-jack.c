@@ -48,7 +48,7 @@ int snd_soc_card_jack_new(struct snd_soc_card *card, const char *id, int type,
 	INIT_LIST_HEAD(&jack->jack_zones);
 	BLOCKING_INIT_NOTIFIER_HEAD(&jack->notifier);
 
-	ret = snd_jack_new(card->snd_card, id, type, &jack->jack, false, false);
+	ret = snd_jack_new(card->snd_card, id, type, &jack->jack);
 	if (ret)
 		return ret;
 
@@ -197,7 +197,6 @@ int snd_soc_jack_add_pins(struct snd_soc_jack *jack, int count,
 
 		INIT_LIST_HEAD(&pins[i].list);
 		list_add(&(pins[i].list), &jack->pins);
-		snd_jack_add_new_kctl(jack->jack, pins[i].pin, pins[i].mask);
 	}
 
 	/* Update to reflect the last reported status; canned jack
@@ -316,11 +315,8 @@ int snd_soc_jack_add_gpios(struct snd_soc_jack *jack, int count,
 			goto undo;
 		}
 
-		if (gpios[i].desc) {
-			/* Already have a GPIO descriptor. */
-			goto got_gpio;
-		} else if (gpios[i].gpiod_dev) {
-			/* Get a GPIO descriptor */
+		if (gpios[i].gpiod_dev) {
+			/* GPIO descriptor */
 			gpios[i].desc = gpiod_get_index(gpios[i].gpiod_dev,
 							gpios[i].name,
 							gpios[i].idx, GPIOD_IN);
@@ -348,7 +344,7 @@ int snd_soc_jack_add_gpios(struct snd_soc_jack *jack, int count,
 
 			gpios[i].desc = gpio_to_desc(gpios[i].gpio);
 		}
-got_gpio:
+
 		INIT_DELAYED_WORK(&gpios[i].work, gpio_work);
 		gpios[i].jack = jack;
 

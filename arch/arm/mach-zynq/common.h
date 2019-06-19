@@ -19,6 +19,7 @@
 
 extern int zynq_slcr_init(void);
 extern int zynq_early_slcr_init(void);
+extern void zynq_slcr_system_reset(void);
 extern void zynq_slcr_cpu_stop(int cpu);
 extern void zynq_slcr_cpu_start(int cpu);
 extern bool zynq_slcr_cpu_state_read(int cpu);
@@ -30,7 +31,7 @@ extern char zynq_secondary_trampoline;
 extern char zynq_secondary_trampoline_jump;
 extern char zynq_secondary_trampoline_end;
 extern int zynq_cpun_start(u32 address, int cpu);
-extern const struct smp_operations zynq_smp_ops;
+extern struct smp_operations zynq_smp_ops __initdata;
 #endif
 
 extern void __iomem *zynq_scu_base;

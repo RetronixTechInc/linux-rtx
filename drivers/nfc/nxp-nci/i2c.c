@@ -2,10 +2,8 @@
  * I2C link layer for the NXP NCI driver
  *
  * Copyright (C) 2014  NXP Semiconductors  All rights reserved.
- * Copyright (C) 2012-2015  Intel Corporation. All rights reserved.
  *
  * Authors: Clément Perrochaud <clement.perrochaud@nxp.com>
- * Authors: Oleg Zhurakivskyy <oleg.zhurakivskyy@intel.com>
  *
  * Derived from PN544 device driver:
  * Copyright (C) 2012  Intel Corporation. All rights reserved.
@@ -25,14 +23,12 @@
 
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
-#include <linux/acpi.h>
 #include <linux/delay.h>
 #include <linux/i2c.h>
 #include <linux/interrupt.h>
 #include <linux/miscdevice.h>
 #include <linux/module.h>
 #include <linux/nfc.h>
-#include <linux/gpio/consumer.h>
 #include <linux/of_gpio.h>
 #include <linux/of_irq.h>
 #include <linux/platform_data/nxp-nci.h>
@@ -84,7 +80,7 @@ static int nxp_nci_i2c_write(void *phy_id, struct sk_buff *skb)
 		return phy->hard_fault;
 
 	r = i2c_master_send(client, skb->data, skb->len);
-	if (r < 0) {
+	if (r == -EREMOTEIO) {
 		/* Retry, chip was in standby */
 		usleep_range(110000, 120000);
 		r = i2c_master_send(client, skb->data, skb->len);
@@ -105,7 +101,7 @@ static int nxp_nci_i2c_write(void *phy_id, struct sk_buff *skb)
 	return r;
 }
 
-static const struct nxp_nci_phy_ops i2c_phy_ops = {
+static struct nxp_nci_phy_ops i2c_phy_ops = {
 	.set_mode = nxp_nci_i2c_set_mode,
 	.write = nxp_nci_i2c_write,
 };
@@ -263,6 +259,8 @@ exit_irq_none:
 	return IRQ_NONE;
 }
 
+#ifdef CONFIG_OF
+
 static int nxp_nci_i2c_parse_devtree(struct i2c_client *client)
 {
 	struct nxp_nci_i2c_phy *phy = i2c_get_clientdata(client);
@@ -291,27 +289,24 @@ static int nxp_nci_i2c_parse_devtree(struct i2c_client *client)
 	}
 	phy->gpio_fw = r;
 
-	return 0;
-}
-
-static int nxp_nci_i2c_acpi_config(struct nxp_nci_i2c_phy *phy)
-{
-	struct i2c_client *client = phy->i2c_dev;
-	struct gpio_desc *gpiod_en, *gpiod_fw;
-
-	gpiod_en = devm_gpiod_get_index(&client->dev, NULL, 2, GPIOD_OUT_LOW);
-	gpiod_fw = devm_gpiod_get_index(&client->dev, NULL, 1, GPIOD_OUT_LOW);
-
-	if (IS_ERR(gpiod_en) || IS_ERR(gpiod_fw)) {
-		nfc_err(&client->dev, "No GPIOs\n");
-		return -EINVAL;
+	r = irq_of_parse_and_map(pp, 0);
+	if (r < 0) {
+		nfc_err(&client->dev, "Unable to get irq, error: %d\n", r);
+		return r;
 	}
-
-	phy->gpio_en = desc_to_gpio(gpiod_en);
-	phy->gpio_fw = desc_to_gpio(gpiod_fw);
+	client->irq = r;
 
 	return 0;
 }
+
+#else
+
+static int nxp_nci_i2c_parse_devtree(struct i2c_client *client)
+{
+	return -ENODEV;
+}
+
+#endif
 
 static int nxp_nci_i2c_probe(struct i2c_client *client,
 			    const struct i2c_device_id *id)
@@ -347,11 +342,7 @@ static int nxp_nci_i2c_probe(struct i2c_client *client,
 	} else if (pdata) {
 		phy->gpio_en = pdata->gpio_en;
 		phy->gpio_fw = pdata->gpio_fw;
-	} else if (ACPI_HANDLE(&client->dev)) {
-		r = nxp_nci_i2c_acpi_config(phy);
-		if (r < 0)
-			goto probe_exit;
-		goto nci_probe;
+		client->irq = pdata->irq;
 	} else {
 		nfc_err(&client->dev, "No platform data\n");
 		r = -EINVAL;
@@ -368,7 +359,6 @@ static int nxp_nci_i2c_probe(struct i2c_client *client,
 	if (r < 0)
 		goto probe_exit;
 
-nci_probe:
 	r = nxp_nci_probe(phy, &client->dev, &i2c_phy_ops,
 			  NXP_NCI_I2C_MAX_PAYLOAD, &phy->ndev);
 	if (r < 0)
@@ -407,18 +397,10 @@ static const struct of_device_id of_nxp_nci_i2c_match[] = {
 };
 MODULE_DEVICE_TABLE(of, of_nxp_nci_i2c_match);
 
-#ifdef CONFIG_ACPI
-static struct acpi_device_id acpi_id[] = {
-	{ "NXP7471" },
-	{ },
-};
-MODULE_DEVICE_TABLE(acpi, acpi_id);
-#endif
-
 static struct i2c_driver nxp_nci_i2c_driver = {
 	.driver = {
 		   .name = NXP_NCI_I2C_DRIVER_NAME,
-		   .acpi_match_table = ACPI_PTR(acpi_id),
+		   .owner  = THIS_MODULE,
 		   .of_match_table = of_match_ptr(of_nxp_nci_i2c_match),
 		  },
 	.probe = nxp_nci_i2c_probe,
@@ -431,4 +413,3 @@ module_i2c_driver(nxp_nci_i2c_driver);
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("I2C driver for NXP NCI NFC controllers");
 MODULE_AUTHOR("Clément Perrochaud <clement.perrochaud@nxp.com>");
-MODULE_AUTHOR("Oleg Zhurakivskyy <oleg.zhurakivskyy@intel.com>");

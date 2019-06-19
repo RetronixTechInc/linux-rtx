@@ -31,7 +31,7 @@ static int caam_reset_hw_jr(struct device *dev)
 	 * mask interrupts since we are going to poll
 	 * for reset completion status
 	 */
-	clrsetbits_32(&jrp->rregs->rconfig_lo, 0, JRCFG_IMSK);
+	setbits32(&jrp->rregs->rconfig_lo, JRCFG_IMSK);
 
 	/* initiate flush (required prior to reset) */
 	wr_reg32(&jrp->rregs->jrcommand, JRCR_RESET);
@@ -57,7 +57,7 @@ static int caam_reset_hw_jr(struct device *dev)
 	}
 
 	/* unmask interrupts */
-	clrsetbits_32(&jrp->rregs->rconfig_lo, JRCFG_IMSK, 0);
+	clrbits32(&jrp->rregs->rconfig_lo, JRCFG_IMSK);
 
 	return 0;
 }
@@ -65,7 +65,7 @@ static int caam_reset_hw_jr(struct device *dev)
 /*
  * Shutdown JobR independent of platform property code
  */
-static int caam_jr_shutdown(struct device *dev)
+int caam_jr_shutdown(struct device *dev)
 {
 	struct caam_drv_private_jr *jrp = dev_get_drvdata(dev);
 	dma_addr_t inpbusaddr, outbusaddr;
@@ -147,7 +147,7 @@ static irqreturn_t caam_jr_interrupt(int irq, void *st_dev)
 	}
 
 	/* mask valid interrupts */
-	clrsetbits_32(&jrp->rregs->rconfig_lo, 0, JRCFG_IMSK);
+	setbits32(&jrp->rregs->rconfig_lo, JRCFG_IMSK);
 
 	/* Have valid interrupt at this point, just ACK and trigger */
 	wr_reg32(&jrp->rregs->jrintstatus, irqstate);
@@ -168,6 +168,9 @@ static void caam_jr_dequeue(unsigned long devarg)
 	void (*usercall)(struct device *dev, u32 *desc, u32 status, void *arg);
 	u32 *userdesc, userstatus;
 	void *userarg;
+	dma_addr_t outbusaddr;
+
+	outbusaddr = rd_reg64(&jrp->rregs->outring_base);
 
 	while (rd_reg32(&jrp->rregs->outring_used)) {
 
@@ -177,12 +180,15 @@ static void caam_jr_dequeue(unsigned long devarg)
 
 		sw_idx = tail = jrp->tail;
 		hw_idx = jrp->out_ring_read_index;
+		dma_sync_single_for_cpu(dev, outbusaddr,
+					sizeof(struct jr_outentry) * JOBR_DEPTH,
+					DMA_FROM_DEVICE);
 
 		for (i = 0; CIRC_CNT(head, tail + i, JOBR_DEPTH) >= 1; i++) {
 			sw_idx = (tail + i) & (JOBR_DEPTH - 1);
 
 			if (jrp->outring[hw_idx].desc ==
-			    caam_dma_to_cpu(jrp->entinfo[sw_idx].desc_addr_dma))
+			    jrp->entinfo[sw_idx].desc_addr_dma)
 				break; /* found */
 		}
 		/* we should never fail to find a matching descriptor */
@@ -200,14 +206,9 @@ static void caam_jr_dequeue(unsigned long devarg)
 		usercall = jrp->entinfo[sw_idx].callbk;
 		userarg = jrp->entinfo[sw_idx].cbkarg;
 		userdesc = jrp->entinfo[sw_idx].desc_addr_virt;
-		userstatus = caam32_to_cpu(jrp->outring[hw_idx].jrstatus);
+		userstatus = jrp->outring[hw_idx].jrstatus;
 
-		/*
-		 * Make sure all information from the job has been obtained
-		 * before telling CAAM that the job has been removed from the
-		 * output ring.
-		 */
-		mb();
+		smp_mb();
 
 		/* set done */
 		wr_reg32(&jrp->rregs->outring_rmvd, 1);
@@ -236,7 +237,7 @@ static void caam_jr_dequeue(unsigned long devarg)
 	}
 
 	/* reenable / unmask IRQs */
-	clrsetbits_32(&jrp->rregs->rconfig_lo, JRCFG_IMSK, 0);
+	clrbits32(&jrp->rregs->rconfig_lo, JRCFG_IMSK);
 }
 
 /**
@@ -248,7 +249,7 @@ static void caam_jr_dequeue(unsigned long devarg)
 struct device *caam_jr_alloc(void)
 {
 	struct caam_drv_private_jr *jrpriv, *min_jrpriv = NULL;
-	struct device *dev = ERR_PTR(-ENODEV);
+	struct device *dev = NULL;
 	int min_tfm_cnt	= INT_MAX;
 	int tfm_cnt;
 
@@ -327,14 +328,21 @@ int caam_jr_enqueue(struct device *dev, u32 *desc,
 	struct caam_drv_private_jr *jrp = dev_get_drvdata(dev);
 	struct caam_jrentry_info *head_entry;
 	int head, tail, desc_size;
-	dma_addr_t desc_dma;
+	dma_addr_t desc_dma, inpbusaddr;
 
-	desc_size = (caam32_to_cpu(*desc) & HDR_JD_LENGTH_MASK) * sizeof(u32);
+	desc_size = (*desc & HDR_JD_LENGTH_MASK) * sizeof(u32);
 	desc_dma = dma_map_single(dev, desc, desc_size, DMA_TO_DEVICE);
 	if (dma_mapping_error(dev, desc_dma)) {
 		dev_err(dev, "caam_jr_enqueue(): can't map jobdesc\n");
 		return -EIO;
 	}
+
+	dma_sync_single_for_device(dev, desc_dma, desc_size, DMA_TO_DEVICE);
+
+	inpbusaddr = rd_reg64(&jrp->rregs->inpring_base);
+	dma_sync_single_for_device(dev, inpbusaddr,
+					sizeof(dma_addr_t) * JOBR_DEPTH,
+					DMA_TO_DEVICE);
 
 	spin_lock_bh(&jrp->inplock);
 
@@ -355,23 +363,18 @@ int caam_jr_enqueue(struct device *dev, u32 *desc,
 	head_entry->cbkarg = areq;
 	head_entry->desc_addr_dma = desc_dma;
 
-	jrp->inpring[jrp->inp_ring_write_index] = cpu_to_caam_dma(desc_dma);
+	jrp->inpring[jrp->inp_ring_write_index] = desc_dma;
 
-	/*
-	 * Guarantee that the descriptor's DMA address has been written to
-	 * the next slot in the ring before the write index is updated, since
-	 * other cores may update this index independently.
-	 */
+	dma_sync_single_for_device(dev, inpbusaddr,
+					sizeof(dma_addr_t) * JOBR_DEPTH,
+					DMA_TO_DEVICE);
+
 	smp_wmb();
 
 	jrp->inp_ring_write_index = (jrp->inp_ring_write_index + 1) &
 				    (JOBR_DEPTH - 1);
 	jrp->head = (head + 1) & (JOBR_DEPTH - 1);
 
-	/*
-	 * Ensure that all job information has been written before
-	 * notifying CAAM that a new job was added to the input ring.
-	 */
 	wmb();
 
 	wr_reg32(&jrp->rregs->inpring_jobadd, 1);
@@ -409,17 +412,18 @@ static int caam_jr_init(struct device *dev)
 		goto out_free_irq;
 
 	error = -ENOMEM;
-	jrp->inpring = dma_alloc_coherent(dev, sizeof(*jrp->inpring) *
-					  JOBR_DEPTH, &inpbusaddr, GFP_KERNEL);
+	jrp->inpring = dma_alloc_coherent(dev, sizeof(dma_addr_t) * JOBR_DEPTH,
+					  &inpbusaddr, GFP_KERNEL);
 	if (!jrp->inpring)
 		goto out_free_irq;
 
-	jrp->outring = dma_alloc_coherent(dev, sizeof(*jrp->outring) *
+	jrp->outring = dma_alloc_coherent(dev, sizeof(struct jr_outentry) *
 					  JOBR_DEPTH, &outbusaddr, GFP_KERNEL);
 	if (!jrp->outring)
 		goto out_free_inpring;
 
-	jrp->entinfo = kcalloc(JOBR_DEPTH, sizeof(*jrp->entinfo), GFP_KERNEL);
+	jrp->entinfo = kzalloc(sizeof(struct caam_jrentry_info) * JOBR_DEPTH,
+			       GFP_KERNEL);
 	if (!jrp->entinfo)
 		goto out_free_outring;
 
@@ -443,9 +447,9 @@ static int caam_jr_init(struct device *dev)
 	spin_lock_init(&jrp->outlock);
 
 	/* Select interrupt coalescing parameters */
-	clrsetbits_32(&jrp->rregs->rconfig_lo, 0, JOBR_INTC |
-		      (JOBR_INTC_COUNT_THLD << JRCFG_ICDCT_SHIFT) |
-		      (JOBR_INTC_TIME_THLD << JRCFG_ICTT_SHIFT));
+	setbits32(&jrp->rregs->rconfig_lo, JOBR_INTC |
+		  (JOBR_INTC_COUNT_THLD << JRCFG_ICDCT_SHIFT) |
+		  (JOBR_INTC_TIME_THLD << JRCFG_ICTT_SHIFT));
 
 	return 0;
 
@@ -477,7 +481,8 @@ static int caam_jr_probe(struct platform_device *pdev)
 	int error;
 
 	jrdev = &pdev->dev;
-	jrpriv = devm_kmalloc(jrdev, sizeof(*jrpriv), GFP_KERNEL);
+	jrpriv = devm_kmalloc(jrdev, sizeof(struct caam_drv_private_jr),
+			      GFP_KERNEL);
 	if (!jrpriv)
 		return -ENOMEM;
 
@@ -516,7 +521,6 @@ static int caam_jr_probe(struct platform_device *pdev)
 	error = caam_jr_init(jrdev); /* now turn on hardware */
 	if (error) {
 		irq_dispose_mapping(jrpriv->irq);
-		iounmap(ctrl);
 		return error;
     }
 

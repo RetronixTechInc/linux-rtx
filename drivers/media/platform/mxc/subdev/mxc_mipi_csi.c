@@ -681,20 +681,19 @@ unlock:
 	return ret == 1 ? 0 : ret;
 }
 
-static int mipi_csis_enum_mbus_code(struct v4l2_subdev *mipi_sd,
-				    struct v4l2_subdev_pad_config *cfg,
-				    struct v4l2_subdev_mbus_code_enum *code)
+static int mipi_csis_enum_mbus_fmt(struct v4l2_subdev *mipi_sd, unsigned int index,
+				u32 *code)
 {
 	struct csi_state *state = mipi_sd_to_csi_state(mipi_sd);
 	struct v4l2_subdev *sensor_sd = state->sensor_sd;
 	struct csis_pix_format const *csis_fmt;
 	int ret;
 
-	ret = v4l2_subdev_call(sensor_sd, pad, enum_mbus_code, NULL, code);
+	ret = v4l2_subdev_call(sensor_sd, video, enum_mbus_fmt, index, code);
 	if (ret < 0)
 		return -EINVAL;
 
-	csis_fmt = find_csis_format(code->code);
+	csis_fmt = find_csis_format(*code);
 	if (csis_fmt == NULL) {
 		dev_err(state->dev, "format not match\n");
 		return -EINVAL;
@@ -703,23 +702,18 @@ static int mipi_csis_enum_mbus_code(struct v4l2_subdev *mipi_sd,
 	return ret;
 }
 
-static int mipi_csis_set_fmt(struct v4l2_subdev *mipi_sd,
-			     struct v4l2_subdev_pad_config *cfg,
-			     struct v4l2_subdev_format *format)
+static struct csis_pix_format const *mipi_csis_try_format(
+	struct v4l2_subdev *mipi_sd, struct v4l2_mbus_framefmt *mf)
 {
 	struct csi_state *state = mipi_sd_to_csi_state(mipi_sd);
 	struct v4l2_subdev *sensor_sd = state->sensor_sd;
 	struct csis_pix_format const *csis_fmt;
-	struct v4l2_mbus_framefmt *mf  = &format->format;
-
-	if (format->pad)
-		return -EINVAL;
 
 	csis_fmt = find_csis_format(mf->code);
 	if (csis_fmt == NULL)
 		csis_fmt = &mipi_csis_formats[0];
 
-	v4l2_subdev_call(sensor_sd, pad, set_fmt, NULL, format);
+	v4l2_subdev_call(sensor_sd, video, s_mbus_fmt, mf);
 
 	mf->code = csis_fmt->code;
 	v4l_bound_align_image(&mf->width, 1, CSIS_MAX_PIX_WIDTH,
@@ -727,31 +721,39 @@ static int mipi_csis_set_fmt(struct v4l2_subdev *mipi_sd,
 			      &mf->height, 1, CSIS_MAX_PIX_HEIGHT, 1,
 			      0);
 
-	if (format->which == V4L2_SUBDEV_FORMAT_TRY)
-		return 0;
-
 	state->format.code = mf->code;
 	state->format.width = mf->width;
 	state->format.height = mf->height;
 
-	mutex_lock(&state->lock);
-	state->csis_fmt = csis_fmt;
-	mutex_unlock(&state->lock);
+	return csis_fmt;
+}
 
+static int mipi_csis_set_fmt(struct v4l2_subdev *mipi_sd,
+		struct v4l2_mbus_framefmt *fmt)
+{
+	struct csi_state *state = mipi_sd_to_csi_state(mipi_sd);
+	struct csis_pix_format const *csis_fmt;
+
+	csis_fmt = mipi_csis_try_format(mipi_sd, fmt);
+	if (csis_fmt) {
+		mutex_lock(&state->lock);
+		state->csis_fmt = csis_fmt;
+		mutex_unlock(&state->lock);
+	}
 	return 0;
 }
 
 static int mipi_csis_get_fmt(struct v4l2_subdev *mipi_sd,
-			     struct v4l2_subdev_pad_config *cfg,
-			     struct v4l2_subdev_format *format)
+		struct v4l2_mbus_framefmt *fmt)
 {
 	struct csi_state *state = mipi_sd_to_csi_state(mipi_sd);
 	struct v4l2_subdev *sensor_sd = state->sensor_sd;
 
-	if (format->pad)
+	v4l2_subdev_call(sensor_sd, video, g_mbus_fmt, fmt);
+	if (!fmt)
 		return -EINVAL;
 
-	return v4l2_subdev_call(sensor_sd, pad, get_fmt, NULL, format);
+	return 0;
 }
 
 static int mipi_csis_s_rx_buffer(struct v4l2_subdev *mipi_sd, void *buf,
@@ -768,6 +770,15 @@ static int mipi_csis_s_rx_buffer(struct v4l2_subdev *mipi_sd, void *buf,
 	spin_unlock_irqrestore(&state->slock, flags);
 
 	return 0;
+}
+
+static int mipi_csis_try_fmt(struct v4l2_subdev *mipi_sd,
+			  struct v4l2_mbus_framefmt *mf)
+{
+	struct csi_state *state = mipi_sd_to_csi_state(mipi_sd);
+	struct v4l2_subdev *sensor_sd = state->sensor_sd;
+
+	return v4l2_subdev_call(sensor_sd, video, try_mbus_fmt, mf);
 }
 
 static int mipi_csis_s_parm(struct v4l2_subdev *mipi_sd, struct v4l2_streamparm *a)
@@ -827,6 +838,11 @@ static struct v4l2_subdev_video_ops mipi_csis_video_ops = {
 	.s_rx_buffer = mipi_csis_s_rx_buffer,
 	.s_stream = mipi_csis_s_stream,
 
+	.enum_mbus_fmt = mipi_csis_enum_mbus_fmt,
+	.try_mbus_fmt	= mipi_csis_try_fmt,
+	.g_mbus_fmt = mipi_csis_get_fmt,
+	.s_mbus_fmt = mipi_csis_set_fmt,
+
 	.s_parm = mipi_csis_s_parm,
 	.g_parm = mipi_csis_g_parm,
 };
@@ -834,9 +850,6 @@ static struct v4l2_subdev_video_ops mipi_csis_video_ops = {
 static const struct v4l2_subdev_pad_ops mipi_csis_pad_ops = {
 	.enum_frame_size       = mipi_csis_enum_framesizes,
 	.enum_frame_interval   = mipi_csis_enum_frameintervals,
-	.enum_mbus_code        = mipi_csis_enum_mbus_code,
-	.get_fmt               = mipi_csis_get_fmt,
-	.set_fmt               = mipi_csis_set_fmt,
 };
 
 static struct v4l2_subdev_ops mipi_csis_subdev_ops = {

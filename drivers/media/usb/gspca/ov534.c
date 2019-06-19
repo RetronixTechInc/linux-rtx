@@ -51,7 +51,6 @@
 #define OV534_OP_READ_2		0xf9
 
 #define CTRL_TIMEOUT 500
-#define DEFAULT_FRAME_RATE 30
 
 MODULE_AUTHOR("Antonio Ospite <ospite@studenti.unina.it>");
 MODULE_DESCRIPTION("GSPCA/OV534 USB Camera Driver");
@@ -1062,7 +1061,7 @@ static int sd_config(struct gspca_dev *gspca_dev,
 	cam->cam_mode = ov772x_mode;
 	cam->nmodes = ARRAY_SIZE(ov772x_mode);
 
-	sd->frame_rate = DEFAULT_FRAME_RATE;
+	sd->frame_rate = 30;
 
 	return 0;
 }
@@ -1492,11 +1491,8 @@ static void sd_set_streamparm(struct gspca_dev *gspca_dev,
 	struct v4l2_fract *tpf = &cp->timeperframe;
 	struct sd *sd = (struct sd *) gspca_dev;
 
-	if (tpf->numerator == 0 || tpf->denominator == 0)
-		sd->frame_rate = DEFAULT_FRAME_RATE;
-	else
-		sd->frame_rate = tpf->denominator / tpf->numerator;
-
+	/* Set requested framerate */
+	sd->frame_rate = tpf->denominator / tpf->numerator;
 	if (gspca_dev->streaming)
 		set_frame_rate(gspca_dev);
 

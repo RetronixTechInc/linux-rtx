@@ -15,6 +15,7 @@
 #include <linux/iommu-helper.h>
 
 #include <asm/iommu.h>
+#include <asm/scatterlist.h>
 
 /*
  * These give mapping size of each iommu pte/tlb.

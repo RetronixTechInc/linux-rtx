@@ -17,21 +17,19 @@
 #include <linux/netfilter_ipv4.h>
 #include <linux/netfilter_ipv6.h>
 #include <linux/netdevice.h>
-#include <net/inet_sock.h>
 #include "smack.h"
 
-#if IS_ENABLED(CONFIG_IPV6)
+#if defined(CONFIG_IPV6) || defined(CONFIG_IPV6_MODULE)
 
-static unsigned int smack_ipv6_output(void *priv,
+static unsigned int smack_ipv6_output(const struct nf_hook_ops *ops,
 					struct sk_buff *skb,
 					const struct nf_hook_state *state)
 {
-	struct sock *sk = skb_to_full_sk(skb);
 	struct socket_smack *ssp;
 	struct smack_known *skp;
 
-	if (sk && sk->sk_security) {
-		ssp = sk->sk_security;
+	if (skb && skb->sk && skb->sk->sk_security) {
+		ssp = skb->sk->sk_security;
 		skp = ssp->smk_out;
 		skb->secmark = skp->smk_secid;
 	}
@@ -40,16 +38,15 @@ static unsigned int smack_ipv6_output(void *priv,
 }
 #endif	/* IPV6 */
 
-static unsigned int smack_ipv4_output(void *priv,
+static unsigned int smack_ipv4_output(const struct nf_hook_ops *ops,
 					struct sk_buff *skb,
 					const struct nf_hook_state *state)
 {
-	struct sock *sk = skb_to_full_sk(skb);
 	struct socket_smack *ssp;
 	struct smack_known *skp;
 
-	if (sk && sk->sk_security) {
-		ssp = sk->sk_security;
+	if (skb && skb->sk && skb->sk->sk_security) {
+		ssp = skb->sk->sk_security;
 		skp = ssp->smk_out;
 		skb->secmark = skp->smk_secid;
 	}
@@ -60,13 +57,15 @@ static unsigned int smack_ipv4_output(void *priv,
 static struct nf_hook_ops smack_nf_ops[] = {
 	{
 		.hook =		smack_ipv4_output,
+		.owner =	THIS_MODULE,
 		.pf =		NFPROTO_IPV4,
 		.hooknum =	NF_INET_LOCAL_OUT,
 		.priority =	NF_IP_PRI_SELINUX_FIRST,
 	},
-#if IS_ENABLED(CONFIG_IPV6)
+#if defined(CONFIG_IPV6) || defined(CONFIG_IPV6_MODULE)
 	{
 		.hook =		smack_ipv6_output,
+		.owner =	THIS_MODULE,
 		.pf =		NFPROTO_IPV6,
 		.hooknum =	NF_INET_LOCAL_OUT,
 		.priority =	NF_IP6_PRI_SELINUX_FIRST,

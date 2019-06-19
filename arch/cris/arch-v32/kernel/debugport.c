@@ -77,6 +77,8 @@ static struct dbg_port *port =
 	&ports[2];
 #elif defined(CONFIG_ETRAX_DEBUG_PORT3)
 	&ports[3];
+#elif defined(CONFIG_ETRAX_DEBUG_PORT4)
+	&ports[4];
 #else
 	NULL;
 #endif

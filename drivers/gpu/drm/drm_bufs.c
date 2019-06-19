@@ -51,7 +51,7 @@ static struct drm_map_list *drm_find_matching_map(struct drm_device *dev,
 		 */
 		if (!entry->map ||
 		    map->type != entry->map->type ||
-		    entry->master != dev->master)
+		    entry->master != dev->primary->master)
 			continue;
 		switch (map->type) {
 		case _DRM_SHM:
@@ -245,12 +245,12 @@ static int drm_addmap_core(struct drm_device * dev, resource_size_t offset,
 		map->offset = (unsigned long)map->handle;
 		if (map->flags & _DRM_CONTAINS_LOCK) {
 			/* Prevent a 2nd X Server from creating a 2nd lock */
-			if (dev->master->lock.hw_lock != NULL) {
+			if (dev->primary->master->lock.hw_lock != NULL) {
 				vfree(map->handle);
 				kfree(map);
 				return -EBUSY;
 			}
-			dev->sigdata.lock = dev->master->lock.hw_lock = map->handle;	/* Pointer to lock */
+			dev->sigdata.lock = dev->primary->master->lock.hw_lock = map->handle;	/* Pointer to lock */
 		}
 		break;
 	case _DRM_AGP: {
@@ -356,7 +356,7 @@ static int drm_addmap_core(struct drm_device * dev, resource_size_t offset,
 	mutex_unlock(&dev->struct_mutex);
 
 	if (!(map->flags & _DRM_DRIVER))
-		list->master = dev->master;
+		list->master = dev->primary->master;
 	*maplist = list;
 	return 0;
 }
@@ -396,10 +396,6 @@ int drm_legacy_addmap_ioctl(struct drm_device *dev, void *data,
 	if (!(capable(CAP_SYS_ADMIN) || map->type == _DRM_AGP || map->type == _DRM_SHM))
 		return -EPERM;
 
-	if (!drm_core_check_feature(dev, DRIVER_KMS_LEGACY_CONTEXT) &&
-	    !drm_core_check_feature(dev, DRIVER_LEGACY))
-		return -EINVAL;
-
 	err = drm_addmap_core(dev, map->offset, map->size, map->type,
 			      map->flags, &maplist);
 
@@ -416,62 +412,6 @@ int drm_legacy_addmap_ioctl(struct drm_device *dev, void *data,
 	 *  it's not a real mtrr index anymore.)
 	 */
 	map->mtrr = -1;
-
-	return 0;
-}
-
-/*
- * Get a mapping information.
- *
- * \param inode device inode.
- * \param file_priv DRM file private.
- * \param cmd command.
- * \param arg user argument, pointing to a drm_map structure.
- *
- * \return zero on success or a negative number on failure.
- *
- * Searches for the mapping with the specified offset and copies its information
- * into userspace
- */
-int drm_legacy_getmap_ioctl(struct drm_device *dev, void *data,
-			    struct drm_file *file_priv)
-{
-	struct drm_map *map = data;
-	struct drm_map_list *r_list = NULL;
-	struct list_head *list;
-	int idx;
-	int i;
-
-	if (!drm_core_check_feature(dev, DRIVER_KMS_LEGACY_CONTEXT) &&
-	    !drm_core_check_feature(dev, DRIVER_LEGACY))
-		return -EINVAL;
-
-	idx = map->offset;
-	if (idx < 0)
-		return -EINVAL;
-
-	i = 0;
-	mutex_lock(&dev->struct_mutex);
-	list_for_each(list, &dev->maplist) {
-		if (i == idx) {
-			r_list = list_entry(list, struct drm_map_list, head);
-			break;
-		}
-		i++;
-	}
-	if (!r_list || !r_list->map) {
-		mutex_unlock(&dev->struct_mutex);
-		return -EINVAL;
-	}
-
-	map->offset = r_list->map->offset;
-	map->size = r_list->map->size;
-	map->type = r_list->map->type;
-	map->flags = r_list->map->flags;
-	map->handle = (void *)(unsigned long) r_list->user_token;
-	map->mtrr = arch_phys_wc_index(r_list->map->mtrr);
-
-	mutex_unlock(&dev->struct_mutex);
 
 	return 0;
 }
@@ -542,34 +482,17 @@ int drm_legacy_rmmap_locked(struct drm_device *dev, struct drm_local_map *map)
 }
 EXPORT_SYMBOL(drm_legacy_rmmap_locked);
 
-void drm_legacy_rmmap(struct drm_device *dev, struct drm_local_map *map)
+int drm_legacy_rmmap(struct drm_device *dev, struct drm_local_map *map)
 {
-	if (!drm_core_check_feature(dev, DRIVER_KMS_LEGACY_CONTEXT) &&
-	    !drm_core_check_feature(dev, DRIVER_LEGACY))
-		return;
+	int ret;
 
 	mutex_lock(&dev->struct_mutex);
-	drm_legacy_rmmap_locked(dev, map);
+	ret = drm_legacy_rmmap_locked(dev, map);
 	mutex_unlock(&dev->struct_mutex);
+
+	return ret;
 }
 EXPORT_SYMBOL(drm_legacy_rmmap);
-
-void drm_legacy_master_rmmaps(struct drm_device *dev, struct drm_master *master)
-{
-	struct drm_map_list *r_list, *list_temp;
-
-	if (!drm_core_check_feature(dev, DRIVER_LEGACY))
-		return;
-
-	mutex_lock(&dev->struct_mutex);
-	list_for_each_entry_safe(r_list, list_temp, &dev->maplist, head) {
-		if (r_list->master == master) {
-			drm_legacy_rmmap_locked(dev, r_list->map);
-			r_list = NULL;
-		}
-	}
-	mutex_unlock(&dev->struct_mutex);
-}
 
 /* The rmmap ioctl appears to be unnecessary.  All mappings are torn down on
  * the last close of the device, and this is necessary for cleanup when things
@@ -593,10 +516,6 @@ int drm_legacy_rmmap_ioctl(struct drm_device *dev, void *data,
 	struct drm_local_map *map = NULL;
 	struct drm_map_list *r_list;
 	int ret;
-
-	if (!drm_core_check_feature(dev, DRIVER_KMS_LEGACY_CONTEXT) &&
-	    !drm_core_check_feature(dev, DRIVER_LEGACY))
-		return -EINVAL;
 
 	mutex_lock(&dev->struct_mutex);
 	list_for_each_entry(r_list, &dev->maplist, head) {
@@ -663,7 +582,7 @@ static void drm_cleanup_buf_error(struct drm_device * dev,
 	}
 }
 
-#if IS_ENABLED(CONFIG_AGP)
+#if __OS_HAS_AGP
 /**
  * Add AGP buffers for DMA transfers.
  *
@@ -755,7 +674,7 @@ int drm_legacy_addbufs_agp(struct drm_device *dev,
 		return -EINVAL;
 	}
 
-	entry->buflist = kcalloc(count, sizeof(*entry->buflist), GFP_KERNEL);
+	entry->buflist = kzalloc(count * sizeof(*entry->buflist), GFP_KERNEL);
 	if (!entry->buflist) {
 		mutex_unlock(&dev->struct_mutex);
 		atomic_dec(&dev->buf_alloc);
@@ -837,7 +756,7 @@ int drm_legacy_addbufs_agp(struct drm_device *dev,
 	return 0;
 }
 EXPORT_SYMBOL(drm_legacy_addbufs_agp);
-#endif /* CONFIG_AGP */
+#endif				/* __OS_HAS_AGP */
 
 int drm_legacy_addbufs_pci(struct drm_device *dev,
 			   struct drm_buf_desc *request)
@@ -905,14 +824,14 @@ int drm_legacy_addbufs_pci(struct drm_device *dev,
 		return -EINVAL;
 	}
 
-	entry->buflist = kcalloc(count, sizeof(*entry->buflist), GFP_KERNEL);
+	entry->buflist = kzalloc(count * sizeof(*entry->buflist), GFP_KERNEL);
 	if (!entry->buflist) {
 		mutex_unlock(&dev->struct_mutex);
 		atomic_dec(&dev->buf_alloc);
 		return -ENOMEM;
 	}
 
-	entry->seglist = kcalloc(count, sizeof(*entry->seglist), GFP_KERNEL);
+	entry->seglist = kzalloc(count * sizeof(*entry->seglist), GFP_KERNEL);
 	if (!entry->seglist) {
 		kfree(entry->buflist);
 		mutex_unlock(&dev->struct_mutex);
@@ -923,9 +842,8 @@ int drm_legacy_addbufs_pci(struct drm_device *dev,
 	/* Keep the original pagelist until we know all the allocations
 	 * have succeeded
 	 */
-	temp_pagelist = kmalloc_array(dma->page_count + (count << page_order),
-				      sizeof(*dma->pagelist),
-				      GFP_KERNEL);
+	temp_pagelist = kmalloc((dma->page_count + (count << page_order)) *
+			       sizeof(*dma->pagelist), GFP_KERNEL);
 	if (!temp_pagelist) {
 		kfree(entry->buflist);
 		kfree(entry->seglist);
@@ -1117,7 +1035,8 @@ static int drm_legacy_addbufs_sg(struct drm_device *dev,
 		return -EINVAL;
 	}
 
-	entry->buflist = kcalloc(count, sizeof(*entry->buflist), GFP_KERNEL);
+	entry->buflist = kzalloc(count * sizeof(*entry->buflist),
+				GFP_KERNEL);
 	if (!entry->buflist) {
 		mutex_unlock(&dev->struct_mutex);
 		atomic_dec(&dev->buf_alloc);
@@ -1220,13 +1139,13 @@ int drm_legacy_addbufs(struct drm_device *dev, void *data,
 	struct drm_buf_desc *request = data;
 	int ret;
 
-	if (!drm_core_check_feature(dev, DRIVER_LEGACY))
+	if (drm_core_check_feature(dev, DRIVER_MODESET))
 		return -EINVAL;
 
 	if (!drm_core_check_feature(dev, DRIVER_HAVE_DMA))
 		return -EINVAL;
 
-#if IS_ENABLED(CONFIG_AGP)
+#if __OS_HAS_AGP
 	if (request->flags & _DRM_AGP_BUFFER)
 		ret = drm_legacy_addbufs_agp(dev, request);
 	else
@@ -1266,7 +1185,7 @@ int drm_legacy_infobufs(struct drm_device *dev, void *data,
 	int i;
 	int count;
 
-	if (!drm_core_check_feature(dev, DRIVER_LEGACY))
+	if (drm_core_check_feature(dev, DRIVER_MODESET))
 		return -EINVAL;
 
 	if (!drm_core_check_feature(dev, DRIVER_HAVE_DMA))
@@ -1347,7 +1266,7 @@ int drm_legacy_markbufs(struct drm_device *dev, void *data,
 	int order;
 	struct drm_buf_entry *entry;
 
-	if (!drm_core_check_feature(dev, DRIVER_LEGACY))
+	if (drm_core_check_feature(dev, DRIVER_MODESET))
 		return -EINVAL;
 
 	if (!drm_core_check_feature(dev, DRIVER_HAVE_DMA))
@@ -1395,7 +1314,7 @@ int drm_legacy_freebufs(struct drm_device *dev, void *data,
 	int idx;
 	struct drm_buf *buf;
 
-	if (!drm_core_check_feature(dev, DRIVER_LEGACY))
+	if (drm_core_check_feature(dev, DRIVER_MODESET))
 		return -EINVAL;
 
 	if (!drm_core_check_feature(dev, DRIVER_HAVE_DMA))
@@ -1450,7 +1369,7 @@ int drm_legacy_mapbufs(struct drm_device *dev, void *data,
 	struct drm_buf_map *request = data;
 	int i;
 
-	if (!drm_core_check_feature(dev, DRIVER_LEGACY))
+	if (drm_core_check_feature(dev, DRIVER_MODESET))
 		return -EINVAL;
 
 	if (!drm_core_check_feature(dev, DRIVER_HAVE_DMA))
@@ -1530,7 +1449,7 @@ int drm_legacy_mapbufs(struct drm_device *dev, void *data,
 int drm_legacy_dma_ioctl(struct drm_device *dev, void *data,
 		  struct drm_file *file_priv)
 {
-	if (!drm_core_check_feature(dev, DRIVER_LEGACY))
+	if (drm_core_check_feature(dev, DRIVER_MODESET))
 		return -EINVAL;
 
 	if (dev->driver->dma_ioctl)

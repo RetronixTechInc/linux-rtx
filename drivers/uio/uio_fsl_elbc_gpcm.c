@@ -470,7 +470,6 @@ static const struct of_device_id uio_fsl_elbc_gpcm_match[] = {
 	{ .compatible = "fsl,elbc-gpcm-uio", },
 	{}
 };
-MODULE_DEVICE_TABLE(of, uio_fsl_elbc_gpcm_match);
 
 static struct platform_driver uio_fsl_elbc_gpcm_driver = {
 	.driver = {
@@ -481,7 +480,19 @@ static struct platform_driver uio_fsl_elbc_gpcm_driver = {
 	.probe = uio_fsl_elbc_gpcm_probe,
 	.remove = uio_fsl_elbc_gpcm_remove,
 };
-module_platform_driver(uio_fsl_elbc_gpcm_driver);
+
+static int __init uio_fsl_elbc_gpcm_init(void)
+{
+	return platform_driver_register(&uio_fsl_elbc_gpcm_driver);
+}
+
+static void __exit uio_fsl_elbc_gpcm_exit(void)
+{
+	platform_driver_unregister(&uio_fsl_elbc_gpcm_driver);
+}
+
+module_init(uio_fsl_elbc_gpcm_init);
+module_exit(uio_fsl_elbc_gpcm_exit);
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("John Ogness <john.ogness@linutronix.de>");

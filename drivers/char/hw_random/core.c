@@ -84,14 +84,14 @@ static size_t rng_buffer_size(void)
 
 static void add_early_randomness(struct hwrng *rng)
 {
+	unsigned char bytes[16];
 	int bytes_read;
-	size_t size = min_t(size_t, 16, rng_buffer_size());
 
 	mutex_lock(&reading_mutex);
-	bytes_read = rng_get_data(rng, rng_buffer, size, 1);
+	bytes_read = rng_get_data(rng, bytes, sizeof(bytes), 1);
 	mutex_unlock(&reading_mutex);
 	if (bytes_read > 0)
-		add_device_randomness(rng_buffer, bytes_read);
+		add_device_randomness(bytes, bytes_read);
 }
 
 static inline void cleanup_rng(struct kref *kref)
@@ -238,10 +238,7 @@ static ssize_t rng_dev_read(struct file *filp, char __user *buf,
 			goto out;
 		}
 
-		if (mutex_lock_interruptible(&reading_mutex)) {
-			err = -ERESTARTSYS;
-			goto out_put;
-		}
+		mutex_lock(&reading_mutex);
 		if (!data_avail) {
 			bytes_read = rng_get_data(rng, rng_buffer,
 				rng_buffer_size(),
@@ -291,7 +288,6 @@ out:
 
 out_unlock_reading:
 	mutex_unlock(&reading_mutex);
-out_put:
 	put_rng(rng);
 	goto out;
 }
@@ -327,7 +323,7 @@ static ssize_t hwrng_attr_current_store(struct device *dev,
 		return -ERESTARTSYS;
 	err = -ENODEV;
 	list_for_each_entry(rng, &rng_list, list) {
-		if (sysfs_streq(rng->name, buf)) {
+		if (strcmp(rng->name, buf) == 0) {
 			err = 0;
 			if (rng != current_rng)
 				err = set_current_rng(rng);
@@ -449,6 +445,22 @@ int hwrng_register(struct hwrng *rng)
 		goto out;
 
 	mutex_lock(&rng_mutex);
+
+	/* kmalloc makes this safe for virt_to_page() in virtio_rng.c */
+	err = -ENOMEM;
+	if (!rng_buffer) {
+		rng_buffer = kmalloc(rng_buffer_size(), GFP_KERNEL);
+		if (!rng_buffer)
+			goto out_unlock;
+	}
+	if (!rng_fillbuf) {
+		rng_fillbuf = kmalloc(rng_buffer_size(), GFP_KERNEL);
+		if (!rng_fillbuf) {
+			kfree(rng_buffer);
+			goto out_unlock;
+		}
+	}
+
 	/* Must not register two RNGs with the same name. */
 	err = -EEXIST;
 	list_for_each_entry(tmp, &rng_list, list) {
@@ -557,26 +569,7 @@ EXPORT_SYMBOL_GPL(devm_hwrng_unregister);
 
 static int __init hwrng_modinit(void)
 {
-	int ret = -ENOMEM;
-
-	/* kmalloc makes this safe for virt_to_page() in virtio_rng.c */
-	rng_buffer = kmalloc(rng_buffer_size(), GFP_KERNEL);
-	if (!rng_buffer)
-		return -ENOMEM;
-
-	rng_fillbuf = kmalloc(rng_buffer_size(), GFP_KERNEL);
-	if (!rng_fillbuf) {
-		kfree(rng_buffer);
-		return -ENOMEM;
-	}
-
-	ret = register_miscdev();
-	if (ret) {
-		kfree(rng_fillbuf);
-		kfree(rng_buffer);
-	}
-
-	return ret;
+	return register_miscdev();
 }
 
 static void __exit hwrng_modexit(void)

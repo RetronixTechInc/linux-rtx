@@ -62,31 +62,6 @@ static void ahci_mvebu_regret_option(struct ahci_host_priv *hpriv)
 	writel(0x80, hpriv->mmio + AHCI_VENDOR_SPECIFIC_0_DATA);
 }
 
-#ifdef CONFIG_PM_SLEEP
-static int ahci_mvebu_suspend(struct platform_device *pdev, pm_message_t state)
-{
-	return ahci_platform_suspend_host(&pdev->dev);
-}
-
-static int ahci_mvebu_resume(struct platform_device *pdev)
-{
-	struct ata_host *host = platform_get_drvdata(pdev);
-	struct ahci_host_priv *hpriv = host->private_data;
-	const struct mbus_dram_target_info *dram;
-
-	dram = mv_mbus_dram_info();
-	if (dram)
-		ahci_mvebu_mbus_config(hpriv, dram);
-
-	ahci_mvebu_regret_option(hpriv);
-
-	return ahci_platform_resume_host(&pdev->dev);
-}
-#else
-#define ahci_mvebu_suspend NULL
-#define ahci_mvebu_resume NULL
-#endif
-
 static const struct ata_port_info ahci_mvebu_port_info = {
 	.flags	   = AHCI_FLAG_COMMON,
 	.pio_mask  = ATA_PIO4,
@@ -112,15 +87,12 @@ static int ahci_mvebu_probe(struct platform_device *pdev)
 	if (rc)
 		return rc;
 
-	if (of_device_is_compatible(pdev->dev.of_node,
-				    "marvell,armada-380-ahci")) {
-		dram = mv_mbus_dram_info();
-		if (!dram)
-			return -ENODEV;
+	dram = mv_mbus_dram_info();
+	if (!dram)
+		return -ENODEV;
 
-		ahci_mvebu_mbus_config(hpriv, dram);
-		ahci_mvebu_regret_option(hpriv);
-	}
+	ahci_mvebu_mbus_config(hpriv, dram);
+	ahci_mvebu_regret_option(hpriv);
 
 	rc = ahci_platform_init_host(pdev, hpriv, &ahci_mvebu_port_info,
 				     &ahci_platform_sht);
@@ -136,7 +108,6 @@ disable_resources:
 
 static const struct of_device_id ahci_mvebu_of_match[] = {
 	{ .compatible = "marvell,armada-380-ahci", },
-	{ .compatible = "marvell,armada-3700-ahci", },
 	{ },
 };
 MODULE_DEVICE_TABLE(of, ahci_mvebu_of_match);
@@ -149,8 +120,6 @@ MODULE_DEVICE_TABLE(of, ahci_mvebu_of_match);
 static struct platform_driver ahci_mvebu_driver = {
 	.probe = ahci_mvebu_probe,
 	.remove = ata_platform_remove_one,
-	.suspend = ahci_mvebu_suspend,
-	.resume = ahci_mvebu_resume,
 	.driver = {
 		.name = DRV_NAME,
 		.of_match_table = ahci_mvebu_of_match,

@@ -37,13 +37,8 @@
 
 #include <linux/types.h>
 #include <linux/errno.h>
-#include <linux/mutex.h>
-#include <linux/spinlock.h>
-
-/**
- * Bit masks for a MC I/O object (struct fsl_mc_io) flags
- */
-#define FSL_MC_IO_ATOMIC_CONTEXT_PORTAL	0x0001
+#include <linux/io.h>
+#include <linux/dma-mapping.h>
 
 struct fsl_mc_resource;
 struct mc_command;
@@ -55,43 +50,26 @@ struct mc_command;
  * @portal_size: MC command portal size in bytes
  * @portal_phys_addr: MC command portal physical address
  * @portal_virt_addr: MC command portal virtual address
- * @dpmcp_dev: pointer to the DPMCP device associated with the MC portal.
- *
- * Fields are only meaningful if the FSL_MC_IO_ATOMIC_CONTEXT_PORTAL flag is not
- * set:
- * @mutex: Mutex to serialize mc_send_command() calls that use the same MC
- * portal, if the fsl_mc_io object was created with the
- * FSL_MC_IO_ATOMIC_CONTEXT_PORTAL flag off. mc_send_command() calls for this
- * fsl_mc_io object must be made only from non-atomic context.
- *
- * Fields are only meaningful if the FSL_MC_IO_ATOMIC_CONTEXT_PORTAL flag is
- * set:
- * @spinlock: Spinlock to serialize mc_send_command() calls that use the same MC
- * portal, if the fsl_mc_io object was created with the
- * FSL_MC_IO_ATOMIC_CONTEXT_PORTAL flag on. mc_send_command() calls for this
- * fsl_mc_io object can be made from atomic or non-atomic context.
+ * @resource: generic resource associated with the MC portal if
+ * the MC portal came from a resource pool, or NULL if the MC portal
+ * is permanently bound to a device (e.g., a DPRC)
  */
 struct fsl_mc_io {
 	struct device *dev;
-	u16 flags;
-	u16 portal_size;
+	uint32_t flags;
+	uint32_t portal_size;
 	phys_addr_t portal_phys_addr;
 	void __iomem *portal_virt_addr;
-	struct fsl_mc_device *dpmcp_dev;
-	union {
-		/*
-		 * This field is only meaningful if the
-		 * FSL_MC_IO_ATOMIC_CONTEXT_PORTAL flag is not set
-		 */
-		struct mutex mutex; /* serializes mc_send_command() */
-
-		/*
-		 * This field is only meaningful if the
-		 * FSL_MC_IO_ATOMIC_CONTEXT_PORTAL flag is set
-		 */
-		spinlock_t spinlock;	/* serializes mc_send_command() */
-	};
+	struct fsl_mc_resource *resource;
 };
+
+int __must_check fsl_create_mc_io(struct device *dev,
+				  phys_addr_t mc_portal_phys_addr,
+				  uint32_t mc_portal_size,
+				  struct fsl_mc_resource *resource,
+				  uint32_t flags, struct fsl_mc_io **new_mc_io);
+
+void fsl_destroy_mc_io(struct fsl_mc_io *mc_io);
 
 int mc_send_command(struct fsl_mc_io *mc_io, struct mc_command *cmd);
 

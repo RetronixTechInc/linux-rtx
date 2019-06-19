@@ -56,7 +56,11 @@ static int da9052_spi_probe(struct spi_device *spi)
 		return ret;
 	}
 
-	return da9052_device_init(da9052, id->driver_data);
+	ret = da9052_device_init(da9052, id->driver_data);
+	if (ret != 0)
+		return ret;
+
+	return 0;
 }
 
 static int da9052_spi_remove(struct spi_device *spi)
@@ -82,6 +86,7 @@ static struct spi_driver da9052_spi_driver = {
 	.id_table = da9052_spi_id,
 	.driver = {
 		.name = "da9052",
+		.owner = THIS_MODULE,
 	},
 };
 

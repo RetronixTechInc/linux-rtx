@@ -207,7 +207,8 @@ struct cee_pfc {
 #define IEEE_8021QAZ_APP_SEL_ANY	4
 
 /* This structure contains the IEEE 802.1Qaz APP managed object. This
- * object is also used for the CEE std as well.
+ * object is also used for the CEE std as well. There is no difference
+ * between the objects.
  *
  * @selector: protocol identifier type
  * @protocol: protocol of type indicated
@@ -215,18 +216,13 @@ struct cee_pfc {
  *            8-bit 802.1p user priority bitmap for CEE
  *
  * ----
- *  Selector field values for IEEE 802.1Qaz
+ *  Selector field values
  *	0	Reserved
  *	1	Ethertype
  *	2	Well known port number over TCP or SCTP
  *	3	Well known port number over UDP or DCCP
  *	4	Well known port number over TCP, SCTP, UDP, or DCCP
  *	5-7	Reserved
- *
- *  Selector field values for CEE
- *	0	Ethertype
- *	1	Well known port number over TCP or UDP
- *	2-3	Reserved
  */
 struct dcb_app {
 	__u8	selector;

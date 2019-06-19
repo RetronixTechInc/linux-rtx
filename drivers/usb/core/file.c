@@ -19,7 +19,6 @@
 #include <linux/errno.h>
 #include <linux/rwsem.h>
 #include <linux/slab.h>
-#include <linux/string.h>
 #include <linux/usb.h>
 
 #include "usb.h"
@@ -27,7 +26,6 @@
 #define MAX_USB_MINORS	256
 static const struct file_operations *usb_minors[MAX_USB_MINORS];
 static DECLARE_RWSEM(minor_rwsem);
-static DEFINE_MUTEX(init_usb_class_mutex);
 
 static int usb_open(struct inode *inode, struct file *file)
 {
@@ -110,9 +108,8 @@ static void release_usb_class(struct kref *kref)
 
 static void destroy_usb_class(void)
 {
-	mutex_lock(&init_usb_class_mutex);
-	kref_put(&usb_class->kref, release_usb_class);
-	mutex_unlock(&init_usb_class_mutex);
+	if (usb_class)
+		kref_put(&usb_class->kref, release_usb_class);
 }
 
 int usb_major_init(void)
@@ -158,6 +155,7 @@ int usb_register_dev(struct usb_interface *intf,
 	int minor_base = class_driver->minor_base;
 	int minor;
 	char name[20];
+	char *temp;
 
 #ifdef CONFIG_USB_DYNAMIC_MINORS
 	/*
@@ -173,10 +171,7 @@ int usb_register_dev(struct usb_interface *intf,
 	if (intf->minor >= 0)
 		return -EADDRINUSE;
 
-	mutex_lock(&init_usb_class_mutex);
 	retval = init_usb_class();
-	mutex_unlock(&init_usb_class_mutex);
-
 	if (retval)
 		return retval;
 
@@ -197,9 +192,14 @@ int usb_register_dev(struct usb_interface *intf,
 
 	/* create a usb class device for this usb interface */
 	snprintf(name, sizeof(name), class_driver->name, minor - minor_base);
+	temp = strrchr(name, '/');
+	if (temp && (temp[1] != '\0'))
+		++temp;
+	else
+		temp = name;
 	intf->usb_dev = device_create(usb_class->class, &intf->dev,
 				      MKDEV(USB_MAJOR, minor), class_driver,
-				      "%s", kbasename(name));
+				      "%s", temp);
 	if (IS_ERR(intf->usb_dev)) {
 		down_write(&minor_rwsem);
 		usb_minors[minor] = NULL;

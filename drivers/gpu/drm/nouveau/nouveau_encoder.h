@@ -41,9 +41,7 @@ struct nouveau_encoder {
 
 	struct dcb_output *dcb;
 	int or;
-
-	struct i2c_adapter *i2c;
-	struct nvkm_i2c_aux *aux;
+	struct nvkm_i2c_port *i2c;
 
 	/* different to drm_encoder.crtc, this reflects what's
 	 * actually programmed on the hw, not the proposed crtc */
@@ -63,9 +61,6 @@ struct nouveau_encoder {
 			u32 datarate;
 		} dp;
 	};
-
-	void (*enc_save)(struct drm_encoder *encoder);
-	void (*enc_restore)(struct drm_encoder *encoder);
 };
 
 struct nouveau_encoder *
@@ -83,7 +78,7 @@ static inline struct drm_encoder *to_drm_encoder(struct nouveau_encoder *enc)
 	return &enc->base.base;
 }
 
-static inline const struct drm_encoder_slave_funcs *
+static inline struct drm_encoder_slave_funcs *
 get_slave_funcs(struct drm_encoder *enc)
 {
 	return to_encoder_slave(enc)->slave_funcs;

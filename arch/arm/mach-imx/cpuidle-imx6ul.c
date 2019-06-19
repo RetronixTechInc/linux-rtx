@@ -95,10 +95,9 @@ static int imx6ul_enter_wait(struct cpuidle_device *dev,
 {
 	int mode = get_bus_freq_mode();
 
-	imx6_set_lpm(WAIT_UNCLOCKED);
+	imx6q_set_lpm(WAIT_UNCLOCKED);
 	if ((index == 1) || ((mode != BUS_FREQ_LOW) && index == 2)) {
 		cpu_do_idle();
-		index = 1;
 	} else {
 		/*
 		 * i.MX6UL TO1.0 ARM power up uses IPG/2048 as clock source,
@@ -124,7 +123,7 @@ static int imx6ul_enter_wait(struct cpuidle_device *dev,
 			imx_gpc_switch_pupscr_clk(false);
 	}
 
-	imx6_set_lpm(WAIT_CLOCKED);
+	imx6q_set_lpm(WAIT_CLOCKED);
 
 	return index;
 }
@@ -254,7 +253,7 @@ int __init imx6ul_cpuidle_init(void)
 	}
 #endif
 
-	imx6_set_int_mem_clk_lpm(true);
+	imx6q_set_int_mem_clk_lpm(true);
 
 	/*
 	 * enable RC-OSC here, as it needs at least 4ms for RC-OSC to

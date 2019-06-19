@@ -362,7 +362,7 @@ static int imx_sgtl5000_probe(struct platform_device *pdev)
 		priv->is_headset_jack = true;
 
 	if (gpio_is_valid(imx_hp_jack_gpio.gpio)) {
-		priv->headphone_kctl = snd_kctl_jack_new("Headphone", NULL);
+		priv->headphone_kctl = snd_kctl_jack_new("Headphone", 0, NULL);
 		ret = snd_ctl_add(priv->snd_card, priv->headphone_kctl);
 		if (ret)
 			dev_warn(&pdev->dev, "failed to create headphone jack kctl\n");

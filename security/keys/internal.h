@@ -15,7 +15,6 @@
 #include <linux/sched.h>
 #include <linux/key-type.h>
 #include <linux/task_work.h>
-#include <linux/keyctl.h>
 
 struct iovec;
 
@@ -137,7 +136,7 @@ extern key_ref_t keyring_search_aux(key_ref_t keyring_ref,
 extern key_ref_t search_my_process_keyrings(struct keyring_search_context *ctx);
 extern key_ref_t search_process_keyrings(struct keyring_search_context *ctx);
 
-extern struct key *find_keyring_by_name(const char *name, bool uid_keyring);
+extern struct key *find_keyring_by_name(const char *name, bool skip_perm_check);
 
 extern int install_user_keyrings(void);
 extern int install_thread_keyring_to_cred(struct cred *);
@@ -253,18 +252,6 @@ extern long keyctl_get_persistent(uid_t, key_serial_t);
 extern unsigned persistent_keyring_expiry;
 #else
 static inline long keyctl_get_persistent(uid_t uid, key_serial_t destring)
-{
-	return -EOPNOTSUPP;
-}
-#endif
-
-#ifdef CONFIG_KEY_DH_OPERATIONS
-extern long keyctl_dh_compute(struct keyctl_dh_params __user *, char __user *,
-			      size_t, void __user *);
-#else
-static inline long keyctl_dh_compute(struct keyctl_dh_params __user *params,
-				     char __user *buffer, size_t buflen,
-				     void __user *reserved)
 {
 	return -EOPNOTSUPP;
 }

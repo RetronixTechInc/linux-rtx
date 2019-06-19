@@ -65,7 +65,7 @@ xfs_attr_shortform_compare(const void *a, const void *b)
  * we have to calculate each entries' hashvalue and sort them before
  * we can begin returning them to the user.
  */
-static int
+int
 xfs_attr_shortform_list(xfs_attr_list_context_t *context)
 {
 	attrlist_cursor_kern_t *cursor;
@@ -106,15 +106,18 @@ xfs_attr_shortform_list(xfs_attr_list_context_t *context)
 					   sfe->flags,
 					   sfe->nameval,
 					   (int)sfe->namelen,
-					   (int)sfe->valuelen);
-			if (error)
-				return error;
+					   (int)sfe->valuelen,
+					   &sfe->nameval[sfe->namelen]);
+
 			/*
 			 * Either search callback finished early or
 			 * didn't fit it all in the buffer after all.
 			 */
 			if (context->seen_enough)
 				break;
+
+			if (error)
+				return error;
 			sfe = XFS_ATTR_SF_NEXTENTRY(sfe);
 		}
 		trace_xfs_attr_list_sf_all(context);
@@ -197,11 +200,10 @@ xfs_attr_shortform_list(xfs_attr_list_context_t *context)
 					sbp->flags,
 					sbp->name,
 					sbp->namelen,
-					sbp->valuelen);
-		if (error) {
-			kmem_free(sbuf);
+					sbp->valuelen,
+					&sbp->name[sbp->namelen]);
+		if (error)
 			return error;
-		}
 		if (context->seen_enough)
 			break;
 		cursor->offset++;
@@ -412,9 +414,6 @@ xfs_attr3_leaf_list_int(
 	 */
 	retval = 0;
 	for (; i < ichdr.count; entry++, i++) {
-		char *name;
-		int namelen, valuelen;
-
 		if (be32_to_cpu(entry->hashval) != cursor->hashval) {
 			cursor->hashval = be32_to_cpu(entry->hashval);
 			cursor->offset = 0;
@@ -424,25 +423,57 @@ xfs_attr3_leaf_list_int(
 			continue;		/* skip incomplete entries */
 
 		if (entry->flags & XFS_ATTR_LOCAL) {
-			xfs_attr_leaf_name_local_t *name_loc;
+			xfs_attr_leaf_name_local_t *name_loc =
+				xfs_attr3_leaf_name_local(leaf, i);
 
-			name_loc = xfs_attr3_leaf_name_local(leaf, i);
-			name = name_loc->nameval;
-			namelen = name_loc->namelen;
-			valuelen = be16_to_cpu(name_loc->valuelen);
+			retval = context->put_listent(context,
+						entry->flags,
+						name_loc->nameval,
+						(int)name_loc->namelen,
+						be16_to_cpu(name_loc->valuelen),
+						&name_loc->nameval[name_loc->namelen]);
+			if (retval)
+				return retval;
 		} else {
-			xfs_attr_leaf_name_remote_t *name_rmt;
+			xfs_attr_leaf_name_remote_t *name_rmt =
+				xfs_attr3_leaf_name_remote(leaf, i);
 
-			name_rmt = xfs_attr3_leaf_name_remote(leaf, i);
-			name = name_rmt->name;
-			namelen = name_rmt->namelen;
-			valuelen = be32_to_cpu(name_rmt->valuelen);
+			int valuelen = be32_to_cpu(name_rmt->valuelen);
+
+			if (context->put_value) {
+				xfs_da_args_t args;
+
+				memset((char *)&args, 0, sizeof(args));
+				args.geo = context->dp->i_mount->m_attr_geo;
+				args.dp = context->dp;
+				args.whichfork = XFS_ATTR_FORK;
+				args.valuelen = valuelen;
+				args.rmtvaluelen = valuelen;
+				args.value = kmem_alloc(valuelen, KM_SLEEP | KM_NOFS);
+				args.rmtblkno = be32_to_cpu(name_rmt->valueblk);
+				args.rmtblkcnt = xfs_attr3_rmt_blocks(
+							args.dp->i_mount, valuelen);
+				retval = xfs_attr_rmtval_get(&args);
+				if (retval)
+					return retval;
+				retval = context->put_listent(context,
+						entry->flags,
+						name_rmt->name,
+						(int)name_rmt->namelen,
+						valuelen,
+						args.value);
+				kmem_free(args.value);
+			} else {
+				retval = context->put_listent(context,
+						entry->flags,
+						name_rmt->name,
+						(int)name_rmt->namelen,
+						valuelen,
+						NULL);
+			}
+			if (retval)
+				return retval;
 		}
-
-		retval = context->put_listent(context, entry->flags,
-					      name, namelen, valuelen);
-		if (retval)
-			break;
 		if (context->seen_enough)
 			break;
 		cursor->offset++;
@@ -480,7 +511,7 @@ xfs_attr_list_int(
 	xfs_inode_t *dp = context->dp;
 	uint		lock_mode;
 
-	XFS_STATS_INC(dp->i_mount, xs_attr_list);
+	XFS_STATS_INC(xs_attr_list);
 
 	if (XFS_FORCED_SHUTDOWN(dp->i_mount))
 		return -EIO;
@@ -519,7 +550,8 @@ xfs_attr_put_listent(
 	int		flags,
 	unsigned char	*name,
 	int		namelen,
-	int		valuelen)
+	int		valuelen,
+	unsigned char	*value)
 {
 	struct attrlist *alist = (struct attrlist *)context->alist;
 	attrlist_ent_t *aep;
@@ -548,7 +580,7 @@ xfs_attr_put_listent(
 		trace_xfs_attr_list_full(context);
 		alist->al_more = 1;
 		context->seen_enough = 1;
-		return 0;
+		return 1;
 	}
 
 	aep = (attrlist_ent_t *)&context->alist[context->firstu];

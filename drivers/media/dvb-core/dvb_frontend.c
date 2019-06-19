@@ -40,7 +40,6 @@
 #include <linux/freezer.h>
 #include <linux/jiffies.h>
 #include <linux/kthread.h>
-#include <linux/ktime.h>
 #include <asm/processor.h>
 
 #include "dvb_frontend.h"
@@ -81,6 +80,7 @@ MODULE_PARM_DESC(dvb_mfe_wait_time, "Wait up to <mfe_wait_time> seconds on open(
 #define FESTATE_SEARCHING_SLOW (FESTATE_TUNING_SLOW | FESTATE_ZIGZAG_SLOW)
 #define FESTATE_LOSTLOCK (FESTATE_ZIGZAG_FAST | FESTATE_ZIGZAG_SLOW)
 
+#define FE_ALGO_HW		1
 /*
  * FESTATE_IDLE. No tuning parameters have been supplied and the loop is idling.
  * FESTATE_RETUNE. Parameters have been supplied, but we have not yet performed the first tune.
@@ -99,7 +99,6 @@ MODULE_PARM_DESC(dvb_mfe_wait_time, "Wait up to <mfe_wait_time> seconds on open(
 static DEFINE_MUTEX(frontend_mutex);
 
 struct dvb_frontend_private {
-	struct kref refcount;
 
 	/* thread/frontend values */
 	struct dvb_device *dvbdev;
@@ -111,7 +110,7 @@ struct dvb_frontend_private {
 	struct task_struct *thread;
 	unsigned long release_jiffies;
 	unsigned int wakeup;
-	enum fe_status status;
+	fe_status_t status;
 	unsigned long tune_mode_flags;
 	unsigned int delay;
 	unsigned int reinitialise;
@@ -135,34 +134,15 @@ struct dvb_frontend_private {
 
 #if defined(CONFIG_MEDIA_CONTROLLER_DVB)
 	struct media_pipeline pipe;
+	struct media_entity *pipe_start_entity;
 #endif
 };
 
-static void dvb_frontend_private_free(struct kref *ref)
-{
-	struct dvb_frontend_private *fepriv =
-		container_of(ref, struct dvb_frontend_private, refcount);
-	kfree(fepriv);
-}
-
-static void dvb_frontend_private_put(struct dvb_frontend_private *fepriv)
-{
-	kref_put(&fepriv->refcount, dvb_frontend_private_free);
-}
-
-static void dvb_frontend_private_get(struct dvb_frontend_private *fepriv)
-{
-	kref_get(&fepriv->refcount);
-}
-
 static void dvb_frontend_wakeup(struct dvb_frontend *fe);
 static int dtv_get_frontend(struct dvb_frontend *fe,
-			    struct dtv_frontend_properties *c,
 			    struct dvb_frontend_parameters *p_out);
-static int
-dtv_property_legacy_params_sync(struct dvb_frontend *fe,
-				const struct dtv_frontend_properties *c,
-				struct dvb_frontend_parameters *p);
+static int dtv_property_legacy_params_sync(struct dvb_frontend *fe,
+					   struct dvb_frontend_parameters *p);
 
 static bool has_get_frontend(struct dvb_frontend *fe)
 {
@@ -218,11 +198,9 @@ static enum dvbv3_emulation_type dvbv3_type(u32 delivery_system)
 	}
 }
 
-static void dvb_frontend_add_event(struct dvb_frontend *fe,
-				   enum fe_status status)
+static void dvb_frontend_add_event(struct dvb_frontend *fe, fe_status_t status)
 {
 	struct dvb_frontend_private *fepriv = fe->frontend_priv;
-	struct dtv_frontend_properties *c = &fe->dtv_property_cache;
 	struct dvb_fe_events *events = &fepriv->events;
 	struct dvb_frontend_event *e;
 	int wp;
@@ -230,7 +208,7 @@ static void dvb_frontend_add_event(struct dvb_frontend *fe,
 	dev_dbg(fe->dvb->device, "%s:\n", __func__);
 
 	if ((status & FE_HAS_LOCK) && has_get_frontend(fe))
-		dtv_get_frontend(fe, c, &fepriv->parameters_out);
+		dtv_get_frontend(fe, &fepriv->parameters_out);
 
 	mutex_lock(&events->mtx);
 
@@ -451,7 +429,7 @@ static int dvb_frontend_swzigzag_autotune(struct dvb_frontend *fe, int check_wra
 
 static void dvb_frontend_swzigzag(struct dvb_frontend *fe)
 {
-	enum fe_status s = 0;
+	fe_status_t s = 0;
 	int retval = 0;
 	struct dvb_frontend_private *fepriv = fe->frontend_priv;
 	struct dtv_frontend_properties *c = &fe->dtv_property_cache, tmp;
@@ -617,13 +595,107 @@ static void dvb_frontend_wakeup(struct dvb_frontend *fe)
 	wake_up_interruptible(&fepriv->wait_queue);
 }
 
+/**
+ * dvb_enable_media_tuner() - tries to enable the DVB tuner
+ *
+ * @fe:		struct dvb_frontend pointer
+ *
+ * This function ensures that just one media tuner is enabled for a given
+ * frontend. It has two different behaviors:
+ * - For trivial devices with just one tuner:
+ *   it just enables the existing tuner->fe link
+ * - For devices with more than one tuner:
+ *   It is up to the driver to implement the logic that will enable one tuner
+ *   and disable the other ones. However, if more than one tuner is enabled for
+ *   the same frontend, it will print an error message and return -EINVAL.
+ *
+ * At return, it will return the error code returned by media_entity_setup_link,
+ * or 0 if everything is OK, if no tuner is linked to the frontend or if the
+ * mdev is NULL.
+ */
+#ifdef CONFIG_MEDIA_CONTROLLER_DVB
+static int dvb_enable_media_tuner(struct dvb_frontend *fe)
+{
+	struct dvb_frontend_private *fepriv = fe->frontend_priv;
+	struct dvb_adapter *adapter = fe->dvb;
+	struct media_device *mdev = adapter->mdev;
+	struct media_entity  *entity, *source;
+	struct media_link *link, *found_link = NULL;
+	int i, ret, n_links = 0, active_links = 0;
+
+	fepriv->pipe_start_entity = NULL;
+
+	if (!mdev)
+		return 0;
+
+	entity = fepriv->dvbdev->entity;
+	fepriv->pipe_start_entity = entity;
+
+	for (i = 0; i < entity->num_links; i++) {
+		link = &entity->links[i];
+		if (link->sink->entity == entity) {
+			found_link = link;
+			n_links++;
+			if (link->flags & MEDIA_LNK_FL_ENABLED)
+				active_links++;
+		}
+	}
+
+	if (!n_links || active_links == 1 || !found_link)
+		return 0;
+
+	/*
+	 * If a frontend has more than one tuner linked, it is up to the driver
+	 * to select with one will be the active one, as the frontend core can't
+	 * guess. If the driver doesn't do that, it is a bug.
+	 */
+	if (n_links > 1 && active_links != 1) {
+		dev_err(fe->dvb->device,
+			"WARNING: there are %d active links among %d tuners. This is a driver's bug!\n",
+			active_links, n_links);
+		return -EINVAL;
+	}
+
+	source = found_link->source->entity;
+	fepriv->pipe_start_entity = source;
+	for (i = 0; i < source->num_links; i++) {
+		struct media_entity *sink;
+		int flags = 0;
+
+		link = &source->links[i];
+		sink = link->sink->entity;
+
+		if (sink == entity)
+			flags = MEDIA_LNK_FL_ENABLED;
+
+		ret = media_entity_setup_link(link, flags);
+		if (ret) {
+			dev_err(fe->dvb->device,
+				"Couldn't change link %s->%s to %s. Error %d\n",
+				source->name, sink->name,
+				flags ? "enabled" : "disabled",
+				ret);
+			return ret;
+		} else
+			dev_dbg(fe->dvb->device,
+				"link %s->%s was %s\n",
+				source->name, sink->name,
+				flags ? "ENABLED" : "disabled");
+	}
+	return 0;
+}
+#endif
+
 static int dvb_frontend_thread(void *data)
 {
 	struct dvb_frontend *fe = data;
-	struct dtv_frontend_properties *c = &fe->dtv_property_cache;
 	struct dvb_frontend_private *fepriv = fe->frontend_priv;
-	enum fe_status s;
+	fe_status_t s;
 	enum dvbfe_algo algo;
+#ifdef CONFIG_MEDIA_CONTROLLER_DVB
+	int ret;
+#endif
+
 	bool re_tune = false;
 	bool semheld = false;
 
@@ -635,6 +707,20 @@ static int dvb_frontend_thread(void *data)
 	fepriv->status = 0;
 	fepriv->wakeup = 0;
 	fepriv->reinitialise = 0;
+
+#ifdef CONFIG_MEDIA_CONTROLLER_DVB
+	ret = dvb_enable_media_tuner(fe);
+	if (ret) {
+		/* FIXME: return an error if it fails */
+		dev_info(fe->dvb->device,
+			"proceeding with FE task\n");
+	} else if (fepriv->pipe_start_entity) {
+		ret = media_entity_pipeline_start(fepriv->pipe_start_entity,
+						  &fepriv->pipe);
+		if (ret)
+			return ret;
+	}
+#endif
 
 	dvb_frontend_init(fe);
 
@@ -723,7 +809,7 @@ restart:
 					fepriv->algo_status |= DVBFE_ALGO_SEARCH_AGAIN;
 					fepriv->delay = HZ / 2;
 				}
-				dtv_property_legacy_params_sync(fe, c, &fepriv->parameters_out);
+				dtv_property_legacy_params_sync(fe, &fepriv->parameters_out);
 				fe->ops.read_status(fe, &s);
 				if (s != fepriv->status) {
 					dvb_frontend_add_event(fe, s); /* update event list */
@@ -744,6 +830,12 @@ restart:
 			dvb_frontend_swzigzag(fe);
 		}
 	}
+
+#ifdef CONFIG_MEDIA_CONTROLLER_DVB
+	if (fepriv->pipe_start_entity)
+		media_entity_pipeline_stop(fepriv->pipe_start_entity);
+	fepriv->pipe_start_entity = NULL;
+#endif
 
 	if (dvb_powerdown_on_sleep) {
 		if (fe->ops.set_voltage)
@@ -797,22 +889,43 @@ static void dvb_frontend_stop(struct dvb_frontend *fe)
 				fepriv->thread);
 }
 
-/*
- * Sleep for the amount of time given by add_usec parameter
- *
- * This needs to be as precise as possible, as it affects the detection of
- * the dish tone command at the satellite subsystem. The precision is improved
- * by using a scheduled msleep followed by udelay for the remainder.
- */
-void dvb_frontend_sleep_until(ktime_t *waketime, u32 add_usec)
+s32 timeval_usec_diff(struct timeval lasttime, struct timeval curtime)
 {
-	s32 delta;
+	return ((curtime.tv_usec < lasttime.tv_usec) ?
+		1000000 - lasttime.tv_usec + curtime.tv_usec :
+		curtime.tv_usec - lasttime.tv_usec);
+}
+EXPORT_SYMBOL(timeval_usec_diff);
 
-	*waketime = ktime_add_us(*waketime, add_usec);
-	delta = ktime_us_delta(ktime_get_boottime(), *waketime);
+static inline void timeval_usec_add(struct timeval *curtime, u32 add_usec)
+{
+	curtime->tv_usec += add_usec;
+	if (curtime->tv_usec >= 1000000) {
+		curtime->tv_usec -= 1000000;
+		curtime->tv_sec++;
+	}
+}
+
+/*
+ * Sleep until gettimeofday() > waketime + add_usec
+ * This needs to be as precise as possible, but as the delay is
+ * usually between 2ms and 32ms, it is done using a scheduled msleep
+ * followed by usleep (normally a busy-wait loop) for the remainder
+ */
+void dvb_frontend_sleep_until(struct timeval *waketime, u32 add_usec)
+{
+	struct timeval lasttime;
+	s32 delta, newdelta;
+
+	timeval_usec_add(waketime, add_usec);
+
+	do_gettimeofday(&lasttime);
+	delta = timeval_usec_diff(lasttime, *waketime);
 	if (delta > 2500) {
 		msleep((delta - 1500) / 1000);
-		delta = ktime_us_delta(ktime_get_boottime(), *waketime);
+		do_gettimeofday(&lasttime);
+		newdelta = timeval_usec_diff(lasttime, *waketime);
+		delta = (newdelta > delta) ? 0 : newdelta;
 	}
 	if (delta > 0)
 		udelay(delta);
@@ -1072,24 +1185,18 @@ static struct dtv_cmds_h dtv_cmds[DTV_MAX_COMMAND + 1] = {
 	_DTV_CMD(DTV_STAT_TOTAL_BLOCK_COUNT, 0, 0),
 };
 
-static void dtv_property_dump(struct dvb_frontend *fe,
-			      bool is_set,
-			      struct dtv_property *tvp)
+static void dtv_property_dump(struct dvb_frontend *fe, struct dtv_property *tvp)
 {
 	int i;
 
 	if (tvp->cmd <= 0 || tvp->cmd > DTV_MAX_COMMAND) {
-		dev_warn(fe->dvb->device, "%s: %s tvp.cmd = 0x%08x undefined\n",
-				__func__,
-				is_set ? "SET" : "GET",
-				tvp->cmd);
+		dev_warn(fe->dvb->device, "%s: tvp.cmd = 0x%08x undefined\n",
+				__func__, tvp->cmd);
 		return;
 	}
 
-	dev_dbg(fe->dvb->device, "%s: %s tvp.cmd    = 0x%08x (%s)\n", __func__,
-		is_set ? "SET" : "GET",
-		tvp->cmd,
-		dtv_cmds[tvp->cmd].name);
+	dev_dbg(fe->dvb->device, "%s: tvp.cmd    = 0x%08x (%s)\n", __func__,
+			tvp->cmd, dtv_cmds[tvp->cmd].name);
 
 	if (dtv_cmds[tvp->cmd].buffer) {
 		dev_dbg(fe->dvb->device, "%s: tvp.u.buffer.len = 0x%02x\n",
@@ -1184,11 +1291,11 @@ static int dtv_property_cache_sync(struct dvb_frontend *fe,
 /* Ensure the cached values are set correctly in the frontend
  * legacy tuning structures, for the advanced tuning API.
  */
-static int
-dtv_property_legacy_params_sync(struct dvb_frontend *fe,
-				const struct dtv_frontend_properties *c,
-				struct dvb_frontend_parameters *p)
+static int dtv_property_legacy_params_sync(struct dvb_frontend *fe,
+					    struct dvb_frontend_parameters *p)
 {
+	const struct dtv_frontend_properties *c = &fe->dtv_property_cache;
+
 	p->frequency = c->frequency;
 	p->inversion = c->inversion;
 
@@ -1260,17 +1367,16 @@ dtv_property_legacy_params_sync(struct dvb_frontend *fe,
  * If p_out is not null, it will update the DVBv3 params pointed by it.
  */
 static int dtv_get_frontend(struct dvb_frontend *fe,
-			    struct dtv_frontend_properties *c,
 			    struct dvb_frontend_parameters *p_out)
 {
 	int r;
 
 	if (fe->ops.get_frontend) {
-		r = fe->ops.get_frontend(fe, c);
+		r = fe->ops.get_frontend(fe);
 		if (unlikely(r < 0))
 			return r;
 		if (p_out)
-			dtv_property_legacy_params_sync(fe, c, p_out);
+			dtv_property_legacy_params_sync(fe, p_out);
 		return 0;
 	}
 
@@ -1506,7 +1612,7 @@ static int dtv_property_process_get(struct dvb_frontend *fe,
 			return r;
 	}
 
-	dtv_property_dump(fe, false, tvp);
+	dtv_property_dump(fe, tvp);
 
 	return 0;
 }
@@ -1747,8 +1853,6 @@ static int dtv_property_process_set(struct dvb_frontend *fe,
 			return r;
 	}
 
-	dtv_property_dump(fe, true, tvp);
-
 	switch(tvp->cmd) {
 	case DTV_CLEAR:
 		/*
@@ -1969,9 +2073,17 @@ static int dvb_frontend_ioctl_properties(struct file *file,
 		if ((tvps->num == 0) || (tvps->num > DTV_IOCTL_MAX_MSGS))
 			return -EINVAL;
 
-		tvp = memdup_user(tvps->props, tvps->num * sizeof(*tvp));
-		if (IS_ERR(tvp))
-			return PTR_ERR(tvp);
+		tvp = kmalloc(tvps->num * sizeof(struct dtv_property), GFP_KERNEL);
+		if (!tvp) {
+			err = -ENOMEM;
+			goto out;
+		}
+
+		if (copy_from_user(tvp, (void __user *)tvps->props,
+				   tvps->num * sizeof(struct dtv_property))) {
+			err = -EFAULT;
+			goto out;
+		}
 
 		for (i = 0; i < tvps->num; i++) {
 			err = dtv_property_process_set(fe, tvp + i, file);
@@ -1984,8 +2096,6 @@ static int dvb_frontend_ioctl_properties(struct file *file,
 			dev_dbg(fe->dvb->device, "%s: Property cache is full, tuning\n", __func__);
 
 	} else if (cmd == FE_GET_PROPERTY) {
-		struct dtv_frontend_properties getp = fe->dtv_property_cache;
-
 		dev_dbg(fe->dvb->device, "%s: properties.num = %d\n", __func__, tvps->num);
 		dev_dbg(fe->dvb->device, "%s: properties.props = %p\n", __func__, tvps->props);
 
@@ -1994,23 +2104,30 @@ static int dvb_frontend_ioctl_properties(struct file *file,
 		if ((tvps->num == 0) || (tvps->num > DTV_IOCTL_MAX_MSGS))
 			return -EINVAL;
 
-		tvp = memdup_user(tvps->props, tvps->num * sizeof(*tvp));
-		if (IS_ERR(tvp))
-			return PTR_ERR(tvp);
+		tvp = kmalloc(tvps->num * sizeof(struct dtv_property), GFP_KERNEL);
+		if (!tvp) {
+			err = -ENOMEM;
+			goto out;
+		}
+
+		if (copy_from_user(tvp, (void __user *)tvps->props,
+				   tvps->num * sizeof(struct dtv_property))) {
+			err = -EFAULT;
+			goto out;
+		}
 
 		/*
-		 * Let's use our own copy of property cache, in order to
-		 * avoid mangling with DTV zigzag logic, as drivers might
-		 * return crap, if they don't check if the data is available
-		 * before updating the properties cache.
+		 * Fills the cache out struct with the cache contents, plus
+		 * the data retrieved from get_frontend, if the frontend
+		 * is not idle. Otherwise, returns the cached content
 		 */
 		if (fepriv->state != FESTATE_IDLE) {
-			err = dtv_get_frontend(fe, &getp, NULL);
+			err = dtv_get_frontend(fe, NULL);
 			if (err < 0)
 				goto out;
 		}
 		for (i = 0; i < tvps->num; i++) {
-			err = dtv_property_process_get(fe, &getp, tvp + i, file);
+			err = dtv_property_process_get(fe, c, tvp + i, file);
 			if (err < 0)
 				goto out;
 			(tvp + i)->result = err;
@@ -2045,7 +2162,7 @@ static int dtv_set_frontend(struct dvb_frontend *fe)
 	 * the user. FE_SET_FRONTEND triggers an initial frontend event
 	 * with status = 0, which copies output parameters to userspace.
 	 */
-	dtv_property_legacy_params_sync(fe, c, &fepriv->parameters_out);
+	dtv_property_legacy_params_sync(fe, &fepriv->parameters_out);
 
 	/*
 	 * Be sure that the bandwidth will be filled for all
@@ -2099,7 +2216,7 @@ static int dtv_set_frontend(struct dvb_frontend *fe)
 		break;
 	}
 	if (rolloff)
-		c->bandwidth_hz = mult_frac(c->symbol_rate, rolloff, 100);
+		c->bandwidth_hz = (c->symbol_rate * rolloff) / 100;
 
 	/* force auto frequency inversion if requested */
 	if (dvb_force_auto_inversion)
@@ -2216,15 +2333,15 @@ static int dvb_frontend_ioctl_legacy(struct file *file,
 		dev_dbg(fe->dvb->device, "%s: current delivery system on cache: %d, V3 type: %d\n",
 				 __func__, c->delivery_system, fe->ops.info.type);
 
-		/* Set CAN_INVERSION_AUTO bit on in other than oneshot mode */
-		if (!(fepriv->tune_mode_flags & FE_TUNE_MODE_ONESHOT))
-			info->caps |= FE_CAN_INVERSION_AUTO;
+		/* Force the CAN_INVERSION_AUTO bit on. If the frontend doesn't
+		 * do it, it is done for it. */
+		info->caps |= FE_CAN_INVERSION_AUTO;
 		err = 0;
 		break;
 	}
 
 	case FE_READ_STATUS: {
-		enum fe_status *status = parg;
+		fe_status_t* status = parg;
 
 		/* if retune was requested but hasn't occurred yet, prevent
 		 * that user get signal state from previous tuning */
@@ -2286,13 +2403,7 @@ static int dvb_frontend_ioctl_legacy(struct file *file,
 
 	case FE_DISEQC_SEND_MASTER_CMD:
 		if (fe->ops.diseqc_send_master_cmd) {
-			struct dvb_diseqc_master_cmd *cmd = parg;
-
-			if (cmd->msg_len > sizeof(cmd->msg)) {
-				err = -EINVAL;
-				break;
-			}
-			err = fe->ops.diseqc_send_master_cmd(fe, cmd);
+			err = fe->ops.diseqc_send_master_cmd(fe, (struct dvb_diseqc_master_cmd*) parg);
 			fepriv->state = FESTATE_DISEQC;
 			fepriv->status = 0;
 		}
@@ -2300,8 +2411,7 @@ static int dvb_frontend_ioctl_legacy(struct file *file,
 
 	case FE_DISEQC_SEND_BURST:
 		if (fe->ops.diseqc_send_burst) {
-			err = fe->ops.diseqc_send_burst(fe,
-						(enum fe_sec_mini_cmd)parg);
+			err = fe->ops.diseqc_send_burst(fe, (fe_sec_mini_cmd_t) parg);
 			fepriv->state = FESTATE_DISEQC;
 			fepriv->status = 0;
 		}
@@ -2309,9 +2419,8 @@ static int dvb_frontend_ioctl_legacy(struct file *file,
 
 	case FE_SET_TONE:
 		if (fe->ops.set_tone) {
-			err = fe->ops.set_tone(fe,
-					       (enum fe_sec_tone_mode)parg);
-			fepriv->tone = (enum fe_sec_tone_mode)parg;
+			err = fe->ops.set_tone(fe, (fe_sec_tone_mode_t) parg);
+			fepriv->tone = (fe_sec_tone_mode_t) parg;
 			fepriv->state = FESTATE_DISEQC;
 			fepriv->status = 0;
 		}
@@ -2319,9 +2428,8 @@ static int dvb_frontend_ioctl_legacy(struct file *file,
 
 	case FE_SET_VOLTAGE:
 		if (fe->ops.set_voltage) {
-			err = fe->ops.set_voltage(fe,
-						  (enum fe_sec_voltage)parg);
-			fepriv->voltage = (enum fe_sec_voltage)parg;
+			err = fe->ops.set_voltage(fe, (fe_sec_voltage_t) parg);
+			fepriv->voltage = (fe_sec_voltage_t) parg;
 			fepriv->state = FESTATE_DISEQC;
 			fepriv->status = 0;
 		}
@@ -2329,8 +2437,7 @@ static int dvb_frontend_ioctl_legacy(struct file *file,
 
 	case FE_DISHNETWORK_SEND_LEGACY_CMD:
 		if (fe->ops.dishnetwork_send_legacy_command) {
-			err = fe->ops.dishnetwork_send_legacy_command(fe,
-							 (unsigned long)parg);
+			err = fe->ops.dishnetwork_send_legacy_command(fe, (unsigned long) parg);
 			fepriv->state = FESTATE_DISEQC;
 			fepriv->status = 0;
 		} else if (fe->ops.set_voltage) {
@@ -2351,13 +2458,13 @@ static int dvb_frontend_ioctl_legacy(struct file *file,
 			 * include the initialization or start bit
 			 */
 			unsigned long swcmd = ((unsigned long) parg) << 1;
-			ktime_t nexttime;
-			ktime_t tv[10];
+			struct timeval nexttime;
+			struct timeval tv[10];
 			int i;
 			u8 last = 1;
 			if (dvb_frontend_debug)
 				printk("%s switch command: 0x%04lx\n", __func__, swcmd);
-			nexttime = ktime_get_boottime();
+			do_gettimeofday(&nexttime);
 			if (dvb_frontend_debug)
 				tv[0] = nexttime;
 			/* before sending a command, initialize by sending
@@ -2368,7 +2475,7 @@ static int dvb_frontend_ioctl_legacy(struct file *file,
 
 			for (i = 0; i < 9; i++) {
 				if (dvb_frontend_debug)
-					tv[i+1] = ktime_get_boottime();
+					do_gettimeofday(&tv[i + 1]);
 				if ((swcmd & 0x01) != last) {
 					/* set voltage to (last ? 13V : 18V) */
 					fe->ops.set_voltage(fe, (last) ? SEC_VOLTAGE_13 : SEC_VOLTAGE_18);
@@ -2382,8 +2489,7 @@ static int dvb_frontend_ioctl_legacy(struct file *file,
 				printk("%s(%d): switch delay (should be 32k followed by all 8k\n",
 					__func__, fe->dvb->num);
 				for (i = 1; i < 10; i++)
-					printk("%d: %d\n", i,
-					(int) ktime_us_delta(tv[i], tv[i-1]));
+					printk("%d: %d\n", i, timeval_usec_diff(tv[i-1] , tv[i]));
 			}
 			err = 0;
 			fepriv->state = FESTATE_DISEQC;
@@ -2415,18 +2521,10 @@ static int dvb_frontend_ioctl_legacy(struct file *file,
 		err = dvb_frontend_get_event (fe, parg, file->f_flags);
 		break;
 
-	case FE_GET_FRONTEND: {
-		struct dtv_frontend_properties getp = fe->dtv_property_cache;
-
-		/*
-		 * Let's use our own copy of property cache, in order to
-		 * avoid mangling with DTV zigzag logic, as drivers might
-		 * return crap, if they don't check if the data is available
-		 * before updating the properties cache.
-		 */
-		err = dtv_get_frontend(fe, &getp, parg);
+	case FE_GET_FRONTEND:
+		err = dtv_get_frontend(fe, parg);
 		break;
-	}
+
 	case FE_SET_FRONTEND_TUNE_MODE:
 		fepriv->tune_mode_flags = (unsigned long) parg;
 		err = 0;
@@ -2526,37 +2624,19 @@ static int dvb_frontend_open(struct inode *inode, struct file *file)
 		fepriv->tone = -1;
 		fepriv->voltage = -1;
 
-#ifdef CONFIG_MEDIA_CONTROLLER_DVB
-		if (fe->dvb->mdev && fe->dvb->mdev->enable_source) {
-			ret = fe->dvb->mdev->enable_source(dvbdev->entity,
-							   &fepriv->pipe);
-			if (ret) {
-				dev_err(fe->dvb->device,
-					"Tuner is busy. Error %d\n", ret);
-				goto err2;
-			}
-		}
-#endif
 		ret = dvb_frontend_start (fe);
 		if (ret)
-			goto err3;
+			goto err2;
 
 		/*  empty event queue */
 		fepriv->events.eventr = fepriv->events.eventw = 0;
 	}
 
-	dvb_frontend_private_get(fepriv);
-
 	if (adapter->mfe_shared)
 		mutex_unlock (&adapter->mfe_lock);
 	return ret;
 
-err3:
-#ifdef CONFIG_MEDIA_CONTROLLER_DVB
-	if (fe->dvb->mdev && fe->dvb->mdev->disable_source)
-		fe->dvb->mdev->disable_source(dvbdev->entity);
 err2:
-#endif
 	dvb_generic_release(inode, file);
 err1:
 	if (dvbdev->users == -1 && fe->ops.ts_bus_ctrl)
@@ -2585,17 +2665,11 @@ static int dvb_frontend_release(struct inode *inode, struct file *file)
 
 	if (dvbdev->users == -1) {
 		wake_up(&fepriv->wait_queue);
-#ifdef CONFIG_MEDIA_CONTROLLER_DVB
-		if (fe->dvb->mdev && fe->dvb->mdev->disable_source)
-			fe->dvb->mdev->disable_source(dvbdev->entity);
-#endif
 		if (fe->exit != DVB_FE_NO_EXIT)
 			wake_up(&dvbdev->wait_queue);
 		if (fe->ops.ts_bus_ctrl)
 			fe->ops.ts_bus_ctrl(fe, 0);
 	}
-
-	dvb_frontend_private_put(fepriv);
 
 	return ret;
 }
@@ -2645,11 +2719,6 @@ int dvb_frontend_resume(struct dvb_frontend *fe)
 	else if (fe->ops.tuner_ops.init)
 		ret = fe->ops.tuner_ops.init(fe);
 
-	if (fe->ops.set_tone && fepriv->tone != -1)
-		fe->ops.set_tone(fe, fepriv->tone);
-	if (fe->ops.set_voltage && fepriv->voltage != -1)
-		fe->ops.set_voltage(fe, fepriv->voltage);
-
 	fe->exit = DVB_FE_NO_EXIT;
 	fepriv->state = FESTATE_RETUNE;
 	dvb_frontend_wakeup(fe);
@@ -2685,8 +2754,6 @@ int dvb_register_frontend(struct dvb_adapter* dvb,
 	}
 	fepriv = fe->frontend_priv;
 
-	kref_init(&fepriv->refcount);
-
 	sema_init(&fepriv->sem, 1);
 	init_waitqueue_head (&fepriv->wait_queue);
 	init_waitqueue_head (&fepriv->events.wait_queue);
@@ -2699,7 +2766,7 @@ int dvb_register_frontend(struct dvb_adapter* dvb,
 			fe->dvb->num, fe->id, fe->ops.info.name);
 
 	dvb_register_device (fe->dvb, &fepriv->dvbdev, &dvbdev_template,
-			     fe, DVB_DEVICE_FRONTEND, 0);
+			     fe, DVB_DEVICE_FRONTEND);
 
 	/*
 	 * Initialize the cache to the proper values according with the
@@ -2721,11 +2788,18 @@ int dvb_unregister_frontend(struct dvb_frontend* fe)
 
 	mutex_lock(&frontend_mutex);
 	dvb_frontend_stop (fe);
+	mutex_unlock(&frontend_mutex);
+
+	if (fepriv->dvbdev->users < -1)
+		wait_event(fepriv->dvbdev->wait_queue,
+				fepriv->dvbdev->users==-1);
+
+	mutex_lock(&frontend_mutex);
 	dvb_unregister_device (fepriv->dvbdev);
 
 	/* fe is invalid now */
+	kfree(fepriv);
 	mutex_unlock(&frontend_mutex);
-	dvb_frontend_private_put(fepriv);
 	return 0;
 }
 EXPORT_SYMBOL(dvb_unregister_frontend);

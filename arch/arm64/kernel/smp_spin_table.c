@@ -29,8 +29,7 @@
 #include <asm/smp_plat.h>
 
 extern void secondary_holding_pen(void);
-volatile unsigned long __section(".mmuoff.data.read")
-secondary_holding_pen_release = INVALID_HWID;
+volatile unsigned long secondary_holding_pen_release = INVALID_HWID;
 
 static phys_addr_t cpu_release_addr[NR_CPUS];
 
@@ -50,27 +49,20 @@ static void write_pen_release(u64 val)
 }
 
 
-static int smp_spin_table_cpu_init(unsigned int cpu)
+static int smp_spin_table_cpu_init(struct device_node *dn, unsigned int cpu)
 {
-	struct device_node *dn;
-	int ret;
-
-	dn = of_get_cpu_node(cpu, NULL);
-	if (!dn)
-		return -ENODEV;
-
 	/*
 	 * Determine the address from which the CPU is polling.
 	 */
-	ret = of_property_read_u64(dn, "cpu-release-addr",
-				   &cpu_release_addr[cpu]);
-	if (ret)
+	if (of_property_read_u64(dn, "cpu-release-addr",
+				 &cpu_release_addr[cpu])) {
 		pr_err("CPU %d: missing or invalid cpu-release-addr property\n",
 		       cpu);
 
-	of_node_put(dn);
+		return -1;
+	}
 
-	return ret;
+	return 0;
 }
 
 static int smp_spin_table_cpu_prepare(unsigned int cpu)

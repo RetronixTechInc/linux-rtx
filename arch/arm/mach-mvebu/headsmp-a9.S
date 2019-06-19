@@ -13,8 +13,11 @@
  */
 
 #include <linux/linkage.h>
+#include <linux/init.h>
 
 #include <asm/assembler.h>
+
+	__CPUINIT
 
 ENTRY(mvebu_cortex_a9_secondary_startup)
 ARM_BE8(setend	be)

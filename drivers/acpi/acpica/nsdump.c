@@ -5,7 +5,7 @@
  *****************************************************************************/
 
 /*
- * Copyright (C) 2000 - 2016, Intel Corp.
+ * Copyright (C) 2000 - 2015, Intel Corp.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -60,6 +60,7 @@ acpi_ns_dump_one_device(acpi_handle obj_handle,
 
 #if defined(ACPI_DEBUG_OUTPUT) || defined(ACPI_DEBUGGER)
 
+#ifdef	ACPI_FUTURE_USAGE
 static acpi_status
 acpi_ns_dump_one_object_path(acpi_handle obj_handle,
 			     u32 level, void *context, void **return_value);
@@ -67,6 +68,7 @@ acpi_ns_dump_one_object_path(acpi_handle obj_handle,
 static acpi_status
 acpi_ns_get_max_depth(acpi_handle obj_handle,
 		      u32 level, void *context, void **return_value);
+#endif				/* ACPI_FUTURE_USAGE */
 
 /*******************************************************************************
  *
@@ -81,7 +83,7 @@ acpi_ns_get_max_depth(acpi_handle obj_handle,
  *
  ******************************************************************************/
 
-void acpi_ns_print_pathname(u32 num_segments, const char *pathname)
+void acpi_ns_print_pathname(u32 num_segments, char *pathname)
 {
 	u32 i;
 
@@ -99,7 +101,7 @@ void acpi_ns_print_pathname(u32 num_segments, const char *pathname)
 
 	while (num_segments) {
 		for (i = 0; i < 4; i++) {
-			isprint((int)pathname[i]) ?
+			ACPI_IS_PRINT(pathname[i]) ?
 			    acpi_os_printf("%c", pathname[i]) :
 			    acpi_os_printf("?");
 		}
@@ -113,9 +115,6 @@ void acpi_ns_print_pathname(u32 num_segments, const char *pathname)
 
 	acpi_os_printf("]\n");
 }
-
-#ifdef ACPI_OBSOLETE_FUNCTIONS
-/* Not used at this time, perhaps later */
 
 /*******************************************************************************
  *
@@ -134,8 +133,7 @@ void acpi_ns_print_pathname(u32 num_segments, const char *pathname)
  ******************************************************************************/
 
 void
-acpi_ns_dump_pathname(acpi_handle handle,
-		      const char *msg, u32 level, u32 component)
+acpi_ns_dump_pathname(acpi_handle handle, char *msg, u32 level, u32 component)
 {
 
 	ACPI_FUNCTION_TRACE(ns_dump_pathname);
@@ -152,7 +150,6 @@ acpi_ns_dump_pathname(acpi_handle handle,
 	acpi_os_printf("\n");
 	return_VOID;
 }
-#endif
 
 /*******************************************************************************
  *
@@ -338,7 +335,7 @@ acpi_ns_dump_one_object(acpi_handle obj_handle,
 		case ACPI_TYPE_STRING:
 
 			acpi_os_printf("Len %.2X ", obj_desc->string.length);
-			acpi_ut_print_string(obj_desc->string.pointer, 80);
+			acpi_ut_print_string(obj_desc->string.pointer, 32);
 			acpi_os_printf("\n");
 			break;
 
@@ -544,13 +541,11 @@ acpi_ns_dump_one_object(acpi_handle obj_handle,
 				acpi_os_printf
 				    ("(Pointer to ACPI Object type %.2X [UNKNOWN])\n",
 				     obj_type);
-
 				bytes_to_dump = 32;
 			} else {
 				acpi_os_printf
 				    ("(Pointer to ACPI Object type %.2X [%s])\n",
 				     obj_type, acpi_ut_get_type_name(obj_type));
-
 				bytes_to_dump =
 				    sizeof(union acpi_operand_object);
 			}
@@ -580,7 +575,6 @@ acpi_ns_dump_one_object(acpi_handle obj_handle,
 			 */
 			bytes_to_dump = obj_desc->string.length;
 			obj_desc = (void *)obj_desc->string.pointer;
-
 			acpi_os_printf("(Buffer/String pointer %p length %X)\n",
 				       obj_desc, bytes_to_dump);
 			ACPI_DUMP_BUFFER(obj_desc, bytes_to_dump);
@@ -631,6 +625,7 @@ cleanup:
 	return (AE_OK);
 }
 
+#ifdef ACPI_FUTURE_USAGE
 /*******************************************************************************
  *
  * FUNCTION:    acpi_ns_dump_objects
@@ -685,7 +680,9 @@ acpi_ns_dump_objects(acpi_object_type type,
 
 	(void)acpi_ut_release_mutex(ACPI_MTX_NAMESPACE);
 }
+#endif				/* ACPI_FUTURE_USAGE */
 
+#ifdef	ACPI_FUTURE_USAGE
 /*******************************************************************************
  *
  * FUNCTION:    acpi_ns_dump_one_object_path, acpi_ns_get_max_depth
@@ -725,7 +722,7 @@ acpi_ns_dump_one_object_path(acpi_handle obj_handle,
 		return (AE_OK);
 	}
 
-	pathname = acpi_ns_get_normalized_pathname(node, TRUE);
+	pathname = acpi_ns_get_external_pathname(node);
 
 	path_indent = 1;
 	if (level <= max_level) {
@@ -813,6 +810,7 @@ acpi_ns_dump_object_paths(acpi_object_type type,
 
 	(void)acpi_ut_release_mutex(ACPI_MTX_NAMESPACE);
 }
+#endif				/* ACPI_FUTURE_USAGE */
 
 /*******************************************************************************
  *

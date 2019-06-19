@@ -18,8 +18,6 @@
 #include <net/netfilter/nf_nat_core.h>
 #include <net/netfilter/nf_nat_l3proto.h>
 
-static int __net_init iptable_nat_table_init(struct net *net);
-
 static const struct xt_table nf_nat_ipv4_table = {
 	.name		= "nat",
 	.valid_hooks	= (1 << NF_INET_PRE_ROUTING) |
@@ -28,49 +26,51 @@ static const struct xt_table nf_nat_ipv4_table = {
 			  (1 << NF_INET_LOCAL_IN),
 	.me		= THIS_MODULE,
 	.af		= NFPROTO_IPV4,
-	.table_init	= iptable_nat_table_init,
 };
 
-static unsigned int iptable_nat_do_chain(void *priv,
+static unsigned int iptable_nat_do_chain(const struct nf_hook_ops *ops,
 					 struct sk_buff *skb,
 					 const struct nf_hook_state *state,
 					 struct nf_conn *ct)
 {
-	return ipt_do_table(skb, state, state->net->ipv4.nat_table);
+	struct net *net = nf_ct_net(ct);
+
+	return ipt_do_table(skb, ops->hooknum, state, net->ipv4.nat_table);
 }
 
-static unsigned int iptable_nat_ipv4_fn(void *priv,
+static unsigned int iptable_nat_ipv4_fn(const struct nf_hook_ops *ops,
 					struct sk_buff *skb,
 					const struct nf_hook_state *state)
 {
-	return nf_nat_ipv4_fn(priv, skb, state, iptable_nat_do_chain);
+	return nf_nat_ipv4_fn(ops, skb, state, iptable_nat_do_chain);
 }
 
-static unsigned int iptable_nat_ipv4_in(void *priv,
+static unsigned int iptable_nat_ipv4_in(const struct nf_hook_ops *ops,
 					struct sk_buff *skb,
 					const struct nf_hook_state *state)
 {
-	return nf_nat_ipv4_in(priv, skb, state, iptable_nat_do_chain);
+	return nf_nat_ipv4_in(ops, skb, state, iptable_nat_do_chain);
 }
 
-static unsigned int iptable_nat_ipv4_out(void *priv,
+static unsigned int iptable_nat_ipv4_out(const struct nf_hook_ops *ops,
 					 struct sk_buff *skb,
 					 const struct nf_hook_state *state)
 {
-	return nf_nat_ipv4_out(priv, skb, state, iptable_nat_do_chain);
+	return nf_nat_ipv4_out(ops, skb, state, iptable_nat_do_chain);
 }
 
-static unsigned int iptable_nat_ipv4_local_fn(void *priv,
+static unsigned int iptable_nat_ipv4_local_fn(const struct nf_hook_ops *ops,
 					      struct sk_buff *skb,
 					      const struct nf_hook_state *state)
 {
-	return nf_nat_ipv4_local_fn(priv, skb, state, iptable_nat_do_chain);
+	return nf_nat_ipv4_local_fn(ops, skb, state, iptable_nat_do_chain);
 }
 
 static struct nf_hook_ops nf_nat_ipv4_ops[] __read_mostly = {
 	/* Before packet filtering, change destination */
 	{
 		.hook		= iptable_nat_ipv4_in,
+		.owner		= THIS_MODULE,
 		.pf		= NFPROTO_IPV4,
 		.hooknum	= NF_INET_PRE_ROUTING,
 		.priority	= NF_IP_PRI_NAT_DST,
@@ -78,6 +78,7 @@ static struct nf_hook_ops nf_nat_ipv4_ops[] __read_mostly = {
 	/* After packet filtering, change source */
 	{
 		.hook		= iptable_nat_ipv4_out,
+		.owner		= THIS_MODULE,
 		.pf		= NFPROTO_IPV4,
 		.hooknum	= NF_INET_POST_ROUTING,
 		.priority	= NF_IP_PRI_NAT_SRC,
@@ -85,6 +86,7 @@ static struct nf_hook_ops nf_nat_ipv4_ops[] __read_mostly = {
 	/* Before packet filtering, change destination */
 	{
 		.hook		= iptable_nat_ipv4_local_fn,
+		.owner		= THIS_MODULE,
 		.pf		= NFPROTO_IPV4,
 		.hooknum	= NF_INET_LOCAL_OUT,
 		.priority	= NF_IP_PRI_NAT_DST,
@@ -92,56 +94,57 @@ static struct nf_hook_ops nf_nat_ipv4_ops[] __read_mostly = {
 	/* After packet filtering, change source */
 	{
 		.hook		= iptable_nat_ipv4_fn,
+		.owner		= THIS_MODULE,
 		.pf		= NFPROTO_IPV4,
 		.hooknum	= NF_INET_LOCAL_IN,
 		.priority	= NF_IP_PRI_NAT_SRC,
 	},
 };
 
-static int __net_init iptable_nat_table_init(struct net *net)
+static int __net_init iptable_nat_net_init(struct net *net)
 {
 	struct ipt_replace *repl;
-	int ret;
-
-	if (net->ipv4.nat_table)
-		return 0;
 
 	repl = ipt_alloc_initial_table(&nf_nat_ipv4_table);
 	if (repl == NULL)
 		return -ENOMEM;
-	ret = ipt_register_table(net, &nf_nat_ipv4_table, repl,
-				 nf_nat_ipv4_ops, &net->ipv4.nat_table);
+	net->ipv4.nat_table = ipt_register_table(net, &nf_nat_ipv4_table, repl);
 	kfree(repl);
-	return ret;
+	return PTR_ERR_OR_ZERO(net->ipv4.nat_table);
 }
 
 static void __net_exit iptable_nat_net_exit(struct net *net)
 {
-	if (!net->ipv4.nat_table)
-		return;
-	ipt_unregister_table(net, net->ipv4.nat_table, nf_nat_ipv4_ops);
-	net->ipv4.nat_table = NULL;
+	ipt_unregister_table(net, net->ipv4.nat_table);
 }
 
 static struct pernet_operations iptable_nat_net_ops = {
+	.init	= iptable_nat_net_init,
 	.exit	= iptable_nat_net_exit,
 };
 
 static int __init iptable_nat_init(void)
 {
-	int ret = register_pernet_subsys(&iptable_nat_net_ops);
+	int err;
 
-	if (ret)
-		return ret;
+	err = register_pernet_subsys(&iptable_nat_net_ops);
+	if (err < 0)
+		goto err1;
 
-	ret = iptable_nat_table_init(&init_net);
-	if (ret)
-		unregister_pernet_subsys(&iptable_nat_net_ops);
-	return ret;
+	err = nf_register_hooks(nf_nat_ipv4_ops, ARRAY_SIZE(nf_nat_ipv4_ops));
+	if (err < 0)
+		goto err2;
+	return 0;
+
+err2:
+	unregister_pernet_subsys(&iptable_nat_net_ops);
+err1:
+	return err;
 }
 
 static void __exit iptable_nat_exit(void)
 {
+	nf_unregister_hooks(nf_nat_ipv4_ops, ARRAY_SIZE(nf_nat_ipv4_ops));
 	unregister_pernet_subsys(&iptable_nat_net_ops);
 }
 

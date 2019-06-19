@@ -237,8 +237,7 @@ void kvmppc_e500_tlbil_one(struct kvmppc_vcpu_e500 *vcpu_e500,
                            struct kvm_book3e_206_tlb_entry *gtlbe)
 {
 	struct vcpu_id_table *idt = vcpu_e500->idt;
-	unsigned int pr, tid, ts;
-	int pid;
+	unsigned int pr, tid, ts, pid;
 	u32 val, eaddr;
 	unsigned long flags;
 

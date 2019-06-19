@@ -14,16 +14,27 @@
  * See the file COPYING for more details.
  */
 
-#include <linux/smp.h>
 #include <linux/errno.h>
 #include <linux/types.h>
-#include <linux/cpumask.h>
 #include <linux/rcupdate.h>
-#include <linux/tracepoint-defs.h>
+#include <linux/static_key.h>
 
 struct module;
 struct tracepoint;
 struct notifier_block;
+
+struct tracepoint_func {
+	void *func;
+	void *data;
+};
+
+struct tracepoint {
+	const char *name;		/* Tracepoint name */
+	struct static_key key;
+	void (*regfunc)(void);
+	void (*unregfunc)(void);
+	struct tracepoint_func __rcu *funcs;
+};
 
 struct trace_enum_map {
 	const char		*system;
@@ -31,13 +42,8 @@ struct trace_enum_map {
 	unsigned long		enum_value;
 };
 
-#define TRACEPOINT_DEFAULT_PRIO	10
-
 extern int
 tracepoint_probe_register(struct tracepoint *tp, void *probe, void *data);
-extern int
-tracepoint_probe_register_prio(struct tracepoint *tp, void *probe, void *data,
-			       int prio);
 extern int
 tracepoint_probe_unregister(struct tracepoint *tp, void *probe, void *data);
 extern void
@@ -105,18 +111,7 @@ extern void syscall_unregfunc(void);
 #define TP_ARGS(args...)	args
 #define TP_CONDITION(args...)	args
 
-/*
- * Individual subsystem my have a separate configuration to
- * enable their tracepoints. By default, this file will create
- * the tracepoints if CONFIG_TRACEPOINT is defined. If a subsystem
- * wants to be able to disable its tracepoints from being created
- * it can define NOTRACE before including the tracepoint headers.
- */
-#if defined(CONFIG_TRACEPOINTS) && !defined(NOTRACE)
-#define TRACEPOINTS_ENABLED
-#endif
-
-#ifdef TRACEPOINTS_ENABLED
+#ifdef CONFIG_TRACEPOINTS
 
 /*
  * it_func[0] is never NULL because there is at least one element in the array
@@ -159,8 +154,8 @@ extern void syscall_unregfunc(void);
 				TP_PROTO(data_proto),			\
 				TP_ARGS(data_args),			\
 				TP_CONDITION(cond),			\
-				rcu_irq_enter_irqson(),			\
-				rcu_irq_exit_irqson());			\
+				rcu_irq_enter(),			\
+				rcu_irq_exit());			\
 	}
 #else
 #define __DECLARE_TRACE_RCU(name, proto, args, cond, data_proto, data_args)
@@ -172,11 +167,10 @@ extern void syscall_unregfunc(void);
  * structure. Force alignment to the same alignment as the section start.
  *
  * When lockdep is enabled, we make sure to always do the RCU portions of
- * the tracepoint code, regardless of whether tracing is on. However,
- * don't check if the condition is false, due to interaction with idle
- * instrumentation. This lets us find RCU issues triggered with tracepoints
- * even when this tracepoint is off. This code has no purpose other than
- * poking RCU a bit.
+ * the tracepoint code, regardless of whether tracing is on or we match the
+ * condition.  This lets us find RCU issues triggered with tracepoints even
+ * when this tracepoint is off.  This code has no purpose other than poking
+ * RCU a bit.
  */
 #define __DECLARE_TRACE(name, proto, args, cond, data_proto, data_args) \
 	extern struct tracepoint __tracepoint_##name;			\
@@ -200,13 +194,6 @@ extern void syscall_unregfunc(void);
 	{								\
 		return tracepoint_probe_register(&__tracepoint_##name,	\
 						(void *)probe, data);	\
-	}								\
-	static inline int						\
-	register_trace_prio_##name(void (*probe)(data_proto), void *data,\
-				   int prio)				\
-	{								\
-		return tracepoint_probe_register_prio(&__tracepoint_##name, \
-					      (void *)probe, data, prio); \
 	}								\
 	static inline int						\
 	unregister_trace_##name(void (*probe)(data_proto), void *data)	\
@@ -247,7 +234,7 @@ extern void syscall_unregfunc(void);
 #define EXPORT_TRACEPOINT_SYMBOL(name)					\
 	EXPORT_SYMBOL(__tracepoint_##name)
 
-#else /* !TRACEPOINTS_ENABLED */
+#else /* !CONFIG_TRACEPOINTS */
 #define __DECLARE_TRACE(name, proto, args, cond, data_proto, data_args) \
 	static inline void trace_##name(proto)				\
 	{ }								\
@@ -279,7 +266,7 @@ extern void syscall_unregfunc(void);
 #define EXPORT_TRACEPOINT_SYMBOL_GPL(name)
 #define EXPORT_TRACEPOINT_SYMBOL(name)
 
-#endif /* TRACEPOINTS_ENABLED */
+#endif /* CONFIG_TRACEPOINTS */
 
 #ifdef CONFIG_TRACING
 /**
@@ -340,19 +327,15 @@ extern void syscall_unregfunc(void);
  * "void *__data, proto" as the callback prototype.
  */
 #define DECLARE_TRACE_NOARGS(name)					\
-	__DECLARE_TRACE(name, void, ,					\
-			cpu_online(raw_smp_processor_id()),		\
-			void *__data, __data)
+		__DECLARE_TRACE(name, void, , 1, void *__data, __data)
 
 #define DECLARE_TRACE(name, proto, args)				\
-	__DECLARE_TRACE(name, PARAMS(proto), PARAMS(args),		\
-			cpu_online(raw_smp_processor_id()),		\
-			PARAMS(void *__data, proto),			\
-			PARAMS(__data, args))
+		__DECLARE_TRACE(name, PARAMS(proto), PARAMS(args), 1,	\
+				PARAMS(void *__data, proto),		\
+				PARAMS(__data, args))
 
 #define DECLARE_TRACE_CONDITION(name, proto, args, cond)		\
-	__DECLARE_TRACE(name, PARAMS(proto), PARAMS(args),		\
-			cpu_online(raw_smp_processor_id()) && (PARAMS(cond)), \
+	__DECLARE_TRACE(name, PARAMS(proto), PARAMS(args), PARAMS(cond), \
 			PARAMS(void *__data, proto),			\
 			PARAMS(__data, args))
 
@@ -485,10 +468,6 @@ extern void syscall_unregfunc(void);
 #define TRACE_EVENT_FN(name, proto, args, struct,		\
 		assign, print, reg, unreg)			\
 	DECLARE_TRACE(name, PARAMS(proto), PARAMS(args))
-#define TRACE_EVENT_FN_COND(name, proto, args, cond, struct,		\
-		assign, print, reg, unreg)			\
-	DECLARE_TRACE_CONDITION(name, PARAMS(proto),	\
-			PARAMS(args), PARAMS(cond))
 #define TRACE_EVENT_CONDITION(name, proto, args, cond,		\
 			      struct, assign, print)		\
 	DECLARE_TRACE_CONDITION(name, PARAMS(proto),		\

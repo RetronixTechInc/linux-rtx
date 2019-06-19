@@ -103,29 +103,25 @@ static void enic_intr_coal_set_rx(struct enic *enic, u32 timer)
 	}
 }
 
-static int enic_get_ksettings(struct net_device *netdev,
-			      struct ethtool_link_ksettings *ecmd)
+static int enic_get_settings(struct net_device *netdev,
+	struct ethtool_cmd *ecmd)
 {
 	struct enic *enic = netdev_priv(netdev);
-	struct ethtool_link_settings *base = &ecmd->base;
 
-	ethtool_link_ksettings_add_link_mode(ecmd, supported,
-					     10000baseT_Full);
-	ethtool_link_ksettings_add_link_mode(ecmd, supported, FIBRE);
-	ethtool_link_ksettings_add_link_mode(ecmd, advertising,
-					     10000baseT_Full);
-	ethtool_link_ksettings_add_link_mode(ecmd, advertising, FIBRE);
-	base->port = PORT_FIBRE;
+	ecmd->supported = (SUPPORTED_10000baseT_Full | SUPPORTED_FIBRE);
+	ecmd->advertising = (ADVERTISED_10000baseT_Full | ADVERTISED_FIBRE);
+	ecmd->port = PORT_FIBRE;
+	ecmd->transceiver = XCVR_EXTERNAL;
 
 	if (netif_carrier_ok(netdev)) {
-		base->speed = vnic_dev_port_speed(enic->vdev);
-		base->duplex = DUPLEX_FULL;
+		ethtool_cmd_speed_set(ecmd, vnic_dev_port_speed(enic->vdev));
+		ecmd->duplex = DUPLEX_FULL;
 	} else {
-		base->speed = SPEED_UNKNOWN;
-		base->duplex = DUPLEX_UNKNOWN;
+		ethtool_cmd_speed_set(ecmd, SPEED_UNKNOWN);
+		ecmd->duplex = DUPLEX_UNKNOWN;
 	}
 
-	base->autoneg = AUTONEG_DISABLE;
+	ecmd->autoneg = AUTONEG_DISABLE;
 
 	return 0;
 }
@@ -228,60 +224,12 @@ static int enic_get_coalesce(struct net_device *netdev,
 	struct enic *enic = netdev_priv(netdev);
 	struct enic_rx_coal *rxcoal = &enic->rx_coalesce_setting;
 
-	if (vnic_dev_get_intr_mode(enic->vdev) == VNIC_DEV_INTR_MODE_MSIX)
-		ecmd->tx_coalesce_usecs = enic->tx_coalesce_usecs;
+	ecmd->tx_coalesce_usecs = enic->tx_coalesce_usecs;
 	ecmd->rx_coalesce_usecs = enic->rx_coalesce_usecs;
 	if (rxcoal->use_adaptive_rx_coalesce)
 		ecmd->use_adaptive_rx_coalesce = 1;
 	ecmd->rx_coalesce_usecs_low = rxcoal->small_pkt_range_start;
 	ecmd->rx_coalesce_usecs_high = rxcoal->range_end;
-
-	return 0;
-}
-
-static int enic_coalesce_valid(struct enic *enic,
-			       struct ethtool_coalesce *ec)
-{
-	u32 coalesce_usecs_max = vnic_dev_get_intr_coal_timer_max(enic->vdev);
-	u32 rx_coalesce_usecs_high = min_t(u32, coalesce_usecs_max,
-					   ec->rx_coalesce_usecs_high);
-	u32 rx_coalesce_usecs_low = min_t(u32, coalesce_usecs_max,
-					  ec->rx_coalesce_usecs_low);
-
-	if (ec->rx_max_coalesced_frames		||
-	    ec->rx_coalesce_usecs_irq		||
-	    ec->rx_max_coalesced_frames_irq	||
-	    ec->tx_max_coalesced_frames		||
-	    ec->tx_coalesce_usecs_irq		||
-	    ec->tx_max_coalesced_frames_irq	||
-	    ec->stats_block_coalesce_usecs	||
-	    ec->use_adaptive_tx_coalesce	||
-	    ec->pkt_rate_low			||
-	    ec->rx_max_coalesced_frames_low	||
-	    ec->tx_coalesce_usecs_low		||
-	    ec->tx_max_coalesced_frames_low	||
-	    ec->pkt_rate_high			||
-	    ec->rx_max_coalesced_frames_high	||
-	    ec->tx_coalesce_usecs_high		||
-	    ec->tx_max_coalesced_frames_high	||
-	    ec->rate_sample_interval)
-		return -EINVAL;
-
-	if ((vnic_dev_get_intr_mode(enic->vdev) != VNIC_DEV_INTR_MODE_MSIX) &&
-	    ec->tx_coalesce_usecs)
-		return -EINVAL;
-
-	if ((ec->tx_coalesce_usecs > coalesce_usecs_max)	||
-	    (ec->rx_coalesce_usecs > coalesce_usecs_max)	||
-	    (ec->rx_coalesce_usecs_low > coalesce_usecs_max)	||
-	    (ec->rx_coalesce_usecs_high > coalesce_usecs_max))
-		netdev_info(enic->netdev, "ethtool_set_coalesce: adaptor supports max coalesce value of %d. Setting max value.\n",
-			    coalesce_usecs_max);
-
-	if (ec->rx_coalesce_usecs_high &&
-	    (rx_coalesce_usecs_high <
-	     rx_coalesce_usecs_low + ENIC_AIC_LARGE_PKT_DIFF))
-		return -EINVAL;
 
 	return 0;
 }
@@ -296,12 +244,8 @@ static int enic_set_coalesce(struct net_device *netdev,
 	u32 rx_coalesce_usecs_high;
 	u32 coalesce_usecs_max;
 	unsigned int i, intr;
-	int ret;
 	struct enic_rx_coal *rxcoal = &enic->rx_coalesce_setting;
 
-	ret = enic_coalesce_valid(enic, ecmd);
-	if (ret)
-		return ret;
 	coalesce_usecs_max = vnic_dev_get_intr_coal_timer_max(enic->vdev);
 	tx_coalesce_usecs = min_t(u32, ecmd->tx_coalesce_usecs,
 				  coalesce_usecs_max);
@@ -313,24 +257,59 @@ static int enic_set_coalesce(struct net_device *netdev,
 	rx_coalesce_usecs_high = min_t(u32, ecmd->rx_coalesce_usecs_high,
 				       coalesce_usecs_max);
 
-	if (vnic_dev_get_intr_mode(enic->vdev) == VNIC_DEV_INTR_MODE_MSIX) {
+	switch (vnic_dev_get_intr_mode(enic->vdev)) {
+	case VNIC_DEV_INTR_MODE_INTX:
+		if (tx_coalesce_usecs != rx_coalesce_usecs)
+			return -EINVAL;
+		if (ecmd->use_adaptive_rx_coalesce	||
+		    ecmd->rx_coalesce_usecs_low		||
+		    ecmd->rx_coalesce_usecs_high)
+			return -EINVAL;
+
+		intr = enic_legacy_io_intr();
+		vnic_intr_coalescing_timer_set(&enic->intr[intr],
+			tx_coalesce_usecs);
+		break;
+	case VNIC_DEV_INTR_MODE_MSI:
+		if (tx_coalesce_usecs != rx_coalesce_usecs)
+			return -EINVAL;
+		if (ecmd->use_adaptive_rx_coalesce	||
+		    ecmd->rx_coalesce_usecs_low		||
+		    ecmd->rx_coalesce_usecs_high)
+			return -EINVAL;
+
+		vnic_intr_coalescing_timer_set(&enic->intr[0],
+			tx_coalesce_usecs);
+		break;
+	case VNIC_DEV_INTR_MODE_MSIX:
+		if (ecmd->rx_coalesce_usecs_high &&
+		    (rx_coalesce_usecs_high <
+		     rx_coalesce_usecs_low + ENIC_AIC_LARGE_PKT_DIFF))
+				return -EINVAL;
+
 		for (i = 0; i < enic->wq_count; i++) {
 			intr = enic_msix_wq_intr(enic, i);
 			vnic_intr_coalescing_timer_set(&enic->intr[intr],
-						       tx_coalesce_usecs);
+				tx_coalesce_usecs);
 		}
-		enic->tx_coalesce_usecs = tx_coalesce_usecs;
-	}
-	rxcoal->use_adaptive_rx_coalesce = !!ecmd->use_adaptive_rx_coalesce;
-	if (!rxcoal->use_adaptive_rx_coalesce)
-		enic_intr_coal_set_rx(enic, rx_coalesce_usecs);
-	if (ecmd->rx_coalesce_usecs_high) {
-		rxcoal->range_end = rx_coalesce_usecs_high;
-		rxcoal->small_pkt_range_start = rx_coalesce_usecs_low;
-		rxcoal->large_pkt_range_start = rx_coalesce_usecs_low +
-						ENIC_AIC_LARGE_PKT_DIFF;
+
+		rxcoal->use_adaptive_rx_coalesce =
+					!!ecmd->use_adaptive_rx_coalesce;
+		if (!rxcoal->use_adaptive_rx_coalesce)
+			enic_intr_coal_set_rx(enic, rx_coalesce_usecs);
+
+		if (ecmd->rx_coalesce_usecs_high) {
+			rxcoal->range_end = rx_coalesce_usecs_high;
+			rxcoal->small_pkt_range_start = rx_coalesce_usecs_low;
+			rxcoal->large_pkt_range_start = rx_coalesce_usecs_low +
+							ENIC_AIC_LARGE_PKT_DIFF;
+		}
+		break;
+	default:
+		break;
 	}
 
+	enic->tx_coalesce_usecs = tx_coalesce_usecs;
 	enic->rx_coalesce_usecs = rx_coalesce_usecs;
 
 	return 0;
@@ -369,7 +348,7 @@ static int enic_grxclsrule(struct enic *enic, struct ethtool_rxnfc *cmd)
 	n = htbl_fltr_search(enic, (u16)fsp->location);
 	if (!n)
 		return -EINVAL;
-	switch (n->keys.basic.ip_proto) {
+	switch (n->keys.ip_proto) {
 	case IPPROTO_TCP:
 		fsp->flow_type = TCP_V4_FLOW;
 		break;
@@ -381,16 +360,16 @@ static int enic_grxclsrule(struct enic *enic, struct ethtool_rxnfc *cmd)
 		break;
 	}
 
-	fsp->h_u.tcp_ip4_spec.ip4src = flow_get_u32_src(&n->keys);
+	fsp->h_u.tcp_ip4_spec.ip4src = n->keys.src;
 	fsp->m_u.tcp_ip4_spec.ip4src = (__u32)~0;
 
-	fsp->h_u.tcp_ip4_spec.ip4dst = flow_get_u32_dst(&n->keys);
+	fsp->h_u.tcp_ip4_spec.ip4dst = n->keys.dst;
 	fsp->m_u.tcp_ip4_spec.ip4dst = (__u32)~0;
 
-	fsp->h_u.tcp_ip4_spec.psrc = n->keys.ports.src;
+	fsp->h_u.tcp_ip4_spec.psrc = n->keys.port16[0];
 	fsp->m_u.tcp_ip4_spec.psrc = (__u16)~0;
 
-	fsp->h_u.tcp_ip4_spec.pdst = n->keys.ports.dst;
+	fsp->h_u.tcp_ip4_spec.pdst = n->keys.port16[1];
 	fsp->m_u.tcp_ip4_spec.pdst = (__u16)~0;
 
 	fsp->ring_cookie = n->rq_id;
@@ -504,6 +483,7 @@ static int enic_set_rxfh(struct net_device *netdev, const u32 *indir,
 }
 
 static const struct ethtool_ops enic_ethtool_ops = {
+	.get_settings = enic_get_settings,
 	.get_drvinfo = enic_get_drvinfo,
 	.get_msglevel = enic_get_msglevel,
 	.set_msglevel = enic_set_msglevel,
@@ -519,7 +499,6 @@ static const struct ethtool_ops enic_ethtool_ops = {
 	.get_rxfh_key_size = enic_get_rxfh_key_size,
 	.get_rxfh = enic_get_rxfh,
 	.set_rxfh = enic_set_rxfh,
-	.get_link_ksettings = enic_get_ksettings,
 };
 
 void enic_set_ethtool_ops(struct net_device *netdev)

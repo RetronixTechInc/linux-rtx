@@ -1,6 +1,5 @@
 /*
  * Copyright (C) 2014-2016 Freescale Semiconductor, Inc.
- * Copyright 2017 NXP
  *
  * Copyright 2017 NXP
  *
@@ -249,6 +248,7 @@ struct mxc_epdc_fb_data {
 	int epdc_wb_mode;
 	struct pxp_collision_info col_info;
 	u32 hist_status;
+	u32 pixel_nums;
 
 	struct regmap *gpr;
 	u8 req_gpr;
@@ -468,7 +468,8 @@ static int pxp_wfe_b_process_update(struct mxc_epdc_fb_data *fb_data,
 			      struct mxcfb_rect *update_region);
 static int pxp_wfe_a_process_clear_workingbuffer(struct mxc_epdc_fb_data *fb_data,
 			      u32 src_width, u32 src_height);
-static int pxp_complete_update(struct mxc_epdc_fb_data *fb_data, u32 *hist_stat);
+static int pxp_complete_update(struct mxc_epdc_fb_data *fb_data, u32 *hist_stat,
+				u32 *pixel_nums);
 
 static void draw_mode0(struct mxc_epdc_fb_data *fb_data);
 static bool is_free_list_full(struct mxc_epdc_fb_data *fb_data);
@@ -1822,7 +1823,7 @@ static int mxc_epdc_fb_set_par(struct fb_info *info)
 			pxp_conf->s0_param.pixel_fmt = PXP_PIX_FMT_RGB24;
 			break;
 		case 32:
-			pxp_conf->s0_param.pixel_fmt = PXP_PIX_FMT_XRGB32;
+			pxp_conf->s0_param.pixel_fmt = PXP_PIX_FMT_RGB32;
 			break;
 		default:
 			pxp_conf->s0_param.pixel_fmt = PXP_PIX_FMT_RGB565;
@@ -1830,7 +1831,6 @@ static int mxc_epdc_fb_set_par(struct fb_info *info)
 		}
 	}
 	pxp_conf->s0_param.width = screeninfo->xres_virtual;
-	pxp_conf->s0_param.stride = (screeninfo->bits_per_pixel * pxp_conf->s0_param.width) >> 3;
 	pxp_conf->s0_param.height = screeninfo->yres;
 	pxp_conf->s0_param.color_key = -1;
 	pxp_conf->s0_param.color_key_enable = false;
@@ -2245,6 +2245,7 @@ static int epdc_working_buffer_update(struct mxc_epdc_fb_data *fb_data,
 	u32 wv_mode = upd_data_list->update_desc->upd_data.waveform_mode;
 	int ret = 0;
 	u32 hist_stat;
+	u32 pixel_nums;
 	struct update_desc_list *upd_desc_list;
 
 	ret = pxp_wfe_a_process(fb_data, update_region, upd_data_list);
@@ -2261,7 +2262,8 @@ static int epdc_working_buffer_update(struct mxc_epdc_fb_data *fb_data,
 	}
 
 	/* This is a blocking call, so upon return PxP tx should be done */
-	ret = pxp_complete_update(fb_data, &fb_data->hist_status);
+	ret = pxp_complete_update(fb_data, &fb_data->hist_status,
+					&fb_data->pixel_nums);
 	if (ret) {
 		dev_err(fb_data->dev, "Unable to complete PxP update task: main process\n");
 		return ret;
@@ -2320,7 +2322,7 @@ static int epdc_working_buffer_update(struct mxc_epdc_fb_data *fb_data,
 		}
 
 		/* This is a blocking call, so upon return PxP tx should be done */
-		ret = pxp_complete_update(fb_data, &hist_stat);
+		ret = pxp_complete_update(fb_data, &hist_stat, &pixel_nums);
 		if (ret) {
 			dev_err(fb_data->dev, "Unable to complete PxP update task: reagl/-d process\n");
 			mutex_unlock(&fb_data->pxp_mutex);
@@ -2342,6 +2344,7 @@ static int epdc_process_update(struct update_data_list *upd_data_list,
 	u32 post_rotation_xcoord, post_rotation_ycoord, width_pxp_blocks;
 	u32 pxp_input_offs, pxp_output_offs, pxp_output_shift;
 	u32 hist_stat = 0;
+	u32 pixel_nums = 0;
 	int width_unaligned, height_unaligned;
 	bool input_unaligned = false;
 	bool line_overflow = false;
@@ -2592,7 +2595,7 @@ static int epdc_process_update(struct update_data_list *upd_data_list,
 	}
 
 	/* This is a blocking call, so upon return PxP tx should be done */
-	ret = pxp_complete_update(fb_data, &hist_stat);
+	ret = pxp_complete_update(fb_data, &hist_stat, &pixel_nums);
 	if (ret) {
 		dev_err(fb_data->dev, "Unable to complete PxP update task: pre_prcoess.\n");
 		mutex_unlock(&fb_data->pxp_mutex);
@@ -2624,7 +2627,7 @@ static int epdc_process_update(struct update_data_list *upd_data_list,
 		}
 
 		/* This is a blocking call, so upon return PxP tx should be done */
-		ret = pxp_complete_update(fb_data, &hist_stat);
+		ret = pxp_complete_update(fb_data, &hist_stat, &pixel_nums);
 		if (ret) {
 			dev_err(fb_data->dev, "Unable to complete PxP update task: dithering process\n");
 			mutex_unlock(&fb_data->pxp_mutex);
@@ -4091,9 +4094,8 @@ static void epdc_intr_work_func(struct work_struct *work)
 	epdc_luts_active = epdc_any_luts_active(fb_data->rev);
 	epdc_wb_busy = epdc_is_working_buffer_busy();
 
-	/*XXX unsupport update cancelled in external mode temporarily */
 	if (fb_data->epdc_wb_mode)
-		epdc_lut_cancelled = 0;
+		epdc_lut_cancelled = fb_data->pixel_nums == 0 ? true : false;
 	else
 		epdc_lut_cancelled = epdc_is_lut_cancelled();
 
@@ -5506,7 +5508,6 @@ static int mxc_epdc_fb_probe(struct platform_device *pdev)
 	 */
 	pxp_conf->s0_param.pixel_fmt = PXP_PIX_FMT_RGB565;
 	pxp_conf->s0_param.width = fb_data->info.var.xres_virtual;
-	pxp_conf->s0_param.stride = (var_info->bits_per_pixel * pxp_conf->s0_param.width) >> 3;
 	pxp_conf->s0_param.height = fb_data->info.var.yres;
 	pxp_conf->s0_param.color_key = -1;
 	pxp_conf->s0_param.color_key_enable = false;
@@ -5515,15 +5516,17 @@ static int mxc_epdc_fb_probe(struct platform_device *pdev)
 	 * Initialize OL0 channel parameters
 	 * No overlay will be used for PxP operation
 	 */
-	pxp_conf->ol_param[0].combine_enable = false;
-	pxp_conf->ol_param[0].width = 0;
-	pxp_conf->ol_param[0].height = 0;
-	pxp_conf->ol_param[0].pixel_fmt = PXP_PIX_FMT_RGB565;
-	pxp_conf->ol_param[0].color_key_enable = false;
-	pxp_conf->ol_param[0].color_key = -1;
-	pxp_conf->ol_param[0].global_alpha_enable = false;
-	pxp_conf->ol_param[0].global_alpha = 0;
-	pxp_conf->ol_param[0].local_alpha_enable = false;
+	for (i = 0; i < 8; i++) {
+		pxp_conf->ol_param[i].combine_enable = false;
+		pxp_conf->ol_param[i].width = 0;
+		pxp_conf->ol_param[i].height = 0;
+		pxp_conf->ol_param[i].pixel_fmt = PXP_PIX_FMT_RGB565;
+		pxp_conf->ol_param[i].color_key_enable = false;
+		pxp_conf->ol_param[i].color_key = -1;
+		pxp_conf->ol_param[i].global_alpha_enable = false;
+		pxp_conf->ol_param[i].global_alpha = 0;
+		pxp_conf->ol_param[i].local_alpha_enable = false;
+	}
 
 	/*
 	 * Initialize Output channel parameters
@@ -5992,6 +5995,7 @@ static int pxp_wfe_a_process_clear_workingbuffer(struct mxc_epdc_fb_data *fb_dat
 static int pxp_clear_wb_work_func(struct mxc_epdc_fb_data *fb_data)
 {
 	unsigned int hist_stat;
+	unsigned int pixel_nums;
 	int ret;
 
 	dev_dbg(fb_data->dev, "PxP WFE to clear working buffer.\n");
@@ -6012,7 +6016,7 @@ static int pxp_clear_wb_work_func(struct mxc_epdc_fb_data *fb_data)
 	}
 
 	/* This is a blocking call, so upon return PxP tx should be done */
-	ret = pxp_complete_update(fb_data, &hist_stat);
+	ret = pxp_complete_update(fb_data, &hist_stat, &pixel_nums);
 	if (ret) {
 		dev_err(fb_data->dev, "Unable to complete PxP update task: clear wb process\n");
 		mutex_unlock(&fb_data->pxp_mutex);
@@ -6035,7 +6039,6 @@ static int pxp_legacy_process(struct mxc_epdc_fb_data *fb_data,
 	struct dma_async_tx_descriptor *txd;
 	struct pxp_config_data *pxp_conf = &fb_data->pxp_conf;
 	struct pxp_proc_data *proc_data = &fb_data->pxp_conf.proc_data;
-	struct fb_var_screeninfo *screeninfo = &fb_data->info.var;
 	int i, ret;
 	int length;
 
@@ -6089,7 +6092,6 @@ static int pxp_legacy_process(struct mxc_epdc_fb_data *fb_data,
 	 * probe() and should not need to be changed.
 	 */
 	pxp_conf->s0_param.width = src_width;
-	pxp_conf->s0_param.stride = (screeninfo->bits_per_pixel * src_width) >> 3;
 	pxp_conf->s0_param.height = src_height;
 	proc_data->srect.top = update_region->top;
 	proc_data->srect.left = update_region->left;
@@ -6662,7 +6664,8 @@ static int pxp_wfe_b_process_update(struct mxc_epdc_fb_data *fb_data,
 	return 0;
 }
 
-static int pxp_complete_update(struct mxc_epdc_fb_data *fb_data, u32 *hist_stat)
+static int pxp_complete_update(struct mxc_epdc_fb_data *fb_data, u32 *hist_stat,
+				u32 *pixel_nums)
 {
 	int ret;
 	/*
@@ -6684,6 +6687,7 @@ static int pxp_complete_update(struct mxc_epdc_fb_data *fb_data, u32 *hist_stat)
 		fb_data->pxp_conf.proc_data.lut_map_updated = false;
 
 	*hist_stat = to_tx_desc(fb_data->txd)->hist_status;
+	*pixel_nums = to_tx_desc(fb_data->txd)->pixel_nums;
 	dma_release_channel(&fb_data->pxp_chan->dma_chan);
 	fb_data->pxp_chan = NULL;
 

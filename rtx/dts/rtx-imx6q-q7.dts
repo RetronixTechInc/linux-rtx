@@ -24,18 +24,18 @@
 / {
 	model = "Retronix i.MX6 Quad Q7 Board";
 	compatible = "rtx,rtx-imx6q-q7", "fsl,imx6q";
-
+	
 	aliases {
 		mxcfb0 = &mxcfb1;
 		mxcfb1 = &mxcfb2;
 		mxcfb2 = &mxcfb3;
 		mxcfb3 = &mxcfb4;
 	};
-
+	
 	memory {
 		reg = <0x10000000 0x40000000>;
 	};
-
+	
 	clocks {
 		clk24m: clk24m {
 			compatible = "fixed-clock";
@@ -43,12 +43,12 @@
 			clock-frequency = <24000000>;
 		};
 	};
-
+	
 	regulators {
 		compatible = "simple-bus";
 		#address-cells = <1>;
 		#size-cells = <0>;
-
+		
 		reg_1p8v: 1p8v {
 			compatible = "regulator-fixed";
 			regulator-name = "1P8V";
@@ -78,7 +78,7 @@
 			regulator-name = "usb_otg_vbus";
 			regulator-min-microvolt = <5000000>;
 			regulator-max-microvolt = <5000000>;
-			gpio = <&gpio3 22 0>;
+			gpio = <&gpio4 6 0>;
 			enable-active-high;
 		};
 
@@ -98,14 +98,14 @@
 			startup-delay-us = <5000>;
 			enable-active-high;
 		};
-
+		
 	};
 
 	gpio-keys {
 		compatible = "gpio-keys";
 		pinctrl-names = "default";
 		pinctrl-0 = <&pinctrl_keys_q7>;
-
+		
 		power {
 			label = "Power Button";
 			gpios = <&gpio3 29 1>;
@@ -147,8 +147,8 @@
 
 		/* current_gpio1 = <&gpio5 2 0>; 130 */
 		current_gpio1 {
-			/*gpio-export,name = "current_gpio0";*/
-			gpio-export,output = <1>;
+			/*gpio-export,name = "current_gpio1";*/
+			gpio-export,output = <0>;
 			gpio-export,direction_may_change ;
 			gpios = <&gpio5 2 1>;
 		};
@@ -201,7 +201,7 @@
 			gpios = <&gpio3 27 1>;
 		};
 		
-		/* current_gpio7 = <&gpio4 9 0>; 105 */
+		/* current_gpio8 = <&gpio4 9 0>; 105 */
 		current_gpio8 {
 			/*gpio-export,name = "current_gpio8";*/
 			gpio-export,output = <1>;
@@ -248,7 +248,15 @@
 			gpio-export,direction_may_change ;
 			gpios = <&gpio6 8 1>;
 		};
-		
+
+		/* can1_standby = <&gpio4 5 0>; 101 */
+		can1_standby {
+			/*gpio-export,name = "can1_standby";*/
+			gpio-export,output = <1>;
+			gpio-export,direction_may_change ;
+			gpios = <&gpio4 5 0>;
+		};
+
 		/* amp_standby = <&gpio4 10 0>; 106 */
 		amp_standby {
 			/*gpio-export,name = "amp_standby";*/
@@ -256,7 +264,6 @@
 			gpio-export,direction_may_change ;
 			gpios = <&gpio4 10 1>;
 		};
-
 	};
 
 	sound {
@@ -274,7 +281,7 @@
 		mux-ext-port = <3>;
 		hp-det-gpios = <&gpio7 8 1>;
 		mic-det-gpios = <&gpio1 9 1>;
-		amp-ena-gpios = <&gpio4 10 1>;
+		/* amp-ena-gpios = <&gpio4 10 1>; */
 	};
 
 	sound-hdmi {
@@ -344,7 +351,7 @@
 		late_init = <0>;
 		status = "okay";
 	};
-
+	
 	mxcfb4: fb@3 {
 		compatible = "fsl,mxc_sdc_fb";
 		disp_dev = "lcd";
@@ -396,8 +403,8 @@
 };
 
 &cpu0 {
-	arm-supply = <&reg_arm>;
-	soc-supply = <&reg_soc>;
+	arm-supply = <&sw1a_reg>;
+	soc-supply = <&sw1c_reg>;
 };
 
 &ecspi4 {
@@ -428,13 +435,12 @@
 &can1 {
 	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl_flexcan1_q7>;
-	trx-stby-gpio = <&gpio4 5 GPIO_ACTIVE_LOW>;
 	
 	status = "okay";
 };
 
 &gpc {
-	fsl,ldo-bypass = <0>; /* use ldo-bypass, u-boot will check it and configure */
+	fsl,ldo-bypass = <1>; /* use ldo-bypass, u-boot will check it and configure */
 	fsl,wdog-reset = <2>; /* watchdog select of reset source */
 };
 
@@ -470,7 +476,7 @@
 		compatible = "fsl,sgtl5000";
 		reg = <0x0a>;
 		clocks = <&clks IMX6QDL_CLK_CKO>;
-		VDDA-supply = <&reg_2p5v>;
+		VDDA-supply = <&reg_3p3v>;
 		VDDIO-supply = <&reg_3p3v>;
 		amic-mono;
 	};
@@ -491,6 +497,113 @@
 	pinctrl-0 = <&pinctrl_i2c2_q7>;
 	status = "okay";
 
+	pmic: pfuze100@08 {
+		compatible = "fsl,pfuze100";
+		reg = <0x08>;
+
+		regulators {
+			sw1a_reg: sw1ab {
+				regulator-min-microvolt = <300000>;
+				regulator-max-microvolt = <1875000>;
+				regulator-boot-on;
+				regulator-always-on;
+				regulator-ramp-delay = <6250>;
+			};
+
+			sw1c_reg: sw1c {
+				regulator-min-microvolt = <300000>;
+				regulator-max-microvolt = <1875000>;
+				regulator-boot-on;
+				regulator-always-on;
+				regulator-ramp-delay = <6250>;
+			};
+
+			sw2_reg: sw2 {
+				regulator-min-microvolt = <800000>;
+				regulator-max-microvolt = <3300000>;
+				regulator-boot-on;
+				regulator-always-on;
+			};
+
+			sw3a_reg: sw3a {
+				regulator-min-microvolt = <400000>;
+				regulator-max-microvolt = <1975000>;
+				regulator-boot-on;
+				regulator-always-on;
+			};
+
+			sw3b_reg: sw3b {
+				regulator-min-microvolt = <400000>;
+				regulator-max-microvolt = <1975000>;
+				regulator-boot-on;
+				regulator-always-on;
+			};
+
+			sw4_reg: sw4 {
+				regulator-min-microvolt = <800000>;
+				regulator-max-microvolt = <3300000>;
+				regulator-boot-on;
+				regulator-always-on;
+			};
+
+			swbst_reg: swbst {
+				regulator-min-microvolt = <5000000>;
+				regulator-max-microvolt = <5150000>;
+			};
+
+			snvs_reg: vsnvs {
+				regulator-min-microvolt = <1000000>;
+				regulator-max-microvolt = <3000000>;
+				regulator-boot-on;
+				regulator-always-on;
+			};
+
+			vref_reg: vrefddr {
+				regulator-boot-on;
+				regulator-always-on;
+			};
+
+			vgen1_reg: vgen1 {
+				regulator-min-microvolt = <800000>;
+				regulator-max-microvolt = <1550000>;
+				regulator-boot-on;
+				regulator-always-on;
+			};
+
+			vgen2_reg: vgen2 {
+				regulator-min-microvolt = <800000>;
+				regulator-max-microvolt = <1550000>;
+				regulator-boot-on;
+				regulator-always-on;
+			};
+
+			vgen3_reg: vgen3 {
+				regulator-min-microvolt = <1800000>;
+				regulator-max-microvolt = <3300000>;
+				regulator-boot-on;
+				regulator-always-on;
+			};
+
+			vgen4_reg: vgen4 {
+				regulator-min-microvolt = <1800000>;
+				regulator-max-microvolt = <3300000>;
+				regulator-always-on;
+			};
+
+			vgen5_reg: vgen5 {
+				regulator-min-microvolt = <1800000>;
+				regulator-max-microvolt = <3300000>;
+				regulator-always-on;
+			};
+
+			vgen6_reg: vgen6 {
+				regulator-min-microvolt = <1800000>;
+				regulator-max-microvolt = <3300000>;
+				regulator-always-on;
+			};
+		};
+	};
+
 	max11801@48 {
 		compatible = "maxim,max11801";
 		reg = <0x48>;
@@ -499,7 +612,7 @@
 		work-mode = <1>;/*DCM mode*/
 	};
 
-	hdmi_edid: edid@50 {
+	hdmi: edid@50 {
 		compatible = "fsl,imx6-hdmi-i2c";
 		reg = <0x50>;
 	};
@@ -562,7 +675,7 @@
 
 		display-timings {
 			native-mode = <&timing1>;
-			timing1: hsd100pxn1 {
+			timing1: hsd100pxn2 {
 				clock-frequency = <51208000>;
 				hactive = <1024>;
 				hfront-porch = <80>;
@@ -642,8 +755,8 @@
 	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl_usdhc2_q7_50mhz &pinctrl_usdhc2_cd_wp_q7>;
 	bus-width = <4>;
-	cd-gpios = <&gpio2 2 1>;
-	wp-gpios = <&gpio2 3 0>;
+	cd-gpios = <&gpio2 2 GPIO_ACTIVE_LOW>;
+	wp-gpios = <&gpio2 3 GPIO_ACTIVE_HIGH>;
 	no-1-8-v;
 	keep-power-in-suspend;
 	enable-sdio-wakeup;
@@ -653,8 +766,8 @@
 &usdhc3 {
 	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl_usdhc3_q7_50mhz &pinctrl_usdhc3_cd_wp_q7>;
-	cd-gpios = <&gpio2 0 1>;
-	wp-gpios = <&gpio2 1 0>;
+	cd-gpios = <&gpio2 0 GPIO_ACTIVE_LOW>;
+	wp-gpios = <&gpio2 1 GPIO_ACTIVE_HIGH>;
 	no-1-8-v;
 	keep-power-in-suspend;
 	enable-sdio-wakeup;

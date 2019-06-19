@@ -21,6 +21,8 @@
 #include "edp.h"
 #include "edp.xml.h"
 
+#define VDDA_MIN_UV		1800000	/* uV units */
+#define VDDA_MAX_UV		1800000	/* uV units */
 #define VDDA_UA_ON_LOAD		100000	/* uA units */
 #define VDDA_UA_OFF_LOAD	100	/* uA units */
 
@@ -65,7 +67,7 @@ struct edp_ctrl {
 	void __iomem *base;
 
 	/* regulators */
-	struct regulator *vdda_vreg;	/* 1.8 V */
+	struct regulator *vdda_vreg;
 	struct regulator *lvl_vreg;
 
 	/* clocks */
@@ -300,24 +302,21 @@ static void edp_clk_disable(struct edp_ctrl *ctrl, u32 clk_mask)
 static int edp_regulator_init(struct edp_ctrl *ctrl)
 {
 	struct device *dev = &ctrl->pdev->dev;
-	int ret;
 
 	DBG("");
 	ctrl->vdda_vreg = devm_regulator_get(dev, "vdda");
-	ret = PTR_ERR_OR_ZERO(ctrl->vdda_vreg);
-	if (ret) {
-		pr_err("%s: Could not get vdda reg, ret = %d\n", __func__,
-				ret);
+	if (IS_ERR(ctrl->vdda_vreg)) {
+		pr_err("%s: Could not get vdda reg, ret = %ld\n", __func__,
+				PTR_ERR(ctrl->vdda_vreg));
 		ctrl->vdda_vreg = NULL;
-		return ret;
+		return PTR_ERR(ctrl->vdda_vreg);
 	}
 	ctrl->lvl_vreg = devm_regulator_get(dev, "lvl-vdd");
-	ret = PTR_ERR_OR_ZERO(ctrl->lvl_vreg);
-	if (ret) {
-		pr_err("%s: Could not get lvl-vdd reg, ret = %d\n", __func__,
-				ret);
+	if (IS_ERR(ctrl->lvl_vreg)) {
+		pr_err("Could not get lvl-vdd reg, %ld",
+				PTR_ERR(ctrl->lvl_vreg));
 		ctrl->lvl_vreg = NULL;
-		return ret;
+		return PTR_ERR(ctrl->lvl_vreg);
 	}
 
 	return 0;
@@ -326,6 +325,12 @@ static int edp_regulator_init(struct edp_ctrl *ctrl)
 static int edp_regulator_enable(struct edp_ctrl *ctrl)
 {
 	int ret;
+
+	ret = regulator_set_voltage(ctrl->vdda_vreg, VDDA_MIN_UV, VDDA_MAX_UV);
+	if (ret) {
+		pr_err("%s:vdda_vreg set_voltage failed, %d\n", __func__, ret);
+		goto vdda_set_fail;
+	}
 
 	ret = regulator_set_load(ctrl->vdda_vreg, VDDA_UA_ON_LOAD);
 	if (ret < 0) {
@@ -368,7 +373,7 @@ static int edp_gpio_config(struct edp_ctrl *ctrl)
 	struct device *dev = &ctrl->pdev->dev;
 	int ret;
 
-	ctrl->panel_hpd_gpio = devm_gpiod_get(dev, "panel-hpd", GPIOD_IN);
+	ctrl->panel_hpd_gpio = devm_gpiod_get(dev, "panel-hpd");
 	if (IS_ERR(ctrl->panel_hpd_gpio)) {
 		ret = PTR_ERR(ctrl->panel_hpd_gpio);
 		ctrl->panel_hpd_gpio = NULL;
@@ -376,11 +381,24 @@ static int edp_gpio_config(struct edp_ctrl *ctrl)
 		return ret;
 	}
 
-	ctrl->panel_en_gpio = devm_gpiod_get(dev, "panel-en", GPIOD_OUT_LOW);
+	ret = gpiod_direction_input(ctrl->panel_hpd_gpio);
+	if (ret) {
+		pr_err("%s: Set direction for hpd failed, %d\n", __func__, ret);
+		return ret;
+	}
+
+	ctrl->panel_en_gpio = devm_gpiod_get(dev, "panel-en");
 	if (IS_ERR(ctrl->panel_en_gpio)) {
 		ret = PTR_ERR(ctrl->panel_en_gpio);
 		ctrl->panel_en_gpio = NULL;
 		pr_err("%s: cannot get panel-en-gpios, %d\n", __func__, ret);
+		return ret;
+	}
+
+	ret = gpiod_direction_output(ctrl->panel_en_gpio, 0);
+	if (ret) {
+		pr_err("%s: Set direction for panel_en failed, %d\n",
+				__func__, ret);
 		return ret;
 	}
 
@@ -1000,7 +1018,7 @@ static void edp_ctrl_off_worker(struct work_struct *work)
 {
 	struct edp_ctrl *ctrl = container_of(
 				work, struct edp_ctrl, off_work);
-	unsigned long time_left;
+	int ret;
 
 	mutex_lock(&ctrl->dev_mutex);
 
@@ -1012,10 +1030,11 @@ static void edp_ctrl_off_worker(struct work_struct *work)
 	reinit_completion(&ctrl->idle_comp);
 	edp_state_ctrl(ctrl, EDP_STATE_CTRL_PUSH_IDLE);
 
-	time_left = wait_for_completion_timeout(&ctrl->idle_comp,
+	ret = wait_for_completion_timeout(&ctrl->idle_comp,
 						msecs_to_jiffies(500));
-	if (!time_left)
-		DBG("%s: idle pattern timedout\n", __func__);
+	if (ret <= 0)
+		DBG("%s: idle pattern timedout, %d\n",
+				__func__, ret);
 
 	edp_state_ctrl(ctrl, 0);
 

@@ -13,7 +13,6 @@
  */
 
 #include <linux/kernel.h>
-#include <linux/module.h>	/* symbol_get ; symbol_put */
 #include <linux/init.h>
 #include <linux/platform_device.h>
 #include <linux/major.h>
@@ -49,12 +48,12 @@
 #include <asm/mach/map.h>
 #include <asm/mach/irq.h>
 
-#include "pxa25x.h"
+#include <mach/pxa25x.h>
 #include <linux/platform_data/irda-pxaficp.h>
 #include <linux/platform_data/mmc-pxamci.h>
-#include "udc.h"
+#include <mach/udc.h>
 #include <mach/corgi.h>
-#include "sharpsl_pm.h"
+#include <mach/sharpsl_pm.h>
 
 #include <asm/mach/sharpsl_param.h>
 #include <asm/hardware/scoop.h>

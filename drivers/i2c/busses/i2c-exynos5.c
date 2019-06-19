@@ -671,9 +671,7 @@ static int exynos5_i2c_xfer(struct i2c_adapter *adap,
 		return -EIO;
 	}
 
-	ret = clk_enable(i2c->clk);
-	if (ret)
-		return ret;
+	clk_prepare_enable(i2c->clk);
 
 	for (i = 0; i < num; i++, msgs++) {
 		stop = (i == num - 1);
@@ -697,7 +695,7 @@ static int exynos5_i2c_xfer(struct i2c_adapter *adap,
 	}
 
  out:
-	clk_disable(i2c->clk);
+	clk_disable_unprepare(i2c->clk);
 	return ret;
 }
 
@@ -749,9 +747,7 @@ static int exynos5_i2c_probe(struct platform_device *pdev)
 		return -ENOENT;
 	}
 
-	ret = clk_prepare_enable(i2c->clk);
-	if (ret)
-		return ret;
+	clk_prepare_enable(i2c->clk);
 
 	mem = platform_get_resource(pdev, IORESOURCE_MEM, 0);
 	i2c->regs = devm_ioremap_resource(&pdev->dev, mem);
@@ -796,14 +792,12 @@ static int exynos5_i2c_probe(struct platform_device *pdev)
 	exynos5_i2c_reset(i2c);
 
 	ret = i2c_add_adapter(&i2c->adap);
-	if (ret < 0)
+	if (ret < 0) {
+		dev_err(&pdev->dev, "failed to add bus to i2c core\n");
 		goto err_clk;
+	}
 
 	platform_set_drvdata(pdev, i2c);
-
-	clk_disable(i2c->clk);
-
-	return 0;
 
  err_clk:
 	clk_disable_unprepare(i2c->clk);
@@ -816,8 +810,6 @@ static int exynos5_i2c_remove(struct platform_device *pdev)
 
 	i2c_del_adapter(&i2c->adap);
 
-	clk_unprepare(i2c->clk);
-
 	return 0;
 }
 
@@ -829,8 +821,6 @@ static int exynos5_i2c_suspend_noirq(struct device *dev)
 
 	i2c->suspended = 1;
 
-	clk_unprepare(i2c->clk);
-
 	return 0;
 }
 
@@ -840,9 +830,7 @@ static int exynos5_i2c_resume_noirq(struct device *dev)
 	struct exynos5_i2c *i2c = platform_get_drvdata(pdev);
 	int ret = 0;
 
-	ret = clk_prepare_enable(i2c->clk);
-	if (ret)
-		return ret;
+	clk_prepare_enable(i2c->clk);
 
 	ret = exynos5_hsi2c_clock_setup(i2c);
 	if (ret) {
@@ -851,7 +839,7 @@ static int exynos5_i2c_resume_noirq(struct device *dev)
 	}
 
 	exynos5_i2c_init(i2c);
-	clk_disable(i2c->clk);
+	clk_disable_unprepare(i2c->clk);
 	i2c->suspended = 0;
 
 	return 0;
@@ -859,8 +847,14 @@ static int exynos5_i2c_resume_noirq(struct device *dev)
 #endif
 
 static const struct dev_pm_ops exynos5_i2c_dev_pm_ops = {
-	SET_NOIRQ_SYSTEM_SLEEP_PM_OPS(exynos5_i2c_suspend_noirq,
-				      exynos5_i2c_resume_noirq)
+#ifdef CONFIG_PM_SLEEP
+	.suspend_noirq = exynos5_i2c_suspend_noirq,
+	.resume_noirq = exynos5_i2c_resume_noirq,
+	.freeze_noirq = exynos5_i2c_suspend_noirq,
+	.thaw_noirq = exynos5_i2c_resume_noirq,
+	.poweroff_noirq = exynos5_i2c_suspend_noirq,
+	.restore_noirq = exynos5_i2c_resume_noirq,
+#endif
 };
 
 static struct platform_driver exynos5_i2c_driver = {

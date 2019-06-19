@@ -41,11 +41,11 @@ struct fsl_mc_io;
 /**
  * Management Complex firmware version information
  */
-#define MC_VER_MAJOR 8
+#define MC_VER_MAJOR 6
 #define MC_VER_MINOR 0
 
 /**
- * struct mc_version
+ * struct mc_versoin
  * @major: Major version number: incremented on API compatibility changes
  * @minor: Minor version number: incremented on API additions (that are
  *		backward compatible); reset when major version is incremented
@@ -53,17 +53,28 @@ struct fsl_mc_io;
  *		and/or bug fixes that have no impact on API
  */
 struct mc_version {
-	u32 major;
-	u32 minor;
-	u32 revision;
+	uint32_t major;
+	uint32_t minor;
+	uint32_t revision;
 };
 
-int mc_get_version(struct fsl_mc_io	*mc_io,
-		   u32		cmd_flags,
-		   struct mc_version	*mc_ver_info);
+/**
+ * mc_get_version() - Retrieves the Management Complex firmware
+ *			version information
+ * @mc_io:		Pointer to opaque I/O object
+ * @mc_ver_info:	Returned version information structure
+ *
+ * Return:	'0' on Success; Error code otherwise.
+ */
+int mc_get_version(struct fsl_mc_io *mc_io, struct mc_version *mc_ver_info);
 
-int dpmng_get_container_id(struct fsl_mc_io	*mc_io,
-			   u32		cmd_flags,
-			   int			*container_id);
+/**
+ * dpmng_get_container_id() - Get container ID associated with a given portal.
+ * @mc_io:		Pointer to MC portal's I/O object
+ * @container_id:	Requested container ID
+ *
+ * Return:	'0' on Success; Error code otherwise.
+ */
+int dpmng_get_container_id(struct fsl_mc_io *mc_io, int *container_id);
 
 #endif /* __FSL_DPMNG_H */

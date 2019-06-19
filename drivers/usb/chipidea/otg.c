@@ -2,7 +2,6 @@
  * otg.c - ChipIdea USB IP core OTG driver
  *
  * Copyright (C) 2013-2016 Freescale Semiconductor, Inc.
- * Copyright 2017 NXP
  *
  * Author: Peter Chen
  *
@@ -113,14 +112,13 @@ void ci_handle_vbus_change(struct ci_hdrc *ci)
 void ci_handle_id_switch(struct ci_hdrc *ci)
 {
 	enum ci_role role = ci_otg_role(ci);
-	int ret = 0, wait_count = 0;
+	int ret = 0;
 
 	if (role != ci->role) {
 		dev_dbg(ci->dev, "switching from %s to %s\n",
 			ci_role(ci)->name, ci->roles[role]->name);
 
-		/* Wait 6s ~ 9s for disconncet finish */
-		while (ci_hdrc_host_has_device(ci) && wait_count++ < 600) {
+		while (ci_hdrc_host_has_device(ci)) {
 			enable_irq(ci->irq);
 			usleep_range(10000, 15000);
 			disable_irq_nosync(ci->irq);

@@ -1582,13 +1582,6 @@ static int ci_udc_vbus_session(struct usb_gadget *_gadget, int is_active)
 	/* Charger Detection */
 	ci_usb_charger_connect(ci, is_active);
 
-	if (ci->usb_phy) {
-		if (is_active)
-			usb_phy_set_event(ci->usb_phy, USB_EVENT_VBUS);
-		else
-			usb_phy_set_event(ci->usb_phy, USB_EVENT_NONE);
-	}
-
 	if (gadget_ready)
 		ci_hdrc_gadget_connect(_gadget, is_active);
 
@@ -1649,11 +1642,8 @@ static int ci_udc_pullup(struct usb_gadget *_gadget, int is_on)
 {
 	struct ci_hdrc *ci = container_of(_gadget, struct ci_hdrc, gadget);
 
-	/*
-	 * Data+ pullup controlled by OTG state machine in OTG fsm mode;
-	 * and don't touch Data+ in host mode for dual role config.
-	 */
-	if (ci_otg_is_fsm_mode(ci) || ci->role == CI_ROLE_HOST)
+	/* Data+ pullup controlled by OTG state machine in OTG fsm mode */
+	if (ci_otg_is_fsm_mode(ci))
 		return 0;
 
 	pm_runtime_get_sync(&ci->gadget.dev);
@@ -1872,9 +1862,6 @@ static irqreturn_t udc_irq(struct ci_hdrc *ci)
 		if (USBi_PCI & intr) {
 			ci->gadget.speed = hw_port_is_high_speed(ci) ?
 				USB_SPEED_HIGH : USB_SPEED_FULL;
-			if (ci->usb_phy)
-				usb_phy_set_event(ci->usb_phy,
-					USB_EVENT_ENUMERATED);
 			if (ci->suspended && ci->driver->resume) {
 				spin_unlock(&ci->lock);
 				ci->driver->resume(&ci->gadget);

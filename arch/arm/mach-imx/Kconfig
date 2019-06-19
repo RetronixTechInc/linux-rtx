@@ -620,13 +620,6 @@ config SOC_IMX6UL
 	help
 	  This enables support for Freescale i.MX6 UltraLite processor.
 
-config SOC_IMX6ULL
-	bool "i.MX6 ULL support"
-	select SOC_IMX6UL
-
-	help
-	  This enables support for Freescale i.MX6 ULL processor.
-
 config SOC_IMX7
 	bool
 	select CPU_V7
@@ -650,15 +643,6 @@ config SOC_IMX7D
 
 	help
 	  This enables support for Freescale i.MX7 Dual processor.
-
-config SOC_IMX6SLL
-	bool "i.MX6 SLL support"
-	select PINCTRL_IMX6SLL
-	select SOC_IMX6
-	select KEYBOARD_SNVS_PWRKEY
-
-	help
-	  This enables support for Freescale i.MX6 SLL processor.
 
 config SOC_VF610
 	bool "Vybrid Family VF610 support"

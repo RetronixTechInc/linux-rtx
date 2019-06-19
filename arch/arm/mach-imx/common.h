@@ -168,10 +168,8 @@ void imx6sl_set_wait_clk(bool enter);
 void imx6_enet_mac_init(const char *enet_compat, const char *ocotp_compat);
 #ifdef CONFIG_HAVE_IMX_MMDC
 int imx_mmdc_get_ddr_type(void);
-int imx_mmdc_get_lpddr2_2ch_mode(void);
 #else
 static inline int imx_mmdc_get_ddr_type(void) { return 0; }
-static inline int imx_mmdc_get_lpddr2_2ch_mode(void) { return 0; }
 #endif
 #ifdef CONFIG_HAVE_IMX_DDRC
 int imx_ddrc_get_ddr_type(void);
@@ -184,11 +182,8 @@ void imx_busfreq_map_io(void);
 void imx7d_low_power_idle(void);
 void imx6sx_low_power_idle(void);
 void imx6ul_low_power_idle(void);
-void imx6ull_low_power_idle(void);
 void imx6sl_low_power_idle(void);
-void imx6sll_low_power_idle(void);
 bool imx_gpc_usb_wakeup_enabled(void);
-bool imx_gpc_enet_wakeup_enabled(void);
 
 #ifdef CONFIG_SUSPEND
 void v7_cpu_resume(void);
@@ -209,7 +204,6 @@ void imx6dl_pm_init(void);
 void imx6sl_pm_init(void);
 void imx6sx_pm_init(void);
 void imx6ul_pm_init(void);
-void imx6ull_pm_init(void);
 void imx6q_pm_set_ccm_base(void __iomem *base);
 
 #ifdef CONFIG_PM

@@ -23,7 +23,7 @@
 
 / {
 	model = "Retronix i.MX6 Quad A6 Board";
-	compatible = "rtx,rtx-imx6q-a6", "fsl,imx6q";
+	compatible = "fsl,imx6q-rtx-a6", "fsl,imx6q";
 	
 	aliases {
 		mxcfb0 = &hdmi_display;

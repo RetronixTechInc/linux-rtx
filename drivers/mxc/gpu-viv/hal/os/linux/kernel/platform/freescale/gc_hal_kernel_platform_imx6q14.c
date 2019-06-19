@@ -119,7 +119,6 @@ struct platform_device *pdevice;
 #    include <linux/mm.h>
 #    include <linux/oom.h>
 #    include <linux/sched.h>
-#    include <linux/profile.h>
 
 struct task_struct *lowmem_deathpending;
 
@@ -138,7 +137,7 @@ task_notify_func(struct notifier_block *self, unsigned long val, void *data)
 	if (task == lowmem_deathpending)
 		lowmem_deathpending = NULL;
 
-	return NOTIFY_DONE;
+	return NOTIFY_OK;
 }
 
 extern struct task_struct *lowmem_deathpending;
@@ -476,10 +475,8 @@ gckPLATFORM_AdjustParam(
 
     Args->gpu3DMinClock = initgpu3DMinClock;
 
-    if(Args->physSize == 0)
-    {
-        Args->physSize = 0x80000000;
-    }
+  if(Args->physSize == 0)
+    Args->physSize = 0x80000000;
 
     return gcvSTATUS_OK;
 }
@@ -492,11 +489,7 @@ _AllocPriv(
     Platform->priv = &imxPriv;
 
 #ifdef CONFIG_GPU_LOW_MEMORY_KILLER
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4,1,0)
-     task_free_register(&task_nb);
-#else
-    task_handoff_register(&task_nb);
-#endif
+    task_free_register(&task_nb);
 #endif
 
     return gcvSTATUS_OK;
@@ -508,11 +501,7 @@ _FreePriv(
     )
 {
 #ifdef CONFIG_GPU_LOW_MEMORY_KILLER
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4,1,0)
-     task_free_unregister(&task_nb);
-#else
-    task_handoff_unregister(&task_nb);
-#endif
+    task_free_unregister(&task_nb);
 #endif
 
     return gcvSTATUS_OK;

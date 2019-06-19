@@ -750,8 +750,6 @@ struct _gckCOMMAND
     struct _gckENTRYQUEUE       queue;
 
     gckFENCE                    fence;
-
-    gctBOOL                     dummyDraw;
 };
 
 typedef struct _gcsEVENT *      gcsEVENT_PTR;

@@ -1,6 +1,5 @@
 /*
  * Copyright (C) 2013-2016 Freescale Semiconductor, Inc.
- * Copyright 2017 NXP.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 as
@@ -25,13 +24,11 @@
 #define DC_VOLTAGE_MAX		1400000
 #define FREQ_1P2_GHZ		1200000000
 #define FREQ_396_MHZ		396000
-#define FREQ_528_MHZ		528000
-#define FREQ_198_MHZ		198000
-#define FREQ_24_MHZ		24000
+#define FREQ_696_MHZ		696000
 
-struct regulator *arm_reg;
+static struct regulator *arm_reg;
 static struct regulator *pu_reg;
-struct regulator *soc_reg;
+static struct regulator *soc_reg;
 static struct regulator *dc_reg;
 
 static struct clk *arm_clk;
@@ -55,7 +52,6 @@ static struct mutex set_cpufreq_lock;
 static u32 *imx6_soc_volt;
 static u32 soc_opp_count;
 static bool ignore_dc_reg;
-static bool low_power_run_support;
 
 static int imx6q_set_target(struct cpufreq_policy *policy, unsigned int index)
 {
@@ -68,18 +64,7 @@ static int imx6q_set_target(struct cpufreq_policy *policy, unsigned int index)
 
 	new_freq = freq_table[index].frequency;
 	freq_hz = new_freq * 1000;
-	old_freq = policy->cur;
-
-	/*
-	 * ON i.MX6ULL, the 24MHz setpoint is not seen by cpufreq
-	 * so we neet to prevent the cpufreq change frequency
-	 * from 24MHz to 198Mhz directly. busfreq will handle this
-	 * when exit from low bus mode.
-	 */
-	if (old_freq == FREQ_24_MHZ && new_freq == FREQ_198_MHZ) {
-		mutex_unlock(&set_cpufreq_lock);
-		return 0;
-	};
+	old_freq = clk_get_rate(arm_clk) / 1000;
 
 	rcu_read_lock();
 	opp = dev_pm_opp_find_freq_ceil(cpu_dev, &freq_hz);
@@ -101,12 +86,8 @@ static int imx6q_set_target(struct cpufreq_policy *policy, unsigned int index)
 	 * CPU freq is increasing, so need to ensure
 	 * that bus frequency is increased too.
 	 */
-	if (low_power_run_support) {
-		if (old_freq == freq_table[0].frequency)
-			request_bus_freq(BUS_FREQ_HIGH);
-	} else if (old_freq <= FREQ_396_MHZ && new_freq > FREQ_396_MHZ) {
+	if (old_freq <= FREQ_396_MHZ && new_freq > FREQ_396_MHZ)
 		request_bus_freq(BUS_FREQ_HIGH);
-	}
 
 	/* scaling up?  scale voltage before frequency */
 	if (new_freq > old_freq) {
@@ -216,12 +197,8 @@ static int imx6q_set_target(struct cpufreq_policy *policy, unsigned int index)
 	 * If CPU is dropped to the lowest level, release the need
 	 * for a high bus frequency.
 	 */
-	if (low_power_run_support) {
-		if (new_freq == freq_table[0].frequency)
-			release_bus_freq(BUS_FREQ_HIGH);
-	} else if (old_freq > FREQ_396_MHZ && new_freq <= FREQ_396_MHZ) {
+	if (old_freq > FREQ_396_MHZ && new_freq <= FREQ_396_MHZ)
 		release_bus_freq(BUS_FREQ_HIGH);
-	}
 
 	mutex_unlock(&set_cpufreq_lock);
 	return 0;
@@ -239,12 +216,8 @@ static int imx6q_cpufreq_init(struct cpufreq_policy *policy)
 		dev_err(cpu_dev, "imx6 cpufreq init failed!\n");
 		return ret;
 	}
-	if (low_power_run_support && policy->cur > freq_table[0].frequency) {
+	if (policy->cur > FREQ_396_MHZ)
 		request_bus_freq(BUS_FREQ_HIGH);
-	} else if (policy->cur > FREQ_396_MHZ) {
-		request_bus_freq(BUS_FREQ_HIGH);
-	}
-
 	return 0;
 }
 
@@ -306,13 +279,11 @@ static int imx6q_cpufreq_probe(struct platform_device *pdev)
 {
 	struct device_node *np;
 	struct dev_pm_opp *opp;
-	struct clk *vpu_axi_podf;
 	unsigned long min_volt, max_volt;
 	int num, ret;
 	const struct property *prop;
 	const __be32 *val;
 	u32 nr, j, i = 0;
-	u32 vpu_axi_rate = 0;
 
 	cpu_dev = get_cpu_device(0);
 	if (!cpu_dev) {
@@ -347,10 +318,6 @@ static int imx6q_cpufreq_probe(struct platform_device *pdev)
 	secondary_sel = devm_clk_get(cpu_dev, "secondary_sel");
 	osc = devm_clk_get(cpu_dev, "osc");
 
-	vpu_axi_podf = devm_clk_get(cpu_dev, "vpu_axi_podf");
-	if (!IS_ERR(vpu_axi_podf))
-		vpu_axi_rate = clk_get_rate(vpu_axi_podf);
-
 	arm_reg = devm_regulator_get_optional(cpu_dev, "arm");
 	pu_reg = devm_regulator_get_optional(cpu_dev, "pu");
 	soc_reg = devm_regulator_get(cpu_dev, "soc");
@@ -372,10 +339,6 @@ static int imx6q_cpufreq_probe(struct platform_device *pdev)
 	of_property_read_u32(np, "fsl,arm-soc-shared", &i);
 	if (i == 1)
 		soc_reg = arm_reg;
-
-	/* On i.MX6ULL, check the 24MHz low power run mode support */
-	low_power_run_support = of_property_read_bool(np, "fsl,low-power-run");
-
 	/*
 	 * We expect an OPP table supplied by platform.
 	 * Just, incase the platform did not supply the OPP
@@ -407,10 +370,10 @@ static int imx6q_cpufreq_probe(struct platform_device *pdev)
 	}
 
 	/*
-	 * On i.MX6UL/ULL EVK board, if the SOC is run in overide frequency,
+	 * On i.MX6UL EVK board, if the SOC is run in overide frequency,
 	 * the dc_regulator voltage should not be touched.
 	 */
-	if (freq_table[num - 1].frequency > FREQ_528_MHZ)
+	if (freq_table[num - 1].frequency == FREQ_696_MHZ)
 		ignore_dc_reg = true;
 	if (!IS_ERR(dc_reg) && !ignore_dc_reg)
 		regulator_set_voltage_tol(dc_reg, DC_VOLTAGE_MIN, 0);
@@ -447,13 +410,6 @@ static int imx6q_cpufreq_probe(struct platform_device *pdev)
 					imx6_soc_volt[soc_opp_count - 1] = 1250000;
 				}
 #endif
-				if (vpu_axi_rate == 396000000) {
-					if (freq <= 996000) {
-						pr_info("increase SOC/PU voltage for VPU396MHz at %ld MHz\n",
-							freq / 1000);
-						imx6_soc_volt[soc_opp_count - 1] = 1275000;
-					}
-				}
 				break;
 			}
 		}

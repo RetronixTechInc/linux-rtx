@@ -53,7 +53,6 @@
 			reg = <0>;
 			operating-points = <
 				/* KHz	uV */
-				1200000	1225000
 				996000	1075000
 				792000	975000
 			>;
@@ -344,12 +343,8 @@
 		};
 
 		irq_sec_vio: caam_secvio {
-			compatible = "fsl,imx7d-caam-secvio", "fsl,imx6q-caam-secvio";
-			interrupts = <GIC_SPI 20 IRQ_TYPE_LEVEL_HIGH>;
-			jtag-tamper = "disabled";
-			watchdog-tamper = "enabled";
-			internal-boot-tamper = "enabled";
-			external-pin-tamper = "disabled";
+			     compatible = "fsl,imx7d-caam-secvio", "fsl,imx6q-caam-secvio";
+			     interrupts = <GIC_SPI 20 IRQ_TYPE_LEVEL_HIGH>;
 		};
 
 		pmu {
@@ -628,7 +623,7 @@
 					anatop-min-bit-val = <8>;
 					anatop-min-voltage = <800000>;
 					anatop-max-voltage = <1200000>;
-					anatop-enable-bit = <0>;
+					anatop-enable-bit = <31>;
 				};
 
 				reg_1p2: regulator-vdd1p2@220 {
@@ -1008,10 +1003,9 @@
 					reg = <0x308a0000 0x10000>;
 					interrupts = <GIC_SPI 95 IRQ_TYPE_LEVEL_HIGH>;
 					clocks = <&clks IMX7D_SAI1_IPG_CLK>,
-						<&clks IMX7D_CLK_DUMMY>,
 						<&clks IMX7D_SAI1_ROOT_CLK>,
 						<&clks IMX7D_CLK_DUMMY>, <&clks IMX7D_CLK_DUMMY>;
-					clock-names = "bus", "mclk0", "mclk1", "mclk2", "mclk3";
+					clock-names = "bus", "mclk1", "mclk2", "mclk3";
 					dma-names = "rx", "tx";
 					dmas = <&sdma 8 24 0>, <&sdma 9 24 0>;
 					status = "disabled";
@@ -1023,10 +1017,9 @@
 					reg = <0x308b0000 0x10000>;
 					interrupts = <GIC_SPI 96 IRQ_TYPE_LEVEL_HIGH>;
 					clocks = <&clks IMX7D_SAI2_IPG_CLK>,
-						<&clks IMX7D_CLK_DUMMY>,
 						<&clks IMX7D_SAI2_ROOT_CLK>,
 						<&clks IMX7D_CLK_DUMMY>, <&clks IMX7D_CLK_DUMMY>;
-					clock-names = "bus", "mclk0", "mclk1", "mclk2", "mclk3";
+					clock-names = "bus", "mclk1", "mclk2", "mclk3";
 					dma-names = "rx", "tx";
 					dmas = <&sdma 10 24 0>, <&sdma 11 24 0>;
 					status = "disabled";
@@ -1038,10 +1031,9 @@
 					reg = <0x308c0000 0x10000>;
 					interrupts = <GIC_SPI 50 IRQ_TYPE_LEVEL_HIGH>;
 					clocks = <&clks IMX7D_SAI3_IPG_CLK>,
-						<&clks IMX7D_CLK_DUMMY>,
 						<&clks IMX7D_SAI3_ROOT_CLK>,
 						<&clks IMX7D_CLK_DUMMY>, <&clks IMX7D_CLK_DUMMY>;
-					clock-names = "bus", "mclk0", "mclk1", "mclk2", "mclk3";
+					clock-names = "bus", "mclk1", "mclk2", "mclk3";
 					dma-names = "rx", "tx";
 					dmas = <&sdma 12 24 0>, <&sdma 13 24 0>;
 					status = "disabled";
@@ -1433,10 +1425,10 @@
 			interrupt-names = "msi";
 			#interrupt-cells = <1>;
 			interrupt-map-mask = <0 0 0 0x7>;
-			interrupt-map = <0 0 0 1 &intc GIC_SPI 125 IRQ_TYPE_LEVEL_HIGH>,
-					<0 0 0 2 &intc GIC_SPI 124 IRQ_TYPE_LEVEL_HIGH>,
-					<0 0 0 3 &intc GIC_SPI 123 IRQ_TYPE_LEVEL_HIGH>,
-					<0 0 0 4 &intc GIC_SPI 122 IRQ_TYPE_LEVEL_HIGH>;
+			interrupt-map = <0 0 0 1 &intc GIC_SPI 122 IRQ_TYPE_LEVEL_HIGH>,
+					<0 0 0 2 &intc GIC_SPI 123 IRQ_TYPE_LEVEL_HIGH>,
+					<0 0 0 3 &intc GIC_SPI 124 IRQ_TYPE_LEVEL_HIGH>,
+					<0 0 0 4 &intc GIC_SPI 125 IRQ_TYPE_LEVEL_HIGH>;
 			clocks = <&clks IMX7D_PCIE_CTRL_ROOT_CLK>,
 				<&clks IMX7D_PLL_ENET_MAIN_100M_CLK>,
 				<&clks IMX7D_PCIE_PHY_ROOT_CLK>;

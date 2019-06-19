@@ -447,6 +447,9 @@ config BATTERY_RT5033
 	  The fuelgauge calculates and determines the battery state of charge
 	  according to battery open circuit voltage.
 
+config MACH_ADVANTECH_GF08
+	tristate "GF08 for ADVANTECH"
+
 source "drivers/power/reset/Kconfig"
 
 endif # POWER_SUPPLY

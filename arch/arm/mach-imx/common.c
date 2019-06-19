@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2015-2016 Freescale Semiconductor, Inc.
+ * Copyright (C) 2015 Freescale Semiconductor, Inc.
  *
  * The code contained herein is licensed under the GNU General Public
  * License. You may obtain a copy of the GNU General Public License
@@ -132,10 +132,6 @@ u32 imx6_lpddr2_freq_change_start, imx6_lpddr2_freq_change_end;
 void mx6_lpddr2_freq_change(u32 freq, int bus_freq_mode) {}
 #endif
 
-#if !defined(CONFIG_SOC_IMX6SLL)
-void imx6sll_lpddr2_freq_change(u32 freq, int bus_freq_mode) {}
-#endif
-
 #if !defined(CONFIG_SOC_IMX6SX) && !defined(CONFIG_SOC_IMX6UL)
 u32 imx6_up_ddr3_freq_change_start, imx6_up_ddr3_freq_change_end;
 struct imx6_busfreq_info {
@@ -150,7 +146,7 @@ u32 mx6q_lpddr2_freq_change_start, mx6q_lpddr2_freq_change_end;
 u32 wfe_smp_freq_change_start, wfe_smp_freq_change_end;
 void mx6_ddr3_freq_change(u32 freq, void *ddr_settings,
 	bool dll_mode, void *iomux_offsets) {}
-void mx6q_lpddr2_freq_change(u32 freq, void *ddr_settings) {}
+void mx6q_lpddr2_freq_change(u32 freq, int bus_freq_mode) {}
 void wfe_smp_freq_change(u32 cpuid, u32 *ddr_freq_change_done) {}
 #endif
 

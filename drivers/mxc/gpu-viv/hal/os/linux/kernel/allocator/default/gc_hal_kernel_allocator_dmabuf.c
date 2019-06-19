@@ -164,11 +164,6 @@ _DmabufAttach(
     return gcvSTATUS_OK;
 
 OnError:
-    if(pagearray)
-    {
-        gcmkVERIFY_OK(gckOS_Free(os, (gctPOINTER)pagearray));
-    }
-
     gcmkFOOTER();
     return status;
 }

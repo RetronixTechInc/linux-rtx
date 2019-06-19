@@ -1,7 +1,5 @@
 /*
- * Copyright (C) 2010-2016 Freescale Semiconductor, Inc.
- *
- * Copyright 2017 NXP
+ * Copyright (C) 2010-2015 Freescale Semiconductor, Inc.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -24,20 +22,18 @@
  */
 
 #include <linux/dma-mapping.h>
-#include <linux/freezer.h>
 #include <linux/init.h>
 #include <linux/interrupt.h>
 #include <linux/irq.h>
 #include <linux/io.h>
 #include <linux/kernel.h>
-#include <linux/kthread.h>
 #include <linux/module.h>
 #include <linux/mutex.h>
 #include <linux/of.h>
-#include <linux/of_device.h>
 #include <linux/of_gpio.h>
 #include <linux/platform_device.h>
 #include <linux/pm_runtime.h>
+#include <linux/semaphore.h>
 #include <linux/slab.h>
 #include <linux/vmalloc.h>
 #include <linux/dmaengine.h>
@@ -83,7 +79,6 @@ void __iomem *pinctrl_base;
 static LIST_HEAD(head);
 static int timeout_in_ms = 600;
 static unsigned int block_size;
-static struct kmem_cache *tx_desc_cache;
 static struct pxp_collision_info col_info;
 
 struct pxp_dma {
@@ -110,18 +105,12 @@ struct pxps {
 	struct pxp_channel channel[NR_PXP_VIRT_CHANNEL];
 	struct work_struct work;
 
-	const struct pxp_devdata *devdata;
-
 	/* describes most recent processing configuration */
 	struct pxp_config_data pxp_conf_state;
 
 	/* to turn clock off when pxp is inactive */
 	struct timer_list clk_timer;
-
-	/* for pxp config dispatch asynchronously*/
-	struct task_struct *dispatch;
-	wait_queue_head_t thread_waitq;
-	struct completion complete;
+	struct semaphore sema;
 };
 
 #define to_pxp_dma(d) container_of(d, struct pxp_dma, dma)
@@ -152,57 +141,79 @@ static __attribute__((aligned (1024*4))) unsigned int active_matrix_data_8x8[64]
    0x03020706, 0x05010004, 0x03020706, 0x05010004
     };
 
-static __attribute__((aligned (1024*4))) unsigned int bit1_dither_data_8x8[64]={
+static __attribute__((aligned (1024*4))) unsigned int dither_data_8x8[64]={
+		1,
+		49*2,
+		13*2,
+		61*2,
+		4*2,
+		52*2,
+		16*2,
+		64*2,
+		33*2,
+		17*2,
+		45*2,
+		29*2,
+		36*2,
+		20*2,
+		48*2,
+		32*2,
+		9*2,
+		57*2,
+		5*2,
+		53*2,
+		12*2,
+		60*2,
+		8*2,
+		56*2,
+		41*2,
+		25*2,
+		37*2,
+		21*2,
+		44*2,
+		28*2,
+		40*2,
+		24*2,
+		3*2,
+		51*2,
+		15*2,
+		63*2,
+		2*2,
+		50*2,
+		14*2,
+		62*2,
+		35*2,
+		19*2,
+		47*2,
+		31*2,
+		34*2,
+		18*2,
+		46*2,
+		30*2,
+		11*2,
+		59*2,
+		7*2,
+		55*2,
+		10*2,
+		58*2,
+		6*2,
+		54*2,
+		43*2,
+		27*2,
+		39*2,
+		23*2,
+		42*2,
+		26*2,
+		38*2,
+		22*2
+		};
 
-	1,       49*2,    13*2,    61*2,    4*2,     52*2,    16*2,    64*2,
-	33*2,    17*2,    45*2,    29*2,    36*2,    20*2,    48*2,    32*2,
-	9*2,     57*2,    5*2,     53*2,    12*2,    60*2,    8*2,     56*2,
-	41*2,    25*2,    37*2,    21*2,    44*2,    28*2,    40*2,    24*2,
-	3*2,     51*2,    15*2,    63*2,    2*2,     50*2,    14*2,    62*2,
-	35*2,    19*2,    47*2,    31*2,    34*2,    18*2,    46*2,    30*2,
-	11*2,    59*2,    7*2,     55*2,    10*2,    58*2,    6*2,     54*2,
-	43*2,    27*2,    39*2,    23*2,    42*2,    26*2,    38*2,    22*2
-};
-
-static __attribute__((aligned (1024*4))) unsigned int bit2_dither_data_8x8[64]={
-
-	1,     49,    13,    61,    4,     52,    16,    64,
-	33,    17,    45,    29,    36,    20,    48,    32,
-	9,     57,    5,     53,    12,    60,    8,     56,
-	41,    25,    37,    21,    44,    28,    40,    24,
-	3,     51,    15,    63,    2,     50,    14,    62,
-	35,    19,    47,    31,    34,    18,    46,    30,
-	11,    59,    7,     55,    10,    58,    6,     54,
-	43,    27,    39,    23,    42,    26,    38,    22
-};
-
-static __attribute__((aligned (1024*4))) unsigned int bit4_dither_data_8x8[64]={
-
-	1,       49/4,    13/4,    61/4,    4/4,     52/4,    16/4,    64/4,
-	33/4,    17/4,    45/4,    29/4,    36/4,    20/4,    48/4,    32/4,
-	9/4,     57/4,    5/4,     53/4,    12/4,    60/4,    8/4,     56/4,
-	41/4,    25/4,    37/4,    21/4,    44/4,    28/4,    40/4,    24/4,
-	3/4,     51/4,    15/4,    63/4,    2/4,     50/4,    14/4,    62/4,
-	35/4,    19/4,    47/4,    31/4,    34/4,    18/4,    46/4,    30/4,
-	11/4,    59/4,    7/4,     55/4,    10/4,    58/4,    6/4,     54/4,
-	43/4,    27/4,    39/4,    23/4,    42/4,    26/4,    38/4,    22/4
-};
-
-static void pxp_dithering_configure(struct pxps *pxp);
-static void pxp_dithering_configure_v3p(struct pxps *pxp);
 static void pxp_dithering_process(struct pxps *pxp);
 static void pxp_wfe_a_process(struct pxps *pxp);
-static void pxp_wfe_a_process_v3p(struct pxps *pxp);
 static void pxp_wfe_a_configure(struct pxps *pxp);
-static void pxp_wfe_a_configure_v3p(struct pxps *pxp);
 static void pxp_wfe_b_process(struct pxps *pxp);
 static void pxp_wfe_b_configure(struct pxps *pxp);
-static void pxp_lut_status_set(struct pxps *pxp, unsigned int lut);
-static void pxp_lut_status_set_v3p(struct pxps *pxp, unsigned int lut);
-static void pxp_lut_status_clr(unsigned int lut);
-static void pxp_lut_status_clr_v3p(unsigned int lut);
 static void pxp_start2(struct pxps *pxp);
-static void pxp_data_path_config_v3p(struct pxps *pxp);
 static void pxp_soft_reset(struct pxps *pxp);
 static void pxp_collision_detection_disable(struct pxps *pxp);
 static void pxp_collision_detection_enable(struct pxps *pxp,
@@ -210,14 +221,11 @@ static void pxp_collision_detection_enable(struct pxps *pxp,
 					   unsigned int height);
 static void pxp_luts_activate(struct pxps *pxp, u64 lut_status);
 static bool pxp_collision_status_report(struct pxps *pxp, struct pxp_collision_info *info);
-static void pxp_histogram_status_report(struct pxps *pxp, u32 *hist_status, u32 *pixel_nums);
+static void pxp_histogram_status_report(struct pxps *pxp, u32 *hist_status);
 static void pxp_histogram_enable(struct pxps *pxp,
 				 unsigned int width,
 				 unsigned int height);
 static void pxp_histogram_disable(struct pxps *pxp);
-static void pxp_lut_cleanup_multiple(struct pxps *pxp, u64 lut, bool set);
-static void pxp_lut_cleanup_multiple_v3p(struct pxps *pxp, u64 lut, bool set);
-static void pxp_luts_deactivate(struct pxps *pxp, u64 lut_status);
 
 enum {
 	DITHER0_LUT = 0x0,	/* Select the LUT memory for access */
@@ -226,52 +234,10 @@ enum {
 	DITHER1_LUT = 0x3,	/* Select the LUT memory for access */
 	DITHER2_LUT = 0x4,	/* Select the LUT memory for access */
 	ALU_A = 0x5,		/* Select the ALU instr memory for access */
-	ALU_B = 0x6,		/* Select the ALU instr memory for access */
+	ALU_b = 0x6,		/* Select the ALU instr memory for access */
 	WFE_A = 0x7,		/* Select the WFE_A instr memory for access */
 	WFE_B = 0x8,		/* Select the WFE_B instr memory for access */
 	RESERVED = 0x15,
-};
-
-enum pxp_devtype {
-	PXP_V3,
-	PXP_V3P,	/* minor changes over V3, use WFE_B to replace WFE_A */
-};
-
-#define pxp_is_v3(pxp) (pxp->devdata->version == 30)
-#define pxp_is_v3p(pxp) (pxp->devdata->version == 31)
-
-struct pxp_devdata {
-	void (*pxp_wfe_a_configure)(struct pxps *pxp);
-	void (*pxp_wfe_a_process)(struct pxps *pxp);
-	void (*pxp_lut_status_set)(struct pxps *pxp, unsigned int lut);
-	void (*pxp_lut_status_clr)(unsigned int lut);
-	void (*pxp_dithering_configure)(struct pxps *pxp);
-	void (*pxp_lut_cleanup_multiple)(struct pxps *pxp, u64 lut, bool set);
-	void (*pxp_data_path_config)(struct pxps *pxp);
-	unsigned int version;
-};
-
-static const struct pxp_devdata pxp_devdata[] = {
-	[PXP_V3] = {
-		.pxp_wfe_a_configure = pxp_wfe_a_configure,
-		.pxp_wfe_a_process = pxp_wfe_a_process,
-		.pxp_lut_status_set = pxp_lut_status_set,
-		.pxp_lut_status_clr = pxp_lut_status_clr,
-		.pxp_lut_cleanup_multiple = pxp_lut_cleanup_multiple,
-		.pxp_dithering_configure = pxp_dithering_configure,
-		.pxp_data_path_config = NULL,
-		.version = 30,
-	},
-	[PXP_V3P] = {
-		.pxp_wfe_a_configure = pxp_wfe_a_configure_v3p,
-		.pxp_wfe_a_process = pxp_wfe_a_process_v3p,
-		.pxp_lut_status_set = pxp_lut_status_set_v3p,
-		.pxp_lut_status_clr = pxp_lut_status_clr_v3p,
-		.pxp_lut_cleanup_multiple = pxp_lut_cleanup_multiple_v3p,
-		.pxp_dithering_configure = pxp_dithering_configure_v3p,
-		.pxp_data_path_config = pxp_data_path_config_v3p,
-		.version = 31,
-	},
 };
 
 /*
@@ -381,7 +347,6 @@ static void dump_pxp_reg2(struct pxps *pxp)
 	for (i=0; i< ((0x33C0/0x10) + 1);i++) {
 		printk("0x%08x: 0x%08x\n", 0x10*i, __raw_readl(pxp->base + 0x10*i));
 	}
-j++;
 #endif
 }
 
@@ -834,12 +799,6 @@ static int pxp_set_scaling(struct pxps *pxp)
 	struct pxp_layer_param *out_params = &pxp_conf->out_param;
 
 	proc_data->scaling = 1;
-
-	if (!proc_data->drect.width || !proc_data->drect.height) {
-		pr_err("Invalid drect width and height passed in\n");
-		return -EINVAL;
-	}
-
 	decx = proc_data->srect.width / proc_data->drect.width;
 	decy = proc_data->srect.height / proc_data->drect.height;
 	if (decx > 1) {
@@ -1248,50 +1207,34 @@ static int pxp_config(struct pxps *pxp, struct pxp_channel *pxp_chan)
 	if ((proc_data->working_mode & PXP_MODE_STANDARD) == PXP_MODE_STANDARD) {
 
 		/* now only test dithering feature */
-		if ((proc_data->engine_enable & PXP_ENABLE_DITHER) == PXP_ENABLE_DITHER) {
+		if ((proc_data->engine_enable & PXP_ENABLE_DITHER) == PXP_ENABLE_DITHER)
 			pxp_dithering_process(pxp);
-			if (pxp_is_v3p(pxp)) {
-				__raw_writel(
-					BM_PXP_CTRL_ENABLE         |
-					BM_PXP_CTRL_ENABLE_DITHER  |
-					BM_PXP_CTRL_ENABLE_CSC2    |
-					BM_PXP_CTRL_ENABLE_LUT     |
-					BM_PXP_CTRL_ENABLE_ROTATE0 |
-					BM_PXP_CTRL_ENABLE_PS_AS_OUT,
-					pxp->base + HW_PXP_CTRL_SET);
-				return 0;
-			}
-}
 
 		if ((proc_data->engine_enable & PXP_ENABLE_WFE_A) == PXP_ENABLE_WFE_A)
 		{
-			pxp_luts_deactivate(pxp, proc_data->lut_sels);
-
-			if (proc_data->lut_cleanup == 0) {
-				/* We should enable histogram in standard mode
-				 * in wfe_a processing for waveform mode selection
-				 */
-				pxp_histogram_enable(pxp, pxp_conf_data->wfe_a_fetch_param[0].width,
+			/* We should enable histogram in standard mode 
+			 * in wfe_a processing for waveform mode selection
+			 */
+			pxp_histogram_enable(pxp, pxp_conf_data->wfe_a_fetch_param[0].width,
 					pxp_conf_data->wfe_a_fetch_param[0].height);
 
-				pxp_luts_activate(pxp, (u64)proc_data->lut_status_1 |
+			/* collision detection should be always enable in standard mode */
+			pxp_luts_activate(pxp, (u64)proc_data->lut_status_1 |
 					((u64)proc_data->lut_status_2 << 32));
 
-				/* collision detection should be always enable in standard mode */
-				pxp_collision_detection_enable(pxp, pxp_conf_data->wfe_a_fetch_param[0].width,
-							pxp_conf_data->wfe_a_fetch_param[0].height);
-			}
+			pxp_collision_detection_enable(pxp, pxp_conf_data->wfe_a_fetch_param[0].width,
+						pxp_conf_data->wfe_a_fetch_param[0].height);
 
-			if (pxp->devdata && pxp->devdata->pxp_wfe_a_configure)
-				pxp->devdata->pxp_wfe_a_configure(pxp);
-			if (pxp->devdata && pxp->devdata->pxp_wfe_a_process)
-				pxp->devdata->pxp_wfe_a_process(pxp);
+			pxp_wfe_a_configure(pxp);
+			pxp_wfe_a_process(pxp);
 		}
 
 		if ((proc_data->engine_enable & PXP_ENABLE_WFE_B) == PXP_ENABLE_WFE_B) {
 			pxp_wfe_b_configure(pxp);
 			pxp_wfe_b_process(pxp);
 		}
+
+		pxp_start2(pxp);
 
 		return 0;
 	}
@@ -1302,25 +1245,13 @@ static int pxp_config(struct pxps *pxp, struct pxp_channel *pxp_chan)
 	pxp_set_s0crop(pxp);
 	pxp_set_scaling(pxp);
 	ol_nr = pxp_conf_data->layer_nr - 2;
-
-	if (ol_nr == 0) {
-		/* disable AS engine */
-		__raw_writel(BF_PXP_OUT_AS_ULC_X(1) |
-				BF_PXP_OUT_AS_ULC_Y(1),
-				pxp->base + HW_PXP_OUT_AS_ULC);
-
-		__raw_writel(BF_PXP_OUT_AS_LRC_X(0) |
-				BF_PXP_OUT_AS_LRC_Y(0),
-				pxp->base + HW_PXP_OUT_AS_LRC);
-	} else {
-		while (ol_nr > 0) {
-			i = pxp_conf_data->layer_nr - 2 - ol_nr;
-			pxp_set_oln(i, pxp);
-			pxp_set_olparam(i, pxp);
-			/* only the color key in higher overlay will take effect. */
-			pxp_set_olcolorkey(i, pxp);
-			ol_nr--;
-		}
+	while (ol_nr > 0) {
+		i = pxp_conf_data->layer_nr - 2 - ol_nr;
+		pxp_set_oln(i, pxp);
+		pxp_set_olparam(i, pxp);
+		/* only the color key in higher overlay will take effect. */
+		pxp_set_olcolorkey(i, pxp);
+		ol_nr--;
 	}
 	pxp_set_s0colorkey(pxp);
 	pxp_set_csc(pxp);
@@ -1329,6 +1260,8 @@ static int pxp_config(struct pxps *pxp, struct pxp_channel *pxp_chan)
 
 	pxp_set_s0buf(pxp);
 	pxp_set_outbuf(pxp);
+
+	pxp_start(pxp);
 
 	return 0;
 }
@@ -1394,6 +1327,11 @@ static void pxp_clkoff_timer(unsigned long arg)
 			  jiffies + msecs_to_jiffies(timeout_in_ms));
 }
 
+static struct pxp_tx_desc *pxpdma_first_active(struct pxp_channel *pxp_chan)
+{
+	return list_entry(pxp_chan->active_list.next, struct pxp_tx_desc, list);
+}
+
 static struct pxp_tx_desc *pxpdma_first_queued(struct pxp_channel *pxp_chan)
 {
 	return list_entry(pxp_chan->queue.next, struct pxp_tx_desc, list);
@@ -1410,12 +1348,9 @@ static void __pxpdma_dostart(struct pxp_channel *pxp_chan)
 	struct pxp_tx_desc *child;
 	int i = 0;
 
-	memset(&pxp->pxp_conf_state.s0_param, 0,  sizeof(struct pxp_layer_param));
-	memset(&pxp->pxp_conf_state.out_param, 0,  sizeof(struct pxp_layer_param));
-	memset(pxp->pxp_conf_state.ol_param, 0,  sizeof(struct pxp_layer_param) * 8);
-	memset(&pxp->pxp_conf_state.proc_data, 0,  sizeof(struct pxp_proc_data));
+	/* so far we presume only one transaction on active_list */
 	/* S0 */
-	desc = list_first_entry(&head, struct pxp_tx_desc, list);
+	desc = pxpdma_first_active(pxp_chan);
 	memcpy(&pxp->pxp_conf_state.s0_param,
 	       &desc->layer_param.s0_param, sizeof(struct pxp_layer_param));
 	memcpy(&pxp->pxp_conf_state.proc_data,
@@ -1505,40 +1440,38 @@ static void __pxpdma_dostart(struct pxp_channel *pxp_chan)
 static void pxpdma_dostart_work(struct pxps *pxp)
 {
 	struct pxp_channel *pxp_chan = NULL;
-	unsigned long flags;
-	struct pxp_tx_desc *desc = NULL;
-	struct pxp_config_data *config_data = &pxp->pxp_conf_state;
-	struct pxp_proc_data *proc_data = &config_data->proc_data;
+	unsigned long flags, flags1;
 
 	spin_lock_irqsave(&pxp->lock, flags);
+	if (list_empty(&head)) {
+		pxp->pxp_ongoing = 0;
+		spin_unlock_irqrestore(&pxp->lock, flags);
+		return;
+	}
 
-	desc = list_entry(head.next, struct pxp_tx_desc, list);
-	pxp_chan = to_pxp_channel(desc->txd.chan);
+	pxp_chan = list_entry(head.next, struct pxp_channel, list);
 
-	__pxpdma_dostart(pxp_chan);
+	spin_lock_irqsave(&pxp_chan->lock, flags1);
+	if (!list_empty(&pxp_chan->active_list)) {
+		struct pxp_tx_desc *desc;
+		/* REVISIT */
+		desc = pxpdma_first_active(pxp_chan);
+		__pxpdma_dostart(pxp_chan);
+	}
+	spin_unlock_irqrestore(&pxp_chan->lock, flags1);
 
 	/* Configure PxP */
 	pxp_config(pxp, pxp_chan);
 
-	if (proc_data->working_mode & PXP_MODE_STANDARD) {
-		if(!pxp_is_v3p(pxp) || !(proc_data->engine_enable & PXP_ENABLE_DITHER))
-			pxp_start2(pxp);
-	} else
-		pxp_start(pxp);
-
 	spin_unlock_irqrestore(&pxp->lock, flags);
 }
 
-static void pxpdma_dequeue(struct pxp_channel *pxp_chan, struct pxps *pxp)
+static void pxpdma_dequeue(struct pxp_channel *pxp_chan, struct list_head *list)
 {
-	unsigned long flags;
 	struct pxp_tx_desc *desc = NULL;
-
 	do {
 		desc = pxpdma_first_queued(pxp_chan);
-		spin_lock_irqsave(&pxp->lock, flags);
-		list_move_tail(&desc->list, &head);
-		spin_unlock_irqrestore(&pxp->lock, flags);
+		list_move_tail(&desc->list, list);
 	} while (!list_empty(&pxp_chan->queue));
 }
 
@@ -1547,11 +1480,11 @@ static dma_cookie_t pxp_tx_submit(struct dma_async_tx_descriptor *tx)
 	struct pxp_tx_desc *desc = to_tx_desc(tx);
 	struct pxp_channel *pxp_chan = to_pxp_channel(tx->chan);
 	dma_cookie_t cookie;
+	unsigned long flags;
 
 	dev_dbg(&pxp_chan->dma_chan.dev->device, "received TX\n");
 
-	/* pxp_chan->lock can be taken under ichan->lock, but not v.v. */
-	spin_lock(&pxp_chan->lock);
+	mutex_lock(&pxp_chan->chan_mutex);
 
 	cookie = pxp_chan->dma_chan.cookie;
 
@@ -1562,14 +1495,50 @@ static dma_cookie_t pxp_tx_submit(struct dma_async_tx_descriptor *tx)
 	pxp_chan->dma_chan.cookie = cookie;
 	tx->cookie = cookie;
 
+	/* pxp_chan->lock can be taken under ichan->lock, but not v.v. */
+	spin_lock_irqsave(&pxp_chan->lock, flags);
+
 	/* Here we add the tx descriptor to our PxP task queue. */
 	list_add_tail(&desc->list, &pxp_chan->queue);
 
-	spin_unlock(&pxp_chan->lock);
+	spin_unlock_irqrestore(&pxp_chan->lock, flags);
 
 	dev_dbg(&pxp_chan->dma_chan.dev->device, "done TX\n");
 
+	mutex_unlock(&pxp_chan->chan_mutex);
 	return cookie;
+}
+
+/* Called with pxp_chan->chan_mutex held */
+static int pxp_desc_alloc(struct pxp_channel *pxp_chan, int n)
+{
+	struct pxp_tx_desc *desc = vmalloc(n * sizeof(struct pxp_tx_desc));
+
+	if (!desc)
+		return -ENOMEM;
+
+	memset(desc, 0, n * sizeof(struct pxp_tx_desc));
+
+	pxp_chan->n_tx_desc = n;
+	pxp_chan->desc = desc;
+	INIT_LIST_HEAD(&pxp_chan->active_list);
+	INIT_LIST_HEAD(&pxp_chan->queue);
+	INIT_LIST_HEAD(&pxp_chan->free_list);
+
+	while (n--) {
+		struct dma_async_tx_descriptor *txd = &desc->txd;
+
+		memset(txd, 0, sizeof(*txd));
+		INIT_LIST_HEAD(&desc->tx_list);
+		dma_async_tx_descriptor_init(txd, &pxp_chan->dma_chan);
+		txd->tx_submit = pxp_tx_submit;
+
+		list_add(&desc->list, &pxp_chan->free_list);
+
+		desc++;
+	}
+
+	return 0;
 }
 
 /**
@@ -1581,7 +1550,9 @@ static dma_cookie_t pxp_tx_submit(struct dma_async_tx_descriptor *tx)
 static int pxp_init_channel(struct pxp_dma *pxp_dma,
 			    struct pxp_channel *pxp_chan)
 {
-	int ret = 0;
+	unsigned long flags;
+	struct pxps *pxp = to_pxp(pxp_dma);
+	int ret = 0, n_desc = 0;
 
 	/*
 	 * We are using _virtual_ channel here.
@@ -1590,7 +1561,34 @@ static int pxp_init_channel(struct pxp_dma *pxp_dma,
 	 * (i.e., pxp_tx_desc) here.
 	 */
 
-	INIT_LIST_HEAD(&pxp_chan->queue);
+	spin_lock_irqsave(&pxp->lock, flags);
+
+	/* max desc nr: S0+OL+OUT = 1+8+1 */
+	n_desc = 24;
+
+	spin_unlock_irqrestore(&pxp->lock, flags);
+
+	if (n_desc && !pxp_chan->desc)
+		ret = pxp_desc_alloc(pxp_chan, n_desc);
+
+	return ret;
+}
+
+/**
+ * pxp_uninit_channel() - uninitialize a PXP channel.
+ * @pxp_dma:   PXP DMA context.
+ * @pchan:  pointer to the channel object.
+ * @return      0 on success or negative error code on failure.
+ */
+static int pxp_uninit_channel(struct pxp_dma *pxp_dma,
+			      struct pxp_channel *pxp_chan)
+{
+	int ret = 0;
+
+	if (pxp_chan->desc)
+		vfree(pxp_chan->desc);
+
+	pxp_chan->desc = NULL;
 
 	return ret;
 }
@@ -1600,16 +1598,15 @@ static irqreturn_t pxp_irq(int irq, void *dev_id)
 	struct pxps *pxp = dev_id;
 	struct pxp_channel *pxp_chan;
 	struct pxp_tx_desc *desc;
-	struct pxp_tx_desc *child, *_child;
 	dma_async_tx_callback callback;
 	void *callback_param;
-	unsigned long flags;
+	unsigned long flags, flags0;
 	u32 hist_status;
-	u32 pixel_nums;
 	int pxp_irq_status = 0;
 
 	dump_pxp_reg(pxp);
 
+	spin_lock_irqsave(&pxp->lock, flags);
 
 	if (__raw_readl(pxp->base + HW_PXP_STAT) & BM_PXP_STAT_IRQ0)
 		__raw_writel(BM_PXP_STAT_IRQ0, pxp->base + HW_PXP_STAT_CLR);
@@ -1649,7 +1646,7 @@ static irqreturn_t pxp_irq(int irq, void *dev_id)
 		__raw_writel(irq_clr, pxp->base + HW_PXP_IRQ_CLR);
 	}
 	pxp_collision_status_report(pxp, &col_info);
-	pxp_histogram_status_report(pxp, &hist_status, &pixel_nums);
+	pxp_histogram_status_report(pxp, &hist_status);
 	/*XXX before a new update operation, we should
 	 * always clear all the collision information
 	 */
@@ -1657,20 +1654,29 @@ static irqreturn_t pxp_irq(int irq, void *dev_id)
 	pxp_histogram_disable(pxp);
 
 	pxp_soft_reset(pxp);
-	if (pxp->devdata && pxp->devdata->pxp_data_path_config)
-		pxp->devdata->pxp_data_path_config(pxp);
 	__raw_writel(0xffff, pxp->base + HW_PXP_IRQ_MASK);
 
-	spin_lock_irqsave(&pxp->lock, flags);
 	if (list_empty(&head)) {
 		pxp->pxp_ongoing = 0;
 		spin_unlock_irqrestore(&pxp->lock, flags);
 		return IRQ_NONE;
 	}
 
+	pxp_chan = list_entry(head.next, struct pxp_channel, list);
+	spin_lock_irqsave(&pxp_chan->lock, flags0);
+	list_del_init(&pxp_chan->list);
+
+	if (list_empty(&pxp_chan->active_list)) {
+		pr_debug("PXP_IRQ pxp_chan->active_list empty. chan_id %d\n",
+			 pxp_chan->dma_chan.chan_id);
+		pxp->pxp_ongoing = 0;
+		spin_unlock_irqrestore(&pxp_chan->lock, flags0);
+		spin_unlock_irqrestore(&pxp->lock, flags);
+		return IRQ_NONE;
+	}
+
 	/* Get descriptor and call callback */
-	desc = list_entry(head.next, struct pxp_tx_desc, list);
-	pxp_chan = to_pxp_channel(desc->txd.chan);
+	desc = pxpdma_first_active(pxp_chan);
 
 	pxp_chan->completed = desc->txd.cookie;
 
@@ -1679,22 +1685,17 @@ static irqreturn_t pxp_irq(int irq, void *dev_id)
 
 	/* Send histogram status back to caller */
 	desc->hist_status = hist_status;
-	desc->pixel_nums = pixel_nums;
 
 	if ((desc->txd.flags & DMA_PREP_INTERRUPT) && callback)
 		callback(callback_param);
 
 	pxp_chan->status = PXP_CHANNEL_INITIALIZED;
 
-	list_for_each_entry_safe(child, _child, &desc->tx_list, list) {
-		list_del_init(&child->list);
-		kmem_cache_free(tx_desc_cache, (void *)child);
-	}
-	list_del_init(&desc->list);
-	kmem_cache_free(tx_desc_cache, (void *)desc);
+	list_splice_init(&desc->tx_list, &pxp_chan->free_list);
+	list_move(&desc->list, &pxp_chan->free_list);
+	spin_unlock_irqrestore(&pxp_chan->lock, flags0);
 
-
-	complete(&pxp->complete);
+	up(&pxp->sema);
 	pxp->pxp_ongoing = 0;
 	mod_timer(&pxp->clk_timer, jiffies + msecs_to_jiffies(timeout_in_ms));
 
@@ -1703,25 +1704,36 @@ static irqreturn_t pxp_irq(int irq, void *dev_id)
 	return IRQ_HANDLED;
 }
 
-/* allocate/free dma tx descriptor dynamically*/
-static struct pxp_tx_desc *pxpdma_desc_alloc(struct pxp_channel *pxp_chan)
+/* called with pxp_chan->lock held */
+static struct pxp_tx_desc *pxpdma_desc_get(struct pxp_channel *pxp_chan)
 {
-	struct pxp_tx_desc *desc = NULL;
-	struct dma_async_tx_descriptor *txd = NULL;
+	struct pxp_tx_desc *desc, *_desc;
+	struct pxp_tx_desc *ret = NULL;
 
-	desc = kmem_cache_alloc(tx_desc_cache, GFP_KERNEL | __GFP_ZERO);
-	if (desc == NULL)
-		return NULL;
+	list_for_each_entry_safe(desc, _desc, &pxp_chan->free_list, list) {
+		list_del_init(&desc->list);
+		ret = desc;
+		break;
+	}
 
-	INIT_LIST_HEAD(&desc->list);
-	INIT_LIST_HEAD(&desc->tx_list);
-	txd = &desc->txd;
-	dma_async_tx_descriptor_init(txd, &pxp_chan->dma_chan);
-	txd->tx_submit = pxp_tx_submit;
-
-	return desc;
+	return ret;
 }
 
+/* called with pxp_chan->lock held */
+static void pxpdma_desc_put(struct pxp_channel *pxp_chan,
+			    struct pxp_tx_desc *desc)
+{
+	if (desc) {
+		struct device *dev = &pxp_chan->dma_chan.dev->device;
+		struct pxp_tx_desc *child;
+
+		list_for_each_entry(child, &desc->tx_list, list)
+		    dev_info(dev, "moving child desc %p to freelist\n", child);
+		list_splice_init(&desc->tx_list, &pxp_chan->free_list);
+		dev_info(dev, "moving desc %p to freelist\n", desc);
+		list_add(&desc->list, &pxp_chan->free_list);
+	}
+}
 
 /* Allocate and initialise a transfer descriptor. */
 static struct dma_async_tx_descriptor *pxp_prep_slave_sg(struct dma_chan *chan,
@@ -1737,10 +1749,10 @@ static struct dma_async_tx_descriptor *pxp_prep_slave_sg(struct dma_chan *chan,
 	struct pxp_channel *pxp_chan = to_pxp_channel(chan);
 	struct pxp_dma *pxp_dma = to_pxp_dma(chan->device);
 	struct pxps *pxp = to_pxp(pxp_dma);
-	struct pxp_tx_desc *pos = NULL, *next = NULL;
 	struct pxp_tx_desc *desc = NULL;
 	struct pxp_tx_desc *first = NULL, *prev = NULL;
 	struct scatterlist *sg;
+	unsigned long flags;
 	dma_addr_t phys_addr;
 	int i;
 
@@ -1753,20 +1765,13 @@ static struct dma_async_tx_descriptor *pxp_prep_slave_sg(struct dma_chan *chan,
 	if (unlikely(sg_len < 2))
 		return NULL;
 
+	spin_lock_irqsave(&pxp_chan->lock, flags);
 	for_each_sg(sgl, sg, sg_len, i) {
-		desc = pxpdma_desc_alloc(pxp_chan);
+		desc = pxpdma_desc_get(pxp_chan);
 		if (!desc) {
-			dev_err(chan->device->dev, "no enough memory to allocate tx descriptor\n");
-
-			if (first) {
-				list_for_each_entry_safe(pos, next, &first->tx_list, list) {
-					list_del_init(&pos->list);
-					kmem_cache_free(tx_desc_cache, (void*)pos);
-				}
-				list_del_init(&first->list);
-				kmem_cache_free(tx_desc_cache, (void*)first);
-			}
-
+			pxpdma_desc_put(pxp_chan, first);
+			dev_err(chan->device->dev, "Can't get DMA desc.\n");
+			spin_unlock_irqrestore(&pxp_chan->lock, flags);
 			return NULL;
 		}
 
@@ -1789,6 +1794,7 @@ static struct dma_async_tx_descriptor *pxp_prep_slave_sg(struct dma_chan *chan,
 
 		prev = desc;
 	}
+	spin_unlock_irqrestore(&pxp_chan->lock, flags);
 
 	pxp->pxp_conf_state.layer_nr = sg_len;
 	first->txd.flags = tx_flags;
@@ -1804,26 +1810,45 @@ static void pxp_issue_pending(struct dma_chan *chan)
 	struct pxp_channel *pxp_chan = to_pxp_channel(chan);
 	struct pxp_dma *pxp_dma = to_pxp_dma(chan->device);
 	struct pxps *pxp = to_pxp(pxp_dma);
+	unsigned long flags0, flags;
 
-	spin_lock(&pxp_chan->lock);
+	down(&pxp->sema);
 
-	if (list_empty(&pxp_chan->queue)) {
-		spin_unlock(&pxp_chan->lock);
+	spin_lock_irqsave(&pxp->lock, flags0);
+	spin_lock_irqsave(&pxp_chan->lock, flags);
+
+	if (!list_empty(&pxp_chan->queue)) {
+		pxpdma_dequeue(pxp_chan, &pxp_chan->active_list);
+		pxp_chan->status = PXP_CHANNEL_READY;
+		list_add_tail(&pxp_chan->list, &head);
+	} else {
+		spin_unlock_irqrestore(&pxp_chan->lock, flags);
+		spin_unlock_irqrestore(&pxp->lock, flags0);
 		return;
 	}
-
-	pxpdma_dequeue(pxp_chan, pxp);
-	pxp_chan->status = PXP_CHANNEL_READY;
-
-	spin_unlock(&pxp_chan->lock);
+	spin_unlock_irqrestore(&pxp_chan->lock, flags);
+	spin_unlock_irqrestore(&pxp->lock, flags0);
 
 	pxp_clk_enable(pxp);
-	wake_up_interruptible(&pxp->thread_waitq);
+
+	spin_lock_irqsave(&pxp->lock, flags);
+	pxp->pxp_ongoing = 1;
+	spin_unlock_irqrestore(&pxp->lock, flags);
+	pxpdma_dostart_work(pxp);
 }
 
 static void __pxp_terminate_all(struct dma_chan *chan)
 {
 	struct pxp_channel *pxp_chan = to_pxp_channel(chan);
+	unsigned long flags;
+
+	/* pchan->queue is modified in ISR, have to spinlock */
+	spin_lock_irqsave(&pxp_chan->lock, flags);
+	list_splice_init(&pxp_chan->queue, &pxp_chan->free_list);
+	list_splice_init(&pxp_chan->active_list, &pxp_chan->free_list);
+
+	spin_unlock_irqrestore(&pxp_chan->lock, flags);
+
 	pxp_chan->status = PXP_CHANNEL_INITIALIZED;
 }
 
@@ -1870,14 +1895,17 @@ err_chan:
 static void pxp_free_chan_resources(struct dma_chan *chan)
 {
 	struct pxp_channel *pxp_chan = to_pxp_channel(chan);
+	struct pxp_dma *pxp_dma = to_pxp_dma(chan->device);
 
-	spin_lock(&pxp_chan->lock);
+	mutex_lock(&pxp_chan->chan_mutex);
 
 	__pxp_terminate_all(chan);
 
 	pxp_chan->status = PXP_CHANNEL_FREE;
 
-	spin_unlock(&pxp_chan->lock);
+	pxp_uninit_channel(pxp_dma, pxp_chan);
+
+	mutex_unlock(&pxp_chan->chan_mutex);
 }
 
 static enum dma_status pxp_tx_status(struct dma_chan *chan,
@@ -1895,42 +1923,6 @@ static enum dma_status pxp_tx_status(struct dma_chan *chan,
 		txstate->residue = 0;
 	}
 	return DMA_COMPLETE;
-}
-
-static void pxp_data_path_config_v3p(struct pxps *pxp)
-{
-	u32 val = 0;
-
-	__raw_writel(
-		BF_PXP_DATA_PATH_CTRL0_MUX15_SEL(0)|
-		BF_PXP_DATA_PATH_CTRL0_MUX14_SEL(1)|
-		BF_PXP_DATA_PATH_CTRL0_MUX13_SEL(0)|
-		BF_PXP_DATA_PATH_CTRL0_MUX12_SEL(0)|
-		BF_PXP_DATA_PATH_CTRL0_MUX11_SEL(0)|
-		BF_PXP_DATA_PATH_CTRL0_MUX10_SEL(0)|
-		BF_PXP_DATA_PATH_CTRL0_MUX9_SEL(1)|
-		BF_PXP_DATA_PATH_CTRL0_MUX8_SEL(0)|
-		BF_PXP_DATA_PATH_CTRL0_MUX7_SEL(0)|
-		BF_PXP_DATA_PATH_CTRL0_MUX6_SEL(0)|
-		BF_PXP_DATA_PATH_CTRL0_MUX5_SEL(0)|
-		BF_PXP_DATA_PATH_CTRL0_MUX4_SEL(0)|
-		BF_PXP_DATA_PATH_CTRL0_MUX3_SEL(0)|
-		BF_PXP_DATA_PATH_CTRL0_MUX2_SEL(0)|
-		BF_PXP_DATA_PATH_CTRL0_MUX1_SEL(0)|
-		BF_PXP_DATA_PATH_CTRL0_MUX0_SEL(0),
-		pxp->base + HW_PXP_DATA_PATH_CTRL0);
-
-	/*
-	 * MUX17: HIST_B as histogram: 0: output buffer, 1: wfe_store
-	 * MUX16: HIST_A as collision: 0: output buffer, 1: wfe_store
-	 */
-	if (pxp_is_v3(pxp))
-		val = BF_PXP_DATA_PATH_CTRL1_MUX17_SEL(1)|
-		      BF_PXP_DATA_PATH_CTRL1_MUX16_SEL(0);
-	else if (pxp_is_v3p(pxp))
-		val = BF_PXP_DATA_PATH_CTRL1_MUX17_SEL(1)|
-		      BF_PXP_DATA_PATH_CTRL1_MUX16_SEL(1);
-	__raw_writel(val, pxp->base + HW_PXP_DATA_PATH_CTRL1);
 }
 
 static void pxp_soft_reset(struct pxps *pxp)
@@ -1986,9 +1978,6 @@ static void pxp_sram_init(struct pxps *pxp, u32 select,
  */
 static void pxp_wfe_a_configure(struct pxps *pxp)
 {
-	struct pxp_config_data *pxp_conf = &pxp->pxp_conf_state;
-	struct pxp_proc_data *proc_data = &pxp_conf->proc_data;
-
 	/* FETCH */
 	__raw_writel(
 		BF_PXP_WFA_FETCH_CTRL_BF1_EN(1) |
@@ -2211,21 +2200,21 @@ static void pxp_wfe_a_configure(struct pxps *pxp)
 		pxp->base + HW_PXP_ALU_A_CTRL);
 
 	/* WFE A */
-	__raw_writel(0x3F3F0303, pxp->base + HW_PXP_WFE_A_STAGE1_MUX0);
+	__raw_writel(0x3F3F3F03, pxp->base + HW_PXP_WFE_A_STAGE1_MUX0);
 	__raw_writel(0x0C00000C, pxp->base + HW_PXP_WFE_A_STAGE1_MUX1);
 	__raw_writel(0x01040000, pxp->base + HW_PXP_WFE_A_STAGE1_MUX2);
 	__raw_writel(0x0A0A0904, pxp->base + HW_PXP_WFE_A_STAGE1_MUX3);
 	__raw_writel(0x00000B0B, pxp->base + HW_PXP_WFE_A_STAGE1_MUX4);
 
 	__raw_writel(0x1800280E, pxp->base + HW_PXP_WFE_A_STAGE2_MUX0);
-	__raw_writel(0x00280E01, pxp->base + HW_PXP_WFE_A_STAGE2_MUX1);
-	__raw_writel(0x280E0118, pxp->base + HW_PXP_WFE_A_STAGE2_MUX2);
-	__raw_writel(0x00011800, pxp->base + HW_PXP_WFE_A_STAGE2_MUX3);
+	__raw_writel(0x00280E00, pxp->base + HW_PXP_WFE_A_STAGE2_MUX1);
+	__raw_writel(0x280E0018, pxp->base + HW_PXP_WFE_A_STAGE2_MUX2);
+	__raw_writel(0x00001800, pxp->base + HW_PXP_WFE_A_STAGE2_MUX3);
 	__raw_writel(0, pxp->base + HW_PXP_WFE_A_STAGE2_MUX4);
 	__raw_writel(0x1800280E, pxp->base + HW_PXP_WFE_A_STAGE2_MUX5);
-	__raw_writel(0x00280E01, pxp->base + HW_PXP_WFE_A_STAGE2_MUX6);
-	__raw_writel(0x1A0E0118, pxp->base + HW_PXP_WFE_A_STAGE2_MUX7);
-	__raw_writel(0x1B012911, pxp->base + HW_PXP_WFE_A_STAGE2_MUX8);
+	__raw_writel(0x00280E00, pxp->base + HW_PXP_WFE_A_STAGE2_MUX6);
+	__raw_writel(0x1A0E0018, pxp->base + HW_PXP_WFE_A_STAGE2_MUX7);
+	__raw_writel(0x1B002911, pxp->base + HW_PXP_WFE_A_STAGE2_MUX8);
 	__raw_writel(0x00002911, pxp->base + HW_PXP_WFE_A_STAGE2_MUX9);
 	__raw_writel(0, pxp->base + HW_PXP_WFE_A_STAGE2_MUX10);
 	__raw_writel(0, pxp->base + HW_PXP_WFE_A_STAGE2_MUX11);
@@ -2236,14 +2225,14 @@ static void pxp_wfe_a_configure(struct pxps *pxp)
 	__raw_writel(0x03020100, pxp->base + HW_PXP_WFE_A_STAGE3_MUX2);
 	__raw_writel(0x3F3F3F3F, pxp->base + HW_PXP_WFE_A_STAGE3_MUX3);
 
-	__raw_writel(0x001F1F1F, pxp->base + HW_PXP_WFE_A_STAGE2_5X6_MASKS_0);
+	__raw_writel(0x000F0F0F, pxp->base + HW_PXP_WFE_A_STAGE2_5X6_MASKS_0);
 	__raw_writel(0x3f030100, pxp->base + HW_PXP_WFE_A_STAGE2_5X6_ADDR_0);
 
 	__raw_writel(0x00000700, pxp->base + HW_PXP_WFE_A_STG2_5X1_OUT0);
-	__raw_writel(0x00007000, pxp->base + HW_PXP_WFE_A_STG2_5X1_OUT1);
+	__raw_writel(0x0000F000, pxp->base + HW_PXP_WFE_A_STG2_5X1_OUT1);
 	__raw_writel(0x0000A000, pxp->base + HW_PXP_WFE_A_STG2_5X1_OUT2);
 	__raw_writel(0x000000C0, pxp->base + HW_PXP_WFE_A_STG2_5X1_OUT3);
-	__raw_writel(0x071F1F1F, pxp->base + HW_PXP_WFE_A_STG2_5X1_MASKS);
+	__raw_writel(0x070F0F0F, pxp->base + HW_PXP_WFE_A_STG2_5X1_MASKS);
 
 	__raw_writel(0xFFFFFFFF, pxp->base + HW_PXP_WFE_A_STG1_8X1_OUT0_2);
 	__raw_writel(0xFFFFFFFF, pxp->base + HW_PXP_WFE_A_STG1_8X1_OUT0_3);
@@ -2283,28 +2272,28 @@ static void pxp_wfe_a_configure(struct pxps *pxp)
 	__raw_writel(0x04040404, pxp->base + HW_PXP_WFE_A_STG2_5X6_OUT0_1);
 	__raw_writel(0x04050505, pxp->base + HW_PXP_WFE_A_STG2_5X6_OUT0_2);
 	__raw_writel(0x04040404, pxp->base + HW_PXP_WFE_A_STG2_5X6_OUT0_3);
-	__raw_writel(0x04040404, pxp->base + HW_PXP_WFE_A_STG2_5X6_OUT0_4);
-	__raw_writel(0x04040404, pxp->base + HW_PXP_WFE_A_STG2_5X6_OUT0_5);
-	__raw_writel(0x04040404, pxp->base + HW_PXP_WFE_A_STG2_5X6_OUT0_6);
-	__raw_writel(0x04040404, pxp->base + HW_PXP_WFE_A_STG2_5X6_OUT0_7);
+	__raw_writel(0, pxp->base + HW_PXP_WFE_A_STG2_5X6_OUT0_4);
+	__raw_writel(0, pxp->base + HW_PXP_WFE_A_STG2_5X6_OUT0_5);
+	__raw_writel(0, pxp->base + HW_PXP_WFE_A_STG2_5X6_OUT0_6);
+	__raw_writel(0, pxp->base + HW_PXP_WFE_A_STG2_5X6_OUT0_7);
 
 	__raw_writel(0x05050505, pxp->base + HW_PXP_WFE_A_STG2_5X6_OUT1_0);
 	__raw_writel(0x05050505, pxp->base + HW_PXP_WFE_A_STG2_5X6_OUT1_1);
 	__raw_writel(0x05080808, pxp->base + HW_PXP_WFE_A_STG2_5X6_OUT1_2);
 	__raw_writel(0x05050505, pxp->base + HW_PXP_WFE_A_STG2_5X6_OUT1_3);
-	__raw_writel(0x05050505, pxp->base + HW_PXP_WFE_A_STG2_5X6_OUT1_4);
-	__raw_writel(0x05050505, pxp->base + HW_PXP_WFE_A_STG2_5X6_OUT1_5);
-	__raw_writel(0x05050505, pxp->base + HW_PXP_WFE_A_STG2_5X6_OUT1_6);
-	__raw_writel(0x05050505, pxp->base + HW_PXP_WFE_A_STG2_5X6_OUT1_7);
+	__raw_writel(0, pxp->base + HW_PXP_WFE_A_STG2_5X6_OUT1_4);
+	__raw_writel(0, pxp->base + HW_PXP_WFE_A_STG2_5X6_OUT1_5);
+	__raw_writel(0, pxp->base + HW_PXP_WFE_A_STG2_5X6_OUT1_6);
+	__raw_writel(0, pxp->base + HW_PXP_WFE_A_STG2_5X6_OUT1_7);
 
 	__raw_writel(0x07070707, pxp->base + HW_PXP_WFE_A_STG2_5X6_OUT2_0);
 	__raw_writel(0x07070707, pxp->base + HW_PXP_WFE_A_STG2_5X6_OUT2_1);
 	__raw_writel(0x070C0C0C, pxp->base + HW_PXP_WFE_A_STG2_5X6_OUT2_2);
 	__raw_writel(0x07070707, pxp->base + HW_PXP_WFE_A_STG2_5X6_OUT2_3);
-	__raw_writel(0X0F0F0F0F, pxp->base + HW_PXP_WFE_A_STG2_5X6_OUT2_4);
-	__raw_writel(0X0F0F0F0F, pxp->base + HW_PXP_WFE_A_STG2_5X6_OUT2_5);
-	__raw_writel(0X0F0F0F0F, pxp->base + HW_PXP_WFE_A_STG2_5X6_OUT2_6);
-	__raw_writel(0X0F0F0F0F, pxp->base + HW_PXP_WFE_A_STG2_5X6_OUT2_7);
+	__raw_writel(0, pxp->base + HW_PXP_WFE_A_STG2_5X6_OUT2_4);
+	__raw_writel(0, pxp->base + HW_PXP_WFE_A_STG2_5X6_OUT2_5);
+	__raw_writel(0, pxp->base + HW_PXP_WFE_A_STG2_5X6_OUT2_6);
+	__raw_writel(0, pxp->base + HW_PXP_WFE_A_STG2_5X6_OUT2_7);
 
 	__raw_writel(0, pxp->base + HW_PXP_WFE_A_STG2_5X6_OUT3_0);
 	__raw_writel(0, pxp->base + HW_PXP_WFE_A_STG2_5X6_OUT3_1);
@@ -2314,445 +2303,6 @@ static void pxp_wfe_a_configure(struct pxps *pxp)
 	__raw_writel(0, pxp->base + HW_PXP_WFE_A_STG2_5X6_OUT3_5);
 	__raw_writel(0, pxp->base + HW_PXP_WFE_A_STG2_5X6_OUT3_6);
 	__raw_writel(0, pxp->base + HW_PXP_WFE_A_STG2_5X6_OUT3_7);
-
-	if (pxp->devdata && pxp->devdata->pxp_lut_cleanup_multiple)
-		pxp->devdata->pxp_lut_cleanup_multiple(pxp,
-					proc_data->lut_sels, 1);
-}
-
-static void pxp_wfe_a_configure_v3p(struct pxps *pxp)
-{
-	struct pxp_config_data *pxp_conf = &pxp->pxp_conf_state;
-	struct pxp_proc_data *proc_data = &pxp_conf->proc_data;
-
-	/* FETCH */
-	__raw_writel(
-		BF_PXP_WFB_FETCH_CTRL_BF1_EN(1) |
-		BF_PXP_WFB_FETCH_CTRL_BF1_HSK_MODE(0) |
-		BF_PXP_WFB_FETCH_CTRL_BF1_BYTES_PP(0) |
-		BF_PXP_WFB_FETCH_CTRL_BF1_LINE_MODE(0) |
-		BF_PXP_WFB_FETCH_CTRL_BF1_SRAM_IF(0) |
-		BF_PXP_WFB_FETCH_CTRL_BF1_BURST_LEN(0) |
-		BF_PXP_WFB_FETCH_CTRL_BF1_BYPASS_MODE(0) |
-		BF_PXP_WFB_FETCH_CTRL_BF2_EN(1) |
-		BF_PXP_WFB_FETCH_CTRL_BF2_HSK_MODE(0) |
-		BF_PXP_WFB_FETCH_CTRL_BF2_BYTES_PP(1) |
-		BF_PXP_WFB_FETCH_CTRL_BF2_LINE_MODE(0) |
-		BF_PXP_WFB_FETCH_CTRL_BF2_SRAM_IF(0) |
-		BF_PXP_WFB_FETCH_CTRL_BF2_BURST_LEN(0) |
-		BF_PXP_WFB_FETCH_CTRL_BF2_BYPASS_MODE(0),
-		pxp->base + HW_PXP_WFB_FETCH_CTRL);
-
-	__raw_writel(
-		BF_PXP_WFB_ARRAY_PIXEL0_MASK_SIGN_Y(0) |
-		BF_PXP_WFB_ARRAY_PIXEL0_MASK_OFFSET_Y(0) |
-		BF_PXP_WFB_ARRAY_PIXEL0_MASK_SIGN_X(0) |
-		BF_PXP_WFB_ARRAY_PIXEL0_MASK_OFFSET_X(0) |
-		BF_PXP_WFB_ARRAY_PIXEL0_MASK_BUF_SEL(1) |
-		BF_PXP_WFB_ARRAY_PIXEL0_MASK_H_OFS(0) |
-		BF_PXP_WFB_ARRAY_PIXEL0_MASK_L_OFS(3),
-		pxp->base + HW_PXP_WFB_ARRAY_PIXEL0_MASK);
-
-	 __raw_writel(
-		BF_PXP_WFB_ARRAY_PIXEL1_MASK_SIGN_Y(0) |
-		BF_PXP_WFB_ARRAY_PIXEL1_MASK_OFFSET_Y(0) |
-		BF_PXP_WFB_ARRAY_PIXEL1_MASK_SIGN_X(0) |
-		BF_PXP_WFB_ARRAY_PIXEL1_MASK_OFFSET_X(0) |
-		BF_PXP_WFB_ARRAY_PIXEL1_MASK_BUF_SEL(1) |
-		BF_PXP_WFB_ARRAY_PIXEL1_MASK_H_OFS(4) |
-		BF_PXP_WFB_ARRAY_PIXEL1_MASK_L_OFS(7),
-		pxp->base + HW_PXP_WFB_ARRAY_PIXEL1_MASK);
-
-	 __raw_writel(
-		BF_PXP_WFB_ARRAY_PIXEL2_MASK_SIGN_Y(0) |
-		BF_PXP_WFB_ARRAY_PIXEL2_MASK_OFFSET_Y(0) |
-		BF_PXP_WFB_ARRAY_PIXEL2_MASK_SIGN_X(0) |
-		BF_PXP_WFB_ARRAY_PIXEL2_MASK_OFFSET_X(0) |
-		BF_PXP_WFB_ARRAY_PIXEL2_MASK_BUF_SEL(1) |
-		BF_PXP_WFB_ARRAY_PIXEL2_MASK_H_OFS(8) |
-		BF_PXP_WFB_ARRAY_PIXEL2_MASK_L_OFS(9),
-		pxp->base + HW_PXP_WFB_ARRAY_PIXEL2_MASK);
-
-	__raw_writel(
-		BF_PXP_WFB_ARRAY_PIXEL3_MASK_SIGN_Y(0) |
-		BF_PXP_WFB_ARRAY_PIXEL3_MASK_OFFSET_Y(0) |
-		BF_PXP_WFB_ARRAY_PIXEL3_MASK_SIGN_X(0) |
-		BF_PXP_WFB_ARRAY_PIXEL3_MASK_OFFSET_X(0) |
-		BF_PXP_WFB_ARRAY_PIXEL3_MASK_BUF_SEL(1) |
-		BF_PXP_WFB_ARRAY_PIXEL3_MASK_H_OFS(10) |
-		BF_PXP_WFB_ARRAY_PIXEL3_MASK_L_OFS(15),
-		pxp->base + HW_PXP_WFB_ARRAY_PIXEL3_MASK);
-
-	__raw_writel(
-		BF_PXP_WFB_ARRAY_PIXEL4_MASK_SIGN_Y(0) |
-		BF_PXP_WFB_ARRAY_PIXEL4_MASK_OFFSET_Y(0) |
-		BF_PXP_WFB_ARRAY_PIXEL4_MASK_SIGN_X(0) |
-		BF_PXP_WFB_ARRAY_PIXEL4_MASK_OFFSET_X(0) |
-		BF_PXP_WFB_ARRAY_PIXEL4_MASK_BUF_SEL(0) |
-		BF_PXP_WFB_ARRAY_PIXEL4_MASK_H_OFS(4) |
-		BF_PXP_WFB_ARRAY_PIXEL4_MASK_L_OFS(7),
-		pxp->base + HW_PXP_WFB_ARRAY_PIXEL4_MASK);
-
-	__raw_writel(1, pxp->base + HW_PXP_WFB_ARRAY_REG2);
-
-	/* STORE */
-	__raw_writel(
-		BF_PXP_WFE_B_STORE_CTRL_CH0_CH_EN(1)|
-		BF_PXP_WFE_B_STORE_CTRL_CH0_BLOCK_EN(0)|
-		BF_PXP_WFE_B_STORE_CTRL_CH0_BLOCK_16(0)|
-		BF_PXP_WFE_B_STORE_CTRL_CH0_HANDSHAKE_EN(0)|
-		BF_PXP_WFE_B_STORE_CTRL_CH0_ARRAY_EN(0)|
-		BF_PXP_WFE_B_STORE_CTRL_CH0_ARRAY_LINE_NUM(0)|
-		BF_PXP_WFE_B_STORE_CTRL_CH0_STORE_BYPASS_EN(0)|
-		BF_PXP_WFE_B_STORE_CTRL_CH0_STORE_MEMORY_EN(1)|
-		BF_PXP_WFE_B_STORE_CTRL_CH0_PACK_IN_SEL(1)|
-		BF_PXP_WFE_B_STORE_CTRL_CH0_FILL_DATA_EN(0)|
-		BF_PXP_WFE_B_STORE_CTRL_CH0_WR_NUM_BYTES(8)|
-		BF_PXP_WFE_B_STORE_CTRL_CH0_COMBINE_2CHANNEL(1) |
-		BF_PXP_WFE_B_STORE_CTRL_CH0_ARBIT_EN(0),
-		pxp->base + HW_PXP_WFE_B_STORE_CTRL_CH0);
-
-	__raw_writel(
-		 BF_PXP_WFE_B_STORE_CTRL_CH1_CH_EN(1)|
-		 BF_PXP_WFE_B_STORE_CTRL_CH1_BLOCK_EN(0)|
-		 BF_PXP_WFE_B_STORE_CTRL_CH1_BLOCK_16(0)|
-		 BF_PXP_WFE_B_STORE_CTRL_CH1_HANDSHAKE_EN(0)|
-		 BF_PXP_WFE_B_STORE_CTRL_CH1_ARRAY_EN(0)|
-		 BF_PXP_WFE_B_STORE_CTRL_CH1_ARRAY_LINE_NUM(0)|
-		 BF_PXP_WFE_B_STORE_CTRL_CH1_STORE_BYPASS_EN(0)|
-		 BF_PXP_WFE_B_STORE_CTRL_CH1_STORE_MEMORY_EN(1)|
-		 BF_PXP_WFE_B_STORE_CTRL_CH1_PACK_IN_SEL(1)|
-		 BF_PXP_WFE_B_STORE_CTRL_CH1_WR_NUM_BYTES(16),
-		pxp->base + HW_PXP_WFE_B_STORE_CTRL_CH1);
-
-	__raw_writel(
-		BF_PXP_WFE_B_STORE_SHIFT_CTRL_CH0_OUTPUT_ACTIVE_BPP(0)|
-		BF_PXP_WFE_B_STORE_SHIFT_CTRL_CH0_OUT_YUV422_1P_EN(0)|
-		BF_PXP_WFE_B_STORE_SHIFT_CTRL_CH0_OUT_YUV422_2P_EN(0)|
-		BF_PXP_WFE_B_STORE_SHIFT_CTRL_CH0_SHIFT_BYPASS(0),
-		pxp->base + HW_PXP_WFE_B_STORE_SHIFT_CTRL_CH0);
-
-
-	__raw_writel(
-		BF_PXP_WFE_B_STORE_SHIFT_CTRL_CH1_OUTPUT_ACTIVE_BPP(1)|
-		BF_PXP_WFE_B_STORE_SHIFT_CTRL_CH1_OUT_YUV422_1P_EN(0)|
-		BF_PXP_WFE_B_STORE_SHIFT_CTRL_CH1_OUT_YUV422_2P_EN(0),
-		pxp->base + HW_PXP_WFE_B_STORE_SHIFT_CTRL_CH1);
-
-	__raw_writel(BF_PXP_WFE_B_STORE_FILL_DATA_CH0_FILL_DATA_CH0(0),
-		pxp->base + HW_PXP_WFE_B_STORE_FILL_DATA_CH0);
-
-	__raw_writel(BF_PXP_WFE_B_STORE_D_MASK0_H_CH0_D_MASK0_H_CH0(0x0),
-		pxp->base + HW_PXP_WFE_B_STORE_D_MASK0_H_CH0);
-
-	__raw_writel(BF_PXP_WFE_B_STORE_D_MASK0_L_CH0_D_MASK0_L_CH0(0xf), /* fetch CP */
-		pxp->base + HW_PXP_WFE_B_STORE_D_MASK0_L_CH0);
-
-	__raw_writel(BF_PXP_WFE_B_STORE_D_MASK1_H_CH0_D_MASK1_H_CH0(0x0),
-		pxp->base + HW_PXP_WFE_B_STORE_D_MASK1_H_CH0);
-
-	__raw_writel(BF_PXP_WFE_B_STORE_D_MASK1_L_CH0_D_MASK1_L_CH0(0xf00), /* fetch NP */
-		pxp->base + HW_PXP_WFE_B_STORE_D_MASK1_L_CH0);
-
-	__raw_writel(BF_PXP_WFE_B_STORE_D_MASK2_H_CH0_D_MASK2_H_CH0(0x0),
-		pxp->base + HW_PXP_WFE_B_STORE_D_MASK2_H_CH0);
-
-	__raw_writel(BF_PXP_WFE_B_STORE_D_MASK2_L_CH0_D_MASK2_L_CH0(0x00000),
-		pxp->base + HW_PXP_WFE_B_STORE_D_MASK2_L_CH0);
-
-	__raw_writel(BF_PXP_WFE_B_STORE_D_MASK3_H_CH0_D_MASK3_H_CH0(0x0),
-		pxp->base + HW_PXP_WFE_B_STORE_D_MASK3_H_CH0);
-
-	__raw_writel(BF_PXP_WFE_B_STORE_D_MASK3_L_CH0_D_MASK3_L_CH0(0x3f000000), /* fetch LUT */
-		pxp->base + HW_PXP_WFE_B_STORE_D_MASK3_L_CH0);
-
-	__raw_writel(BF_PXP_WFE_B_STORE_D_MASK4_H_CH0_D_MASK4_H_CH0(0xf),
-		pxp->base + HW_PXP_WFE_B_STORE_D_MASK4_H_CH0);
-
-	__raw_writel(BF_PXP_WFE_B_STORE_D_MASK4_L_CH0_D_MASK4_L_CH0(0x0), /* fetch Y4 */
-		pxp->base + HW_PXP_WFE_B_STORE_D_MASK4_L_CH0);
-
-	__raw_writel(0x0, pxp->base + HW_PXP_WFE_B_STORE_D_MASK5_H_CH0);
-	__raw_writel(0x0, pxp->base + HW_PXP_WFE_B_STORE_D_MASK5_L_CH0);
-	__raw_writel(0x0, pxp->base + HW_PXP_WFE_B_STORE_D_MASK6_H_CH0);
-	__raw_writel(0x0, pxp->base + HW_PXP_WFE_B_STORE_D_MASK6_L_CH0);
-	__raw_writel(0x0, pxp->base + HW_PXP_WFE_B_STORE_D_MASK7_H_CH0);
-	__raw_writel(0x0, pxp->base + HW_PXP_WFE_B_STORE_D_MASK7_L_CH0);
-
-	__raw_writel(
-		BF_PXP_WFE_B_STORE_D_SHIFT_L_CH0_D_SHIFT_WIDTH0(32) |
-		BF_PXP_WFE_B_STORE_D_SHIFT_L_CH0_D_SHIFT_FLAG0(1) |
-		BF_PXP_WFE_B_STORE_D_SHIFT_L_CH0_D_SHIFT_WIDTH1(28)|
-		BF_PXP_WFE_B_STORE_D_SHIFT_L_CH0_D_SHIFT_FLAG1(1) |
-		BF_PXP_WFE_B_STORE_D_SHIFT_L_CH0_D_SHIFT_WIDTH2(24)|
-		BF_PXP_WFE_B_STORE_D_SHIFT_L_CH0_D_SHIFT_FLAG2(1)|
-		BF_PXP_WFE_B_STORE_D_SHIFT_L_CH0_D_SHIFT_WIDTH3(18)|
-		BF_PXP_WFE_B_STORE_D_SHIFT_L_CH0_D_SHIFT_FLAG3(1),
-		pxp->base + HW_PXP_WFE_B_STORE_D_SHIFT_L_CH0);
-
-	__raw_writel(
-		BF_PXP_WFE_B_STORE_D_SHIFT_H_CH0_D_SHIFT_WIDTH4(28) |
-		BF_PXP_WFE_B_STORE_D_SHIFT_H_CH0_D_SHIFT_FLAG4(0) |
-		BF_PXP_WFE_B_STORE_D_SHIFT_H_CH0_D_SHIFT_WIDTH5(0)|
-		BF_PXP_WFE_B_STORE_D_SHIFT_H_CH0_D_SHIFT_FLAG5(0) |
-		BF_PXP_WFE_B_STORE_D_SHIFT_H_CH0_D_SHIFT_WIDTH6(0)|
-		BF_PXP_WFE_B_STORE_D_SHIFT_H_CH0_D_SHIFT_FLAG6(0) |
-		BF_PXP_WFE_B_STORE_D_SHIFT_H_CH0_D_SHIFT_WIDTH7(0),
-		pxp->base + HW_PXP_WFE_B_STORE_D_SHIFT_H_CH0);
-
-	__raw_writel(
-		BF_PXP_WFE_B_STORE_F_SHIFT_L_CH0_F_SHIFT_WIDTH0(1)|
-		BF_PXP_WFE_B_STORE_F_SHIFT_L_CH0_F_SHIFT_FLAG0(1)|
-		BF_PXP_WFE_B_STORE_F_SHIFT_L_CH0_F_SHIFT_WIDTH1(1)|
-		BF_PXP_WFE_B_STORE_F_SHIFT_L_CH0_F_SHIFT_FLAG1(0)|
-		BF_PXP_WFE_B_STORE_F_SHIFT_L_CH0_F_SHIFT_WIDTH2(32+6)|
-		BF_PXP_WFE_B_STORE_F_SHIFT_L_CH0_F_SHIFT_FLAG2(1)|
-		BF_PXP_WFE_B_STORE_F_SHIFT_L_CH0_F_SHIFT_WIDTH3(32+6)|
-		BF_PXP_WFE_B_STORE_F_SHIFT_L_CH0_F_SHIFT_FLAG3(1),
-		pxp->base + HW_PXP_WFE_B_STORE_F_SHIFT_L_CH0);
-
-	__raw_writel(
-		BF_PXP_WFE_B_STORE_F_SHIFT_H_CH0_F_SHIFT_WIDTH4(0)|
-		BF_PXP_WFE_B_STORE_F_SHIFT_H_CH0_F_SHIFT_FLAG4(0)|
-		BF_PXP_WFE_B_STORE_F_SHIFT_H_CH0_F_SHIFT_WIDTH5(0)|
-		BF_PXP_WFE_B_STORE_F_SHIFT_H_CH0_F_SHIFT_FLAG5(0)|
-		BF_PXP_WFE_B_STORE_F_SHIFT_H_CH0_F_SHIFT_WIDTH6(0)|
-		BF_PXP_WFE_B_STORE_F_SHIFT_H_CH0_F_SHIFT_FLAG6(0)|
-		BF_PXP_WFE_B_STORE_F_SHIFT_H_CH0_F_SHIFT_WIDTH7(0)|
-		BF_PXP_WFE_B_STORE_F_SHIFT_H_CH0_F_SHIFT_FLAG7(0),
-		pxp->base + HW_PXP_WFE_B_STORE_F_SHIFT_H_CH0);
-
-	__raw_writel(
-		BF_PXP_WFE_B_STORE_F_MASK_L_CH0_F_MASK0(0x1) |
-		BF_PXP_WFE_B_STORE_F_MASK_L_CH0_F_MASK1(0x2) |
-		BF_PXP_WFE_B_STORE_F_MASK_L_CH0_F_MASK2(0x4) |
-		BF_PXP_WFE_B_STORE_F_MASK_L_CH0_F_MASK3(0x8),
-		pxp->base + HW_PXP_WFE_B_STORE_F_MASK_L_CH0);
-
-	__raw_writel(
-		BF_PXP_WFE_B_STORE_F_MASK_H_CH0_F_MASK4(0x0)|
-		BF_PXP_WFE_B_STORE_F_MASK_H_CH0_F_MASK5(0x0)|
-		BF_PXP_WFE_B_STORE_F_MASK_H_CH0_F_MASK6(0x0)|
-		BF_PXP_WFE_B_STORE_F_MASK_H_CH0_F_MASK7(0x0),
-		pxp->base + HW_PXP_WFE_B_STORE_F_MASK_H_CH0);
-
-
-	/* ALU */
-	__raw_writel(BF_PXP_ALU_B_INST_ENTRY_ENTRY_ADDR(0),
-		pxp->base + HW_PXP_ALU_B_INST_ENTRY);
-
-	__raw_writel(BF_PXP_ALU_B_PARAM_PARAM0(0) |
-		BF_PXP_ALU_B_PARAM_PARAM1(0),
-		pxp->base + HW_PXP_ALU_B_PARAM);
-
-	__raw_writel(BF_PXP_ALU_B_CONFIG_BUF_ADDR(0),
-		pxp->base + HW_PXP_ALU_B_CONFIG);
-
-	__raw_writel(BF_PXP_ALU_B_LUT_CONFIG_MODE(0) |
-		BF_PXP_ALU_B_LUT_CONFIG_EN(0),
-		pxp->base + HW_PXP_ALU_B_LUT_CONFIG);
-
-	__raw_writel(BF_PXP_ALU_B_LUT_DATA0_LUT_DATA_L(0),
-		pxp->base + HW_PXP_ALU_B_LUT_DATA0);
-
-	__raw_writel(BF_PXP_ALU_B_LUT_DATA1_LUT_DATA_H(0),
-		pxp->base + HW_PXP_ALU_B_LUT_DATA1);
-
-	__raw_writel(BF_PXP_ALU_B_CTRL_BYPASS    (1) |
-		BF_PXP_ALU_B_CTRL_ENABLE    (1) |
-		BF_PXP_ALU_B_CTRL_START     (0) |
-		BF_PXP_ALU_B_CTRL_SW_RESET  (0),
-		pxp->base + HW_PXP_ALU_B_CTRL);
-
-	/* WFE A */
-	__raw_writel(0x00000000, pxp->base + HW_PXP_WFE_B_STAGE1_MUX0);
-	__raw_writel(0x00000000, pxp->base + HW_PXP_WFE_B_STAGE1_MUX1);
-	__raw_writel(0x00000000, pxp->base + HW_PXP_WFE_B_STAGE1_MUX2);
-	__raw_writel(0x03000000, pxp->base + HW_PXP_WFE_B_STAGE1_MUX3);
-	__raw_writel(0x00000003, pxp->base + HW_PXP_WFE_B_STAGE1_MUX4);
-	__raw_writel(0x04000000, pxp->base + HW_PXP_WFE_B_STAGE1_MUX5);
-	__raw_writel(0x0A090401, pxp->base + HW_PXP_WFE_B_STAGE1_MUX6);
-	__raw_writel(0x000B0B0A, pxp->base + HW_PXP_WFE_B_STAGE1_MUX7);
-	__raw_writel(0x00000000, pxp->base + HW_PXP_WFE_B_STAGE1_MUX8);
-
-	__raw_writel(0x1901290C, pxp->base + HW_PXP_WFE_B_STAGE2_MUX0);
-	__raw_writel(0x01290C02, pxp->base + HW_PXP_WFE_B_STAGE2_MUX1);
-	__raw_writel(0x290C0219, pxp->base + HW_PXP_WFE_B_STAGE2_MUX2);
-	__raw_writel(0x00021901, pxp->base + HW_PXP_WFE_B_STAGE2_MUX3);
-	__raw_writel(0, pxp->base + HW_PXP_WFE_B_STAGE2_MUX4);
-	__raw_writel(0x1901290C, pxp->base + HW_PXP_WFE_B_STAGE2_MUX5);
-	__raw_writel(0x01290C02, pxp->base + HW_PXP_WFE_B_STAGE2_MUX6);
-	__raw_writel(0x1B0C0219, pxp->base + HW_PXP_WFE_B_STAGE2_MUX7);
-	__raw_writel(0x1C022A0F, pxp->base + HW_PXP_WFE_B_STAGE2_MUX8);
-	__raw_writel(0x02002A0F, pxp->base + HW_PXP_WFE_B_STAGE2_MUX9);
-	__raw_writel(0, pxp->base + HW_PXP_WFE_B_STAGE2_MUX10);
-	__raw_writel(0, pxp->base + HW_PXP_WFE_B_STAGE2_MUX11);
-	__raw_writel(0, pxp->base + HW_PXP_WFE_B_STAGE2_MUX12);
-
-	__raw_writel(0x2a123a1d, pxp->base + HW_PXP_WFE_B_STAGE3_MUX0);
-	__raw_writel(0x00000013, pxp->base + HW_PXP_WFE_B_STAGE3_MUX1);
-	__raw_writel(0x2a123a1d, pxp->base + HW_PXP_WFE_B_STAGE3_MUX2);
-	__raw_writel(0x00000013, pxp->base + HW_PXP_WFE_B_STAGE3_MUX3);
-	__raw_writel(0x3b202c1d, pxp->base + HW_PXP_WFE_B_STAGE3_MUX4);
-	__raw_writel(0x00000000, pxp->base + HW_PXP_WFE_B_STAGE3_MUX5);
-	__raw_writel(0x003b202d, pxp->base + HW_PXP_WFE_B_STAGE3_MUX6);
-	__raw_writel(0x00000000, pxp->base + HW_PXP_WFE_B_STAGE3_MUX7);
-	__raw_writel(0x07060504, pxp->base + HW_PXP_WFE_B_STAGE3_MUX8);
-	__raw_writel(0x00000008, pxp->base + HW_PXP_WFE_B_STAGE3_MUX9);
-	__raw_writel(0x03020100, pxp->base + HW_PXP_WFE_B_STAGE3_MUX10);
-
-	__raw_writel(0x00000000, pxp->base + HW_PXP_WFE_B_STG1_5X8_OUT0_0);
-	__raw_writel(0x00000000, pxp->base + HW_PXP_WFE_B_STG1_5X8_OUT0_1);
-	__raw_writel(0x00000000, pxp->base + HW_PXP_WFE_B_STG1_5X8_OUT0_2);
-	__raw_writel(0x00000000, pxp->base + HW_PXP_WFE_B_STG1_5X8_OUT0_3);
-	__raw_writel(0x00000000, pxp->base + HW_PXP_WFE_B_STG1_5X8_OUT0_4);
-	__raw_writel(0x00000000, pxp->base + HW_PXP_WFE_B_STG1_5X8_OUT0_5);
-	__raw_writel(0x00000000, pxp->base + HW_PXP_WFE_B_STG1_5X8_OUT0_6);
-	__raw_writel(0x00000000, pxp->base + HW_PXP_WFE_B_STG1_5X8_OUT0_7);
-
-	__raw_writel(0x00000000, pxp->base + HW_PXP_WFE_B_STG1_5X8_OUT1_0);
-	__raw_writel(0x00000000, pxp->base + HW_PXP_WFE_B_STG1_5X8_OUT1_1);
-	__raw_writel(0x00000000, pxp->base + HW_PXP_WFE_B_STG1_5X8_OUT1_2);
-	__raw_writel(0x00000000, pxp->base + HW_PXP_WFE_B_STG1_5X8_OUT1_3);
-	__raw_writel(0x00000000, pxp->base + HW_PXP_WFE_B_STG1_5X8_OUT1_4);
-	__raw_writel(0x00000000, pxp->base + HW_PXP_WFE_B_STG1_5X8_OUT1_5);
-	__raw_writel(0x00000000, pxp->base + HW_PXP_WFE_B_STG1_5X8_OUT1_6);
-	__raw_writel(0x00000000, pxp->base + HW_PXP_WFE_B_STG1_5X8_OUT1_7);
-
-	__raw_writel(0x00000000, pxp->base + HW_PXP_WFE_B_STAGE1_5X8_MASKS_0);
-
-	__raw_writel(0x00000000, pxp->base + HW_PXP_WFE_B_STG1_5X1_OUT0);
-	__raw_writel(0x00000000, pxp->base + HW_PXP_WFE_B_STG1_5X1_MASKS);
-
-	__raw_writel(0xFFFFFFFF, pxp->base + HW_PXP_WFE_B_STG1_8X1_OUT0_2);
-	__raw_writel(0xFFFFFFFF, pxp->base + HW_PXP_WFE_B_STG1_8X1_OUT0_3);
-	__raw_writel(0xFFFFFFFF, pxp->base + HW_PXP_WFE_B_STG1_8X1_OUT0_4);
-	__raw_writel(0xFFFFFFFF, pxp->base + HW_PXP_WFE_B_STG1_8X1_OUT0_5);
-	__raw_writel(0xFFFFFFFF, pxp->base + HW_PXP_WFE_B_STG1_8X1_OUT0_6);
-	__raw_writel(0xFFFFFFFF, pxp->base + HW_PXP_WFE_B_STG1_8X1_OUT0_7);
-
-	__raw_writel(0, pxp->base + HW_PXP_WFE_B_STG1_8X1_OUT1_0);
-	__raw_writel(0, pxp->base + HW_PXP_WFE_B_STG1_8X1_OUT1_1);
-	__raw_writel(0, pxp->base + HW_PXP_WFE_B_STG1_8X1_OUT1_2);
-	__raw_writel(0, pxp->base + HW_PXP_WFE_B_STG1_8X1_OUT1_3);
-	__raw_writel(0, pxp->base + HW_PXP_WFE_B_STG1_8X1_OUT1_4);
-	__raw_writel(0, pxp->base + HW_PXP_WFE_B_STG1_8X1_OUT1_5);
-	__raw_writel(0, pxp->base + HW_PXP_WFE_B_STG1_8X1_OUT1_6);
-	__raw_writel(0, pxp->base + HW_PXP_WFE_B_STG1_8X1_OUT1_7);
-
-	__raw_writel(0, pxp->base + HW_PXP_WFE_B_STG1_8X1_OUT2_0);
-	__raw_writel(0, pxp->base + HW_PXP_WFE_B_STG1_8X1_OUT2_1);
-	__raw_writel(0, pxp->base + HW_PXP_WFE_B_STG1_8X1_OUT2_2);
-	__raw_writel(0, pxp->base + HW_PXP_WFE_B_STG1_8X1_OUT2_3);
-	__raw_writel(0, pxp->base + HW_PXP_WFE_B_STG1_8X1_OUT2_4);
-	__raw_writel(0, pxp->base + HW_PXP_WFE_B_STG1_8X1_OUT2_5);
-	__raw_writel(0, pxp->base + HW_PXP_WFE_B_STG1_8X1_OUT2_6);
-	__raw_writel(0, pxp->base + HW_PXP_WFE_B_STG1_8X1_OUT2_7);
-
-	__raw_writel(0, pxp->base + HW_PXP_WFE_B_STG1_8X1_OUT3_0);
-	__raw_writel(0, pxp->base + HW_PXP_WFE_B_STG1_8X1_OUT3_1);
-	__raw_writel(0, pxp->base + HW_PXP_WFE_B_STG1_8X1_OUT3_2);
-	__raw_writel(0, pxp->base + HW_PXP_WFE_B_STG1_8X1_OUT3_3);
-	__raw_writel(0, pxp->base + HW_PXP_WFE_B_STG1_8X1_OUT3_4);
-	__raw_writel(0, pxp->base + HW_PXP_WFE_B_STG1_8X1_OUT3_5);
-	__raw_writel(0, pxp->base + HW_PXP_WFE_B_STG1_8X1_OUT3_6);
-	__raw_writel(0, pxp->base + HW_PXP_WFE_B_STG1_8X1_OUT3_7);
-
-	__raw_writel(0, pxp->base + HW_PXP_WFE_B_STG1_8X1_OUT4_0);
-	__raw_writel(0, pxp->base + HW_PXP_WFE_B_STG1_8X1_OUT4_1);
-	__raw_writel(0, pxp->base + HW_PXP_WFE_B_STG1_8X1_OUT4_2);
-	__raw_writel(0, pxp->base + HW_PXP_WFE_B_STG1_8X1_OUT4_3);
-	__raw_writel(0, pxp->base + HW_PXP_WFE_B_STG1_8X1_OUT4_4);
-	__raw_writel(0, pxp->base + HW_PXP_WFE_B_STG1_8X1_OUT4_5);
-	__raw_writel(0, pxp->base + HW_PXP_WFE_B_STG1_8X1_OUT4_6);
-	__raw_writel(0, pxp->base + HW_PXP_WFE_B_STG1_8X1_OUT4_7);
-
-	__raw_writel(0x00000700, pxp->base + HW_PXP_WFE_B_STG2_5X1_OUT0);
-	__raw_writel(0x00007000, pxp->base + HW_PXP_WFE_B_STG2_5X1_OUT1);
-	__raw_writel(0x0000A000, pxp->base + HW_PXP_WFE_B_STG2_5X1_OUT2);
-	__raw_writel(0x000000C0, pxp->base + HW_PXP_WFE_B_STG2_5X1_OUT3);
-	__raw_writel(0x070F1F1F, pxp->base + HW_PXP_WFE_B_STG2_5X1_MASKS);
-
-	__raw_writel(0x001F1F1F, pxp->base + HW_PXP_WFE_B_STAGE2_5X6_MASKS_0);
-	__raw_writel(0x3f232120, pxp->base + HW_PXP_WFE_B_STAGE2_5X6_ADDR_0);
-
-	__raw_writel(0x04040404, pxp->base + HW_PXP_WFE_B_STG2_5X6_OUT0_0);
-	__raw_writel(0x04040404, pxp->base + HW_PXP_WFE_B_STG2_5X6_OUT0_1);
-	__raw_writel(0x04050505, pxp->base + HW_PXP_WFE_B_STG2_5X6_OUT0_2);
-	__raw_writel(0x04040404, pxp->base + HW_PXP_WFE_B_STG2_5X6_OUT0_3);
-	__raw_writel(0x04040404, pxp->base + HW_PXP_WFE_B_STG2_5X6_OUT0_4);
-	__raw_writel(0x04040404, pxp->base + HW_PXP_WFE_B_STG2_5X6_OUT0_5);
-	__raw_writel(0x04040404, pxp->base + HW_PXP_WFE_B_STG2_5X6_OUT0_6);
-	__raw_writel(0x04040404, pxp->base + HW_PXP_WFE_B_STG2_5X6_OUT0_7);
-
-	__raw_writel(0x05050505, pxp->base + HW_PXP_WFE_B_STG2_5X6_OUT1_0);
-	__raw_writel(0x05050505, pxp->base + HW_PXP_WFE_B_STG2_5X6_OUT1_1);
-	__raw_writel(0x05080808, pxp->base + HW_PXP_WFE_B_STG2_5X6_OUT1_2);
-	__raw_writel(0x05050505, pxp->base + HW_PXP_WFE_B_STG2_5X6_OUT1_3);
-	__raw_writel(0x05050505, pxp->base + HW_PXP_WFE_B_STG2_5X6_OUT1_4);
-	__raw_writel(0x05050505, pxp->base + HW_PXP_WFE_B_STG2_5X6_OUT1_5);
-	__raw_writel(0x05050505, pxp->base + HW_PXP_WFE_B_STG2_5X6_OUT1_6);
-	__raw_writel(0x05050505, pxp->base + HW_PXP_WFE_B_STG2_5X6_OUT1_7);
-
-	__raw_writel(0x07070707, pxp->base + HW_PXP_WFE_B_STG2_5X6_OUT2_0);
-	__raw_writel(0x07070707, pxp->base + HW_PXP_WFE_B_STG2_5X6_OUT2_1);
-	__raw_writel(0x070C0C0C, pxp->base + HW_PXP_WFE_B_STG2_5X6_OUT2_2);
-	__raw_writel(0x07070707, pxp->base + HW_PXP_WFE_B_STG2_5X6_OUT2_3);
-	__raw_writel(0x0F0F0F0F, pxp->base + HW_PXP_WFE_B_STG2_5X6_OUT2_4);
-	__raw_writel(0x0F0F0F0F, pxp->base + HW_PXP_WFE_B_STG2_5X6_OUT2_5);
-	__raw_writel(0x0F0F0F0F, pxp->base + HW_PXP_WFE_B_STG2_5X6_OUT2_6);
-	__raw_writel(0x0F0F0F0F, pxp->base + HW_PXP_WFE_B_STG2_5X6_OUT2_7);
-
-	__raw_writel(0, pxp->base + HW_PXP_WFE_B_STG2_5X6_OUT3_0);
-	__raw_writel(0, pxp->base + HW_PXP_WFE_B_STG2_5X6_OUT3_1);
-	__raw_writel(0, pxp->base + HW_PXP_WFE_B_STG2_5X6_OUT3_2);
-	__raw_writel(0, pxp->base + HW_PXP_WFE_B_STG2_5X6_OUT3_3);
-	__raw_writel(0, pxp->base + HW_PXP_WFE_B_STG2_5X6_OUT3_4);
-	__raw_writel(0, pxp->base + HW_PXP_WFE_B_STG2_5X6_OUT3_5);
-	__raw_writel(0, pxp->base + HW_PXP_WFE_B_STG2_5X6_OUT3_6);
-	__raw_writel(0, pxp->base + HW_PXP_WFE_B_STG2_5X6_OUT3_7);
-
-	__raw_writel(0x070F1F1F, pxp->base + HW_PXP_WFE_B_STG3_F8X1_MASKS);
-
-	__raw_writel(0x00000700, pxp->base + HW_PXP_WFE_B_STG3_F8X1_OUT0_0);
-	__raw_writel(0x00000000, pxp->base + HW_PXP_WFE_B_STG3_F8X1_OUT0_1);
-	__raw_writel(0x00000000, pxp->base + HW_PXP_WFE_B_STG3_F8X1_OUT0_2);
-	__raw_writel(0x00000000, pxp->base + HW_PXP_WFE_B_STG3_F8X1_OUT0_3);
-	__raw_writel(0x00000000, pxp->base + HW_PXP_WFE_B_STG3_F8X1_OUT0_4);
-	__raw_writel(0x00000000, pxp->base + HW_PXP_WFE_B_STG3_F8X1_OUT0_5);
-	__raw_writel(0x00000000, pxp->base + HW_PXP_WFE_B_STG3_F8X1_OUT0_6);
-	__raw_writel(0x00000000, pxp->base + HW_PXP_WFE_B_STG3_F8X1_OUT0_7);
-
-	__raw_writel(0x00007000, pxp->base + HW_PXP_WFE_B_STG3_F8X1_OUT1_0);
-	__raw_writel(0x00000000, pxp->base + HW_PXP_WFE_B_STG3_F8X1_OUT1_1);
-	__raw_writel(0x00000000, pxp->base + HW_PXP_WFE_B_STG3_F8X1_OUT1_2);
-	__raw_writel(0x00000000, pxp->base + HW_PXP_WFE_B_STG3_F8X1_OUT1_3);
-	__raw_writel(0x00000000, pxp->base + HW_PXP_WFE_B_STG3_F8X1_OUT1_4);
-	__raw_writel(0x00000000, pxp->base + HW_PXP_WFE_B_STG3_F8X1_OUT1_5);
-	__raw_writel(0x00000000, pxp->base + HW_PXP_WFE_B_STG3_F8X1_OUT1_6);
-	__raw_writel(0x00000000, pxp->base + HW_PXP_WFE_B_STG3_F8X1_OUT1_7);
-
-	__raw_writel(0x0000A000, pxp->base + HW_PXP_WFE_B_STG3_F8X1_OUT2_0);
-	__raw_writel(0x00000000, pxp->base + HW_PXP_WFE_B_STG3_F8X1_OUT2_1);
-	__raw_writel(0x00000000, pxp->base + HW_PXP_WFE_B_STG3_F8X1_OUT2_2);
-	__raw_writel(0x00000000, pxp->base + HW_PXP_WFE_B_STG3_F8X1_OUT2_3);
-	__raw_writel(0x00000000, pxp->base + HW_PXP_WFE_B_STG3_F8X1_OUT2_4);
-	__raw_writel(0x00000000, pxp->base + HW_PXP_WFE_B_STG3_F8X1_OUT2_5);
-	__raw_writel(0x00000000, pxp->base + HW_PXP_WFE_B_STG3_F8X1_OUT2_6);
-	__raw_writel(0x00000000, pxp->base + HW_PXP_WFE_B_STG3_F8X1_OUT2_7);
-
-	__raw_writel(0x000000C0, pxp->base + HW_PXP_WFE_B_STG3_F8X1_OUT3_0);
-	__raw_writel(0x00000000, pxp->base + HW_PXP_WFE_B_STG3_F8X1_OUT3_1);
-	__raw_writel(0x00000000, pxp->base + HW_PXP_WFE_B_STG3_F8X1_OUT3_2);
-	__raw_writel(0x00000000, pxp->base + HW_PXP_WFE_B_STG3_F8X1_OUT3_3);
-	__raw_writel(0x00000000, pxp->base + HW_PXP_WFE_B_STG3_F8X1_OUT3_4);
-	__raw_writel(0x00000000, pxp->base + HW_PXP_WFE_B_STG3_F8X1_OUT3_5);
-	__raw_writel(0x00000000, pxp->base + HW_PXP_WFE_B_STG3_F8X1_OUT3_6);
-	__raw_writel(0x00000000, pxp->base + HW_PXP_WFE_B_STG3_F8X1_OUT3_7);
-
-	if (pxp->devdata && pxp->devdata->pxp_lut_cleanup_multiple)
-		pxp->devdata->pxp_lut_cleanup_multiple(pxp,
-					proc_data->lut_sels, 1);
 }
 
 /*
@@ -2883,26 +2433,6 @@ static void pxp_wfe_a_process(struct pxps *pxp)
 		BF_PXP_WFE_A_CTRL_SW_RESET(1),
 		pxp->base + HW_PXP_WFE_A_CTRL);
 
-       if (proc_data->alpha_en) {
-		__raw_writel(BF_PXP_WFA_ARRAY_FLAG0_MASK_SIGN_Y(0) |
-			BF_PXP_WFA_ARRAY_FLAG0_MASK_OFFSET_Y(0) |
-			BF_PXP_WFA_ARRAY_FLAG0_MASK_SIGN_X(0) |
-			BF_PXP_WFA_ARRAY_FLAG0_MASK_OFFSET_X(0) |
-			BF_PXP_WFA_ARRAY_FLAG0_MASK_BUF_SEL(0) |
-			BF_PXP_WFA_ARRAY_FLAG0_MASK_H_OFS(0) |
-			BF_PXP_WFA_ARRAY_FLAG0_MASK_L_OFS(0),
-			pxp->base + HW_PXP_WFA_ARRAY_FLAG0_MASK);
-        } else {
-		__raw_writel(BF_PXP_WFA_ARRAY_FLAG0_MASK_SIGN_Y(0) |
-			BF_PXP_WFA_ARRAY_FLAG0_MASK_OFFSET_Y(0) |
-			BF_PXP_WFA_ARRAY_FLAG0_MASK_SIGN_X(0) |
-			BF_PXP_WFA_ARRAY_FLAG0_MASK_OFFSET_X(0) |
-			BF_PXP_WFA_ARRAY_FLAG0_MASK_BUF_SEL(2) |
-			BF_PXP_WFA_ARRAY_FLAG0_MASK_H_OFS(0) |
-			BF_PXP_WFA_ARRAY_FLAG0_MASK_L_OFS(0),
-			pxp->base + HW_PXP_WFA_ARRAY_FLAG0_MASK);
-        }
-
 	/* disable CH1 when only doing detection */
 	v = __raw_readl(pxp->base + HW_PXP_WFE_A_STORE_CTRL_CH1);
 	if (proc_data->detection_only) {
@@ -2911,134 +2441,6 @@ static void pxp_wfe_a_process(struct pxps *pxp)
 	} else
 		v |= BF_PXP_WFE_A_STORE_CTRL_CH1_CH_EN(1);
 	__raw_writel(v, pxp->base + HW_PXP_WFE_A_STORE_CTRL_CH1);
-}
-
-static void pxp_wfe_a_process_v3p(struct pxps *pxp)
-{
-	struct pxp_config_data *config_data = &pxp->pxp_conf_state;
-	struct pxp_proc_data *proc_data = &config_data->proc_data;
-	struct pxp_layer_param *fetch_ch0 = &config_data->wfe_a_fetch_param[0];
-	struct pxp_layer_param *fetch_ch1 = &config_data->wfe_a_fetch_param[1];
-	struct pxp_layer_param *store_ch0 = &config_data->wfe_a_store_param[0];
-	struct pxp_layer_param *store_ch1 = &config_data->wfe_a_store_param[1];
-	int v;
-
-	if (fetch_ch0->width != fetch_ch1->width ||
-		fetch_ch0->height != fetch_ch1->height) {
-		dev_err(pxp->dev, "width/height should be same for two fetch "
-				"channels\n");
-	}
-
-	print_param(fetch_ch0, "wfe_a fetch_ch0");
-	print_param(fetch_ch1, "wfe_a fetch_ch1");
-	print_param(store_ch0, "wfe_a store_ch0");
-	print_param(store_ch1, "wfe_a store_ch1");
-
-	/* Fetch */
-	__raw_writel(fetch_ch0->paddr, pxp->base + HW_PXP_WFB_FETCH_BUF1_ADDR);
-
-	__raw_writel(BF_PXP_WFB_FETCH_BUF1_CORD_YCORD(fetch_ch0->top) |
-		BF_PXP_WFB_FETCH_BUF1_CORD_XCORD(fetch_ch0->left),
-		pxp->base + HW_PXP_WFB_FETCH_BUF1_CORD);
-
-	__raw_writel(fetch_ch0->stride, pxp->base + HW_PXP_WFB_FETCH_BUF1_PITCH);
-
-	__raw_writel(BF_PXP_WFB_FETCH_BUF1_SIZE_BUF_HEIGHT(fetch_ch0->height - 1) |
-		BF_PXP_WFB_FETCH_BUF1_SIZE_BUF_WIDTH(fetch_ch0->width - 1),
-		pxp->base + HW_PXP_WFB_FETCH_BUF1_SIZE);
-
-	__raw_writel(fetch_ch1->paddr, pxp->base + HW_PXP_WFB_FETCH_BUF2_ADDR);
-
-	__raw_writel(BF_PXP_WFB_FETCH_BUF2_CORD_YCORD(fetch_ch1->top) |
-		BF_PXP_WFB_FETCH_BUF2_CORD_XCORD(fetch_ch1->left),
-		pxp->base + HW_PXP_WFB_FETCH_BUF2_CORD);
-
-	__raw_writel(fetch_ch1->stride * 2, pxp->base + HW_PXP_WFB_FETCH_BUF2_PITCH);
-
-	__raw_writel(BF_PXP_WFB_FETCH_BUF2_SIZE_BUF_HEIGHT(fetch_ch1->height - 1) |
-		BF_PXP_WFB_FETCH_BUF2_SIZE_BUF_WIDTH(fetch_ch1->width - 1),
-		pxp->base + HW_PXP_WFB_FETCH_BUF2_SIZE);
-
-	/* Store */
-	__raw_writel(BF_PXP_WFE_B_STORE_SIZE_CH0_OUT_WIDTH(store_ch0->width - 1) |
-		BF_PXP_WFE_B_STORE_SIZE_CH0_OUT_HEIGHT(store_ch0->height - 1),
-		pxp->base + HW_PXP_WFE_B_STORE_SIZE_CH0);
-
-
-	__raw_writel(BF_PXP_WFE_B_STORE_SIZE_CH1_OUT_WIDTH(store_ch1->width - 1) |
-		BF_PXP_WFE_B_STORE_SIZE_CH1_OUT_HEIGHT(store_ch1->height - 1),
-		pxp->base + HW_PXP_WFE_B_STORE_SIZE_CH1);
-
-	__raw_writel(BF_PXP_WFE_B_STORE_PITCH_CH0_OUT_PITCH(store_ch0->stride) |
-		BF_PXP_WFE_B_STORE_PITCH_CH1_OUT_PITCH(store_ch1->stride * 2),
-		pxp->base + HW_PXP_WFE_B_STORE_PITCH);
-
-	__raw_writel(BF_PXP_WFE_B_STORE_ADDR_0_CH0_OUT_BASE_ADDR0(store_ch0->paddr),
-		pxp->base + HW_PXP_WFE_B_STORE_ADDR_0_CH0);
-	__raw_writel(BF_PXP_WFE_B_STORE_ADDR_1_CH0_OUT_BASE_ADDR1(0),
-		pxp->base + HW_PXP_WFE_B_STORE_ADDR_1_CH0);
-
-	__raw_writel(BF_PXP_WFE_B_STORE_ADDR_0_CH1_OUT_BASE_ADDR0(
-		store_ch1->paddr + (store_ch1->left + store_ch1->top *
-		store_ch1->stride) * 2),
-		pxp->base + HW_PXP_WFE_B_STORE_ADDR_0_CH1);
-
-	__raw_writel(BF_PXP_WFE_B_STORE_ADDR_1_CH1_OUT_BASE_ADDR1(0),
-		pxp->base + HW_PXP_WFE_B_STORE_ADDR_1_CH1);
-
-	/* ALU */
-	__raw_writel(BF_PXP_ALU_B_BUF_SIZE_BUF_WIDTH(fetch_ch0->width) |
-	        BF_PXP_ALU_B_BUF_SIZE_BUF_HEIGHT(fetch_ch0->height),
-		pxp->base + HW_PXP_ALU_B_BUF_SIZE);
-
-	/* WFE */
-	__raw_writel(BF_PXP_WFE_B_DIMENSIONS_WIDTH(fetch_ch0->width) |
-		BF_PXP_WFE_B_DIMENSIONS_HEIGHT(fetch_ch0->height),
-		pxp->base + HW_PXP_WFE_B_DIMENSIONS);
-
-	/* Here it should be fetch_ch1 */
-	__raw_writel(BF_PXP_WFE_B_OFFSET_X_OFFSET(fetch_ch1->left) |
-		BF_PXP_WFE_B_OFFSET_Y_OFFSET(fetch_ch1->top),
-		pxp->base + HW_PXP_WFE_B_OFFSET);
-
-	__raw_writel((proc_data->lut & 0x000000FF) | 0x00000F00,
-			pxp->base + HW_PXP_WFE_B_SW_DATA_REGS);
-	__raw_writel((proc_data->partial_update | (proc_data->reagl_en << 1)),
-			pxp->base + HW_PXP_WFE_B_SW_FLAG_REGS);
-
-	__raw_writel(
-		BF_PXP_WFE_B_CTRL_ENABLE(1) |
-		BF_PXP_WFE_B_CTRL_SW_RESET(1),
-		pxp->base + HW_PXP_WFE_B_CTRL);
-
-       if (proc_data->alpha_en) {
-		__raw_writel(BF_PXP_WFB_ARRAY_FLAG0_MASK_SIGN_Y(0) |
-			BF_PXP_WFB_ARRAY_FLAG0_MASK_OFFSET_Y(0) |
-			BF_PXP_WFB_ARRAY_FLAG0_MASK_SIGN_X(0) |
-			BF_PXP_WFB_ARRAY_FLAG0_MASK_OFFSET_X(0) |
-			BF_PXP_WFB_ARRAY_FLAG0_MASK_BUF_SEL(0) |
-			BF_PXP_WFB_ARRAY_FLAG0_MASK_H_OFS(0) |
-			BF_PXP_WFB_ARRAY_FLAG0_MASK_L_OFS(0),
-			pxp->base + HW_PXP_WFB_ARRAY_FLAG0_MASK);
-        } else {
-		__raw_writel(BF_PXP_WFB_ARRAY_FLAG0_MASK_SIGN_Y(0) |
-			BF_PXP_WFB_ARRAY_FLAG0_MASK_OFFSET_Y(0) |
-			BF_PXP_WFB_ARRAY_FLAG0_MASK_SIGN_X(0) |
-			BF_PXP_WFB_ARRAY_FLAG0_MASK_OFFSET_X(0) |
-			BF_PXP_WFB_ARRAY_FLAG0_MASK_BUF_SEL(2) |
-			BF_PXP_WFB_ARRAY_FLAG0_MASK_H_OFS(0) |
-			BF_PXP_WFB_ARRAY_FLAG0_MASK_L_OFS(0),
-			pxp->base + HW_PXP_WFB_ARRAY_FLAG0_MASK);
-        }
-
-	/* disable CH1 when only doing detection */
-	v = __raw_readl(pxp->base + HW_PXP_WFE_B_STORE_CTRL_CH1);
-	if (proc_data->detection_only) {
-		v &= ~BF_PXP_WFE_B_STORE_CTRL_CH1_CH_EN(1);
-		printk(KERN_EMERG "%s: detection only happens\n", __func__);
-	} else
-		v |= BF_PXP_WFE_B_STORE_CTRL_CH1_CH_EN(1);
-	__raw_writel(v, pxp->base + HW_PXP_WFE_B_STORE_CTRL_CH1);
 }
 
 /*
@@ -3249,6 +2651,7 @@ static void pxp_wfe_b_configure(struct pxps *pxp)
 		pxp->base + HW_PXP_WFB_ARRAY_FLAG9_MASK);
 
 	pxp_sram_init(pxp, WFE_B, (u32)active_matrix_data_8x8, 64);
+
 
 	/* Store */
 	__raw_writel(
@@ -3945,40 +3348,6 @@ void pxp_fill(
 }
 EXPORT_SYMBOL(pxp_fill);
 
-static void pxp_lut_cleanup_multiple(struct pxps *pxp, u64 lut, bool set)
-{
-	struct pxp_config_data *pxp_conf = &pxp->pxp_conf_state;
-	struct pxp_proc_data *proc_data = &pxp_conf->proc_data;
-
-	if (proc_data->lut_cleanup == 1) {
-		if (set) {
-			__raw_writel((u32)lut, pxp->base + HW_PXP_WFE_A_STG1_8X1_OUT1_0 + 0x4);
-			__raw_writel((u32)(lut>>32), pxp->base + HW_PXP_WFE_A_STG1_8X1_OUT1_1 + 0x4);
-		} else {
-			pxp_luts_deactivate(pxp, lut);
-			__raw_writel(0, pxp->base + HW_PXP_WFE_A_STG1_8X1_OUT1_0);
-			__raw_writel(0, pxp->base + HW_PXP_WFE_A_STG1_8X1_OUT1_1);
-		}
-	}
-}
-
-static void pxp_lut_cleanup_multiple_v3p(struct pxps *pxp, u64 lut, bool set)
-{
-	struct pxp_config_data *pxp_conf = &pxp->pxp_conf_state;
-	struct pxp_proc_data *proc_data = &pxp_conf->proc_data;
-
-	if (proc_data->lut_cleanup == 1) {
-		if (set) {
-			__raw_writel((u32)lut, pxp->base + HW_PXP_WFE_B_STG1_8X1_OUT1_0 + 0x4);
-			__raw_writel((u32)(lut>>32), pxp->base + HW_PXP_WFE_B_STG1_8X1_OUT1_1 + 0x4);
-		} else {
-			pxp_luts_deactivate(pxp, lut);
-			__raw_writel(0, pxp->base + HW_PXP_WFE_B_STG1_8X1_OUT1_0);
-			__raw_writel(0, pxp->base + HW_PXP_WFE_B_STG1_8X1_OUT1_1);
-		}
-	}
-}
-
 #ifdef CONFIG_MXC_FPGA_M4_TEST
 void m4_process(void)
 {
@@ -4009,20 +3378,6 @@ static void pxp_lut_status_set(struct pxps *pxp, unsigned int lut)
 	}
 }
 
-static void pxp_lut_status_set_v3p(struct pxps *pxp, unsigned int lut)
-{
-	if(lut<32)
-		__raw_writel(
-				__raw_readl(pxp_reg_base + HW_PXP_WFE_B_STG1_8X1_OUT0_0) | (1 << lut),
-				pxp->base + HW_PXP_WFE_B_STG1_8X1_OUT0_0);
-	else {
-		lut = lut -32;
-		__raw_writel(
-				__raw_readl(pxp_reg_base + HW_PXP_WFE_B_STG1_8X1_OUT0_1) | (1 << lut),
-				pxp->base + HW_PXP_WFE_B_STG1_8X1_OUT0_1);
-	}
-}
-
 static void pxp_luts_activate(struct pxps *pxp, u64 lut_status)
 {
 	int i = 0;
@@ -4032,8 +3387,7 @@ static void pxp_luts_activate(struct pxps *pxp, u64 lut_status)
 
 	for (i = 0; i < 64; i++) {
 		if (lut_status & (1ULL << i))
-			if (pxp->devdata && pxp->devdata->pxp_lut_status_set)
-				pxp->devdata->pxp_lut_status_set(pxp, i);
+			pxp_lut_status_set(pxp, i);
 	}
 }
 
@@ -4052,26 +3406,11 @@ static void pxp_lut_status_clr(unsigned int lut)
 	}
 }
 
-static void pxp_lut_status_clr_v3p(unsigned int lut)
-{
-	if(lut<32)
-		__raw_writel(
-				__raw_readl(pxp_reg_base + HW_PXP_WFE_B_STG1_8X1_OUT0_0) & (~(1 << lut)),
-				pxp_reg_base + HW_PXP_WFE_B_STG1_8X1_OUT0_0);
-	else
-	{
-		lut = lut -32;
-		__raw_writel(
-				__raw_readl(pxp_reg_base + HW_PXP_WFE_B_STG1_8X1_OUT0_1) & (~(1 << lut)),
-				pxp_reg_base + HW_PXP_WFE_B_STG1_8X1_OUT0_1);
-	}
-}
-
 /* this function should be called in the epdc
  * driver explicitly when some epdc lut becomes
  * idle. So it should be exported.
  */
-static void pxp_luts_deactivate(struct pxps *pxp, u64 lut_status)
+void pxp_luts_deactivate(u64 lut_status)
 {
 	int i = 0;
 
@@ -4080,8 +3419,7 @@ static void pxp_luts_deactivate(struct pxps *pxp, u64 lut_status)
 
 	for (i = 0; i < 64; i++) {
 		if (lut_status & (1ULL << i))
-			if (pxp->devdata && pxp->devdata->pxp_lut_status_clr)
-				pxp->devdata->pxp_lut_status_clr(i);
+			pxp_lut_status_clr(i);
 	}
 }
 
@@ -4112,15 +3450,14 @@ static void pxp_histogram_enable(struct pxps *pxp,
 			pxp->base + HW_PXP_HIST_B_CTRL);
 }
 
-static void pxp_histogram_status_report(struct pxps *pxp, u32 *hist_status, u32 *pixel_nums)
+static void pxp_histogram_status_report(struct pxps *pxp, u32 *hist_status)
 {
 	BUG_ON(!hist_status);
 
 	*hist_status = (__raw_readl(pxp->base + HW_PXP_HIST_B_CTRL) & BM_PXP_HIST_B_CTRL_STATUS)
 			>> BP_PXP_HIST_B_CTRL_STATUS;
-	*pixel_nums = __raw_readl(pxp->base + HW_PXP_HIST_B_TOTAL_PIXEL);
 	dev_dbg(pxp->dev, "%d pixels are used to calculate histogram status %d\n",
-			*pixel_nums, *hist_status);
+			__raw_readl(pxp->base + HW_PXP_HIST_B_TOTAL_PIXEL), *hist_status);
 }
 
 static void pxp_histogram_disable(struct pxps *pxp)
@@ -4457,149 +3794,80 @@ static void dither_store_config(struct pxps *pxp)
 
 static void pxp_set_final_lut_data(struct pxps *pxp)
 {
-	struct pxp_config_data *pxp_conf = &pxp->pxp_conf_state;
-	struct pxp_proc_data *proc_data = &pxp_conf->proc_data;
+	__raw_writel(
+			BF_PXP_DITHER_FINAL_LUT_DATA0_DATA0(0x0) |
+			BF_PXP_DITHER_FINAL_LUT_DATA0_DATA1(0x0) |
+			BF_PXP_DITHER_FINAL_LUT_DATA0_DATA2(0x0) |
+			BF_PXP_DITHER_FINAL_LUT_DATA0_DATA3(0x0),
+			pxp->base + HW_PXP_DITHER_FINAL_LUT_DATA0);
 
-	if(proc_data->quant_bit < 2) {
-		pxp_sram_init(pxp, DITHER0_LUT, (u32)bit1_dither_data_8x8, 64);
+	__raw_writel(
+			BF_PXP_DITHER_FINAL_LUT_DATA1_DATA4(0x0) |
+			BF_PXP_DITHER_FINAL_LUT_DATA1_DATA5(0x0) |
+			BF_PXP_DITHER_FINAL_LUT_DATA1_DATA6(0x0) |
+			BF_PXP_DITHER_FINAL_LUT_DATA1_DATA7(0x0),
+			pxp->base + HW_PXP_DITHER_FINAL_LUT_DATA1);
 
-		__raw_writel(
-				BF_PXP_DITHER_FINAL_LUT_DATA0_DATA0(0x0) |
-				BF_PXP_DITHER_FINAL_LUT_DATA0_DATA1(0x0) |
-				BF_PXP_DITHER_FINAL_LUT_DATA0_DATA2(0x0) |
-				BF_PXP_DITHER_FINAL_LUT_DATA0_DATA3(0x0),
-				pxp->base + HW_PXP_DITHER_FINAL_LUT_DATA0);
+	__raw_writel(
+			BF_PXP_DITHER_FINAL_LUT_DATA2_DATA8(0xff) |
+			BF_PXP_DITHER_FINAL_LUT_DATA2_DATA9(0xff) |
+			BF_PXP_DITHER_FINAL_LUT_DATA2_DATA10(0xff)|
+			BF_PXP_DITHER_FINAL_LUT_DATA2_DATA11(0xff),
+			pxp->base + HW_PXP_DITHER_FINAL_LUT_DATA2);
 
-		__raw_writel(
-				BF_PXP_DITHER_FINAL_LUT_DATA1_DATA4(0x0) |
-				BF_PXP_DITHER_FINAL_LUT_DATA1_DATA5(0x0) |
-				BF_PXP_DITHER_FINAL_LUT_DATA1_DATA6(0x0) |
-				BF_PXP_DITHER_FINAL_LUT_DATA1_DATA7(0x0),
-				pxp->base + HW_PXP_DITHER_FINAL_LUT_DATA1);
-
-		__raw_writel(
-				BF_PXP_DITHER_FINAL_LUT_DATA2_DATA8(0xf0) |
-				BF_PXP_DITHER_FINAL_LUT_DATA2_DATA9(0xf0) |
-				BF_PXP_DITHER_FINAL_LUT_DATA2_DATA10(0xf0)|
-				BF_PXP_DITHER_FINAL_LUT_DATA2_DATA11(0xf0),
-				pxp->base + HW_PXP_DITHER_FINAL_LUT_DATA2);
-
-		__raw_writel(
-				BF_PXP_DITHER_FINAL_LUT_DATA3_DATA12(0xf0) |
-				BF_PXP_DITHER_FINAL_LUT_DATA3_DATA13(0xf0) |
-				BF_PXP_DITHER_FINAL_LUT_DATA3_DATA14(0xf0) |
-				BF_PXP_DITHER_FINAL_LUT_DATA3_DATA15(0xf0),
-				pxp->base + HW_PXP_DITHER_FINAL_LUT_DATA3);
-	} else if(proc_data->quant_bit < 4) {
-		pxp_sram_init(pxp, DITHER0_LUT, (u32)bit2_dither_data_8x8, 64);
-
-		__raw_writel(
-				BF_PXP_DITHER_FINAL_LUT_DATA0_DATA0(0x0) |
-				BF_PXP_DITHER_FINAL_LUT_DATA0_DATA1(0x0) |
-				BF_PXP_DITHER_FINAL_LUT_DATA0_DATA2(0x0) |
-				BF_PXP_DITHER_FINAL_LUT_DATA0_DATA3(0x0),
-				pxp->base + HW_PXP_DITHER_FINAL_LUT_DATA0);
-
-		__raw_writel(
-				BF_PXP_DITHER_FINAL_LUT_DATA1_DATA4(0x50) |
-				BF_PXP_DITHER_FINAL_LUT_DATA1_DATA5(0x50) |
-				BF_PXP_DITHER_FINAL_LUT_DATA1_DATA6(0x50) |
-				BF_PXP_DITHER_FINAL_LUT_DATA1_DATA7(0x50),
-				pxp->base + HW_PXP_DITHER_FINAL_LUT_DATA1);
-
-		__raw_writel(
-				BF_PXP_DITHER_FINAL_LUT_DATA2_DATA8(0xa0) |
-				BF_PXP_DITHER_FINAL_LUT_DATA2_DATA9(0xa0) |
-				BF_PXP_DITHER_FINAL_LUT_DATA2_DATA10(0xa0)|
-				BF_PXP_DITHER_FINAL_LUT_DATA2_DATA11(0xa0),
-				pxp->base + HW_PXP_DITHER_FINAL_LUT_DATA2);
-
-		__raw_writel(
-				BF_PXP_DITHER_FINAL_LUT_DATA3_DATA12(0xf0) |
-				BF_PXP_DITHER_FINAL_LUT_DATA3_DATA13(0xf0) |
-				BF_PXP_DITHER_FINAL_LUT_DATA3_DATA14(0xf0) |
-				BF_PXP_DITHER_FINAL_LUT_DATA3_DATA15(0xf0),
-				pxp->base + HW_PXP_DITHER_FINAL_LUT_DATA3);
-	} else {
-		pxp_sram_init(pxp, DITHER0_LUT, (u32)bit4_dither_data_8x8, 64);
-
-		__raw_writel(
-				BF_PXP_DITHER_FINAL_LUT_DATA0_DATA0(0x0) |
-				BF_PXP_DITHER_FINAL_LUT_DATA0_DATA1(0x10) |
-				BF_PXP_DITHER_FINAL_LUT_DATA0_DATA2(0x20) |
-				BF_PXP_DITHER_FINAL_LUT_DATA0_DATA3(0x30),
-				pxp->base + HW_PXP_DITHER_FINAL_LUT_DATA0);
-
-		__raw_writel(
-				BF_PXP_DITHER_FINAL_LUT_DATA1_DATA4(0x40) |
-				BF_PXP_DITHER_FINAL_LUT_DATA1_DATA5(0x50) |
-				BF_PXP_DITHER_FINAL_LUT_DATA1_DATA6(0x60) |
-				BF_PXP_DITHER_FINAL_LUT_DATA1_DATA7(0x70),
-				pxp->base + HW_PXP_DITHER_FINAL_LUT_DATA1);
-
-		__raw_writel(
-				BF_PXP_DITHER_FINAL_LUT_DATA2_DATA8(0x80) |
-				BF_PXP_DITHER_FINAL_LUT_DATA2_DATA9(0x90) |
-				BF_PXP_DITHER_FINAL_LUT_DATA2_DATA10(0xa0)|
-				BF_PXP_DITHER_FINAL_LUT_DATA2_DATA11(0xb0),
-				pxp->base + HW_PXP_DITHER_FINAL_LUT_DATA2);
-
-		__raw_writel(
-				BF_PXP_DITHER_FINAL_LUT_DATA3_DATA12(0xc0) |
-				BF_PXP_DITHER_FINAL_LUT_DATA3_DATA13(0xd0) |
-				BF_PXP_DITHER_FINAL_LUT_DATA3_DATA14(0xe0) |
-				BF_PXP_DITHER_FINAL_LUT_DATA3_DATA15(0xf0),
-				pxp->base + HW_PXP_DITHER_FINAL_LUT_DATA3);
-	}
+	__raw_writel(
+			BF_PXP_DITHER_FINAL_LUT_DATA3_DATA12(0xff) |
+			BF_PXP_DITHER_FINAL_LUT_DATA3_DATA13(0xff) |
+			BF_PXP_DITHER_FINAL_LUT_DATA3_DATA14(0xff) |
+			BF_PXP_DITHER_FINAL_LUT_DATA3_DATA15(0xff),
+			pxp->base + HW_PXP_DITHER_FINAL_LUT_DATA3);
 }
 
 static void pxp_dithering_process(struct pxps *pxp)
 {
 	struct pxp_config_data *pxp_conf = &pxp->pxp_conf_state;
 	struct pxp_proc_data *proc_data = &pxp_conf->proc_data;
-	u32 val = 0;
 
-	if (pxp->devdata && pxp->devdata->pxp_dithering_configure)
-		pxp->devdata->pxp_dithering_configure(pxp);
+	dither_prefetch_config(pxp);
+	dither_store_config(pxp);
+	pxp_sram_init(pxp, DITHER0_LUT, (u32)dither_data_8x8, 64);
 
-	if (pxp_is_v3(pxp))
-		val = BF_PXP_DITHER_CTRL_ENABLE0            (1) |
-		      BF_PXP_DITHER_CTRL_ENABLE1            (0) |
-		      BF_PXP_DITHER_CTRL_ENABLE2            (0) |
-		      BF_PXP_DITHER_CTRL_DITHER_MODE2       (0) |
-		      BF_PXP_DITHER_CTRL_DITHER_MODE1       (0) |
-		      BF_PXP_DITHER_CTRL_DITHER_MODE0(proc_data->dither_mode) |
-		      BF_PXP_DITHER_CTRL_LUT_MODE           (0) |
-		      BF_PXP_DITHER_CTRL_IDX_MATRIX0_SIZE   (1) |
-		      BF_PXP_DITHER_CTRL_IDX_MATRIX1_SIZE   (0) |
-		      BF_PXP_DITHER_CTRL_IDX_MATRIX2_SIZE   (0) |
-		      BF_PXP_DITHER_CTRL_BUSY2              (0) |
-		      BF_PXP_DITHER_CTRL_BUSY1              (0) |
-		      BF_PXP_DITHER_CTRL_BUSY0              (0);
-	else if (pxp_is_v3p(pxp)) {
-		if (proc_data->dither_mode != 0 &&
-			proc_data->dither_mode != 3) {
-			dev_err(pxp->dev, "Not supported dithering mode. "
-					"Forced to be Orderred mode!\n");
-			proc_data->dither_mode = 3;
-		}
+	__raw_writel(
+			BF_PXP_INIT_MEM_CTRL_ADDR(0) |
+			BF_PXP_INIT_MEM_CTRL_SELECT(0) |/*select the lut memory for access */
+			BF_PXP_INIT_MEM_CTRL_START(1),
+			pxp->base + HW_PXP_INIT_MEM_CTRL);
 
-		val = BF_PXP_DITHER_CTRL_ENABLE0            (1) |
-		      BF_PXP_DITHER_CTRL_ENABLE1            (1) |
-		      BF_PXP_DITHER_CTRL_ENABLE2            (1) |
-		      BF_PXP_DITHER_CTRL_DITHER_MODE2(proc_data->dither_mode) |
-		      BF_PXP_DITHER_CTRL_DITHER_MODE1(proc_data->dither_mode) |
-		      BF_PXP_DITHER_CTRL_DITHER_MODE0(proc_data->dither_mode) |
-		      BF_PXP_DITHER_CTRL_LUT_MODE           (0) |
-		      BF_PXP_DITHER_CTRL_IDX_MATRIX0_SIZE   (1) |
-		      BF_PXP_DITHER_CTRL_IDX_MATRIX1_SIZE   (1) |
-		      BF_PXP_DITHER_CTRL_IDX_MATRIX2_SIZE   (1) |
-		      BF_PXP_DITHER_CTRL_FINAL_LUT_ENABLE   (0) |
-		      BF_PXP_DITHER_CTRL_BUSY2              (0) |
-		      BF_PXP_DITHER_CTRL_BUSY1              (0) |
-		      BF_PXP_DITHER_CTRL_BUSY0              (0);
+
+	{
+		int i;
+		for (i = 0; i < 64; i++)
+			__raw_writel(
+					BF_PXP_INIT_MEM_DATA_DATA(dither_data_8x8[i]),
+					pxp->base + HW_PXP_INIT_MEM_DATA);
 	}
-	__raw_writel(val, pxp->base + HW_PXP_DITHER_CTRL);
+
+	__raw_writel(
+			BF_PXP_INIT_MEM_CTRL_ADDR(0) |
+			BF_PXP_INIT_MEM_CTRL_SELECT(0) |/*select the lut memory for access*/
+			BF_PXP_INIT_MEM_CTRL_START(0),
+			pxp->base + HW_PXP_INIT_MEM_CTRL);
+
+	__raw_writel(
+			BF_PXP_DITHER_CTRL_ENABLE0            (1) |
+			BF_PXP_DITHER_CTRL_ENABLE1            (0) |
+			BF_PXP_DITHER_CTRL_ENABLE2            (0) |
+			BF_PXP_DITHER_CTRL_DITHER_MODE2       (0) |
+			BF_PXP_DITHER_CTRL_DITHER_MODE1       (0) |
+			BF_PXP_DITHER_CTRL_DITHER_MODE0       (proc_data->dither_mode) |
+			BF_PXP_DITHER_CTRL_LUT_MODE           (0) |
+			BF_PXP_DITHER_CTRL_IDX_MATRIX0_SIZE   (1) |
+			BF_PXP_DITHER_CTRL_IDX_MATRIX1_SIZE   (0) |
+			BF_PXP_DITHER_CTRL_IDX_MATRIX2_SIZE   (0) |
+			BF_PXP_DITHER_CTRL_BUSY2              (0) |
+			BF_PXP_DITHER_CTRL_BUSY1              (0) |
+			BF_PXP_DITHER_CTRL_BUSY0              (0),
+			pxp->base + HW_PXP_DITHER_CTRL);
 
 	switch(proc_data->dither_mode) {
 		case PXP_DITHER_PASS_THROUGH:
@@ -4636,73 +3904,6 @@ static void pxp_dithering_process(struct pxps *pxp)
 	}
 }
 
-static void pxp_dithering_configure(struct pxps *pxp)
-{
-	dither_prefetch_config(pxp);
-	dither_store_config(pxp);
-}
-
-static void pxp_dithering_configure_v3p(struct pxps *pxp)
-{
-	struct pxp_config_data *config_data = &pxp->pxp_conf_state;
-	struct pxp_layer_param *fetch_ch0 = &config_data->dither_fetch_param[0];
-	struct pxp_layer_param *store_ch0 = &config_data->dither_store_param[0];
-
-	__raw_writel(BF_PXP_CTRL_BLOCK_SIZE(BV_PXP_CTRL_BLOCK_SIZE__8X8) |
-			BF_PXP_CTRL_ROTATE0(BV_PXP_CTRL_ROTATE0__ROT_0) |
-			BM_PXP_CTRL_IRQ_ENABLE,
-			pxp->base + HW_PXP_CTRL);
-
-	__raw_writel(BF_PXP_PS_CTRL_DECX(BV_PXP_PS_CTRL_DECX__DISABLE) |
-			BF_PXP_PS_CTRL_DECY(BV_PXP_PS_CTRL_DECY__DISABLE) |
-			BF_PXP_PS_CTRL_FORMAT(BV_PXP_PS_CTRL_FORMAT__Y8),
-			pxp->base + HW_PXP_PS_CTRL);
-
-	__raw_writel(BF_PXP_OUT_CTRL_FORMAT(BV_PXP_OUT_CTRL_FORMAT__Y8),
-			pxp->base + HW_PXP_OUT_CTRL);
-
-	__raw_writel(BF_PXP_PS_SCALE_YSCALE(4096) |
-			BF_PXP_PS_SCALE_XSCALE(4096),
-			pxp->base + HW_PXP_PS_SCALE);
-
-	__raw_writel(store_ch0->paddr, pxp->base + HW_PXP_OUT_BUF);
-
-	__raw_writel(store_ch0->stride, pxp->base + HW_PXP_OUT_PITCH);
-
-	__raw_writel(BF_PXP_OUT_LRC_X(store_ch0->width - 1) |
-			BF_PXP_OUT_LRC_Y(store_ch0->height - 1),
-			pxp->base + HW_PXP_OUT_LRC);
-
-	__raw_writel(BF_PXP_OUT_AS_ULC_X(1) |
-			BF_PXP_OUT_AS_ULC_Y(1),
-			pxp->base + HW_PXP_OUT_AS_ULC);
-
-	__raw_writel(BF_PXP_OUT_AS_LRC_X(0) |
-			BF_PXP_OUT_AS_LRC_Y(0),
-			pxp->base + HW_PXP_OUT_AS_LRC);
-
-	__raw_writel(BF_PXP_OUT_PS_ULC_X(0) |
-			BF_PXP_OUT_PS_ULC_Y(0),
-			pxp->base + HW_PXP_OUT_PS_ULC);
-
-	__raw_writel(BF_PXP_OUT_PS_LRC_X(fetch_ch0->width - 1) |
-			BF_PXP_OUT_PS_LRC_Y(fetch_ch0->height - 1),
-			pxp->base + HW_PXP_OUT_PS_LRC);
-
-	__raw_writel(fetch_ch0->paddr, pxp->base + HW_PXP_PS_BUF);
-
-	__raw_writel(fetch_ch0->stride, pxp->base + HW_PXP_PS_PITCH);
-
-	__raw_writel(0x40000000, pxp->base + HW_PXP_CSC1_COEF0);
-
-	__raw_writel(BF_PXP_DITHER_STORE_SIZE_CH0_OUT_WIDTH(store_ch0->width-1)|
-		BF_PXP_DITHER_STORE_SIZE_CH0_OUT_HEIGHT(store_ch0->height-1),
-		pxp->base + HW_PXP_DITHER_STORE_SIZE_CH0);
-
-	__raw_writel(BF_PXP_DATA_PATH_CTRL0_MUX14_SEL(1),
-			pxp->base + HW_PXP_DATA_PATH_CTRL0_CLR);
-}
-
 static void pxp_start2(struct pxps *pxp)
 {
 	struct pxp_config_data *pxp_conf = &pxp->pxp_conf_state;
@@ -4716,7 +3917,6 @@ static void pxp_start2(struct pxps *pxp)
 	int dither_enable = ((proc_data->engine_enable & PXP_ENABLE_DITHER) == PXP_ENABLE_DITHER);
 	int handshake = ((proc_data->engine_enable & PXP_ENABLE_HANDSHAKE) == PXP_ENABLE_HANDSHAKE);
 	int dither_bypass = ((proc_data->engine_enable & PXP_ENABLE_DITHER_BYPASS) == PXP_ENABLE_DITHER_BYPASS);
-	u32 val = 0;
 
 	if (dither_enable)
 		count++;
@@ -4896,13 +4096,6 @@ static void pxp_start2(struct pxps *pxp)
 			pxp->base + HW_PXP_WFE_A_STORE_CTRL_CH1);
 		}
 
-		if (pxp_is_v3(pxp))
-			val = BF_PXP_CTRL_ENABLE_WFE_A(wfe_a_enable) |
-				BF_PXP_CTRL_ENABLE_WFE_B(wfe_b_enable);
-		else if (pxp_is_v3p(pxp))
-			val = BF_PXP_CTRL_ENABLE_WFE_B(wfe_a_enable |
-				wfe_b_enable);
-
 		/* trigger operation */
 		__raw_writel(
 		BF_PXP_CTRL_ENABLE(1) |
@@ -4919,6 +4112,8 @@ static void pxp_start2(struct pxps *pxp)
 		BF_PXP_CTRL_VFLIP1(0) |
 		BF_PXP_CTRL_ENABLE_PS_AS_OUT(0) |
 		BF_PXP_CTRL_ENABLE_DITHER(dither_enable) |
+		BF_PXP_CTRL_ENABLE_WFE_A(wfe_a_enable) |
+		BF_PXP_CTRL_ENABLE_WFE_B(wfe_b_enable) |
 		BF_PXP_CTRL_ENABLE_INPUT_FETCH_STORE(0) |
 		BF_PXP_CTRL_ENABLE_ALPHA_B(0) |
 		BF_PXP_CTRL_BLOCK_SIZE(1) |
@@ -4926,21 +4121,11 @@ static void pxp_start2(struct pxps *pxp)
 		BF_PXP_CTRL_ENABLE_LUT(1) |
 		BF_PXP_CTRL_ENABLE_ROTATE0(0) |
 		BF_PXP_CTRL_ENABLE_ROTATE1(0) |
-		BF_PXP_CTRL_EN_REPEAT(0) |
-		val,
+		BF_PXP_CTRL_EN_REPEAT(0),
 		pxp->base + HW_PXP_CTRL);
 
 		return;
 	}
-
-	if (pxp_is_v3(pxp))
-		val = BF_PXP_CTRL_ENABLE_WFE_A(wfe_a_enable) |
-		      BF_PXP_CTRL_ENABLE_WFE_B(wfe_b_enable) |
-		      BF_PXP_CTRL_ENABLE_INPUT_FETCH_STORE(0) |
-		      BF_PXP_CTRL_ENABLE_ALPHA_B(0);
-	else if (pxp_is_v3p(pxp))
-		val = BF_PXP_CTRL_ENABLE_WFE_B(wfe_a_enable |
-			wfe_b_enable);
 
 	__raw_writel(
 			BF_PXP_CTRL_ENABLE(1) |
@@ -4956,22 +4141,17 @@ static void pxp_start2(struct pxps *pxp)
 			BF_PXP_CTRL_VFLIP1(0) |
 			BF_PXP_CTRL_ENABLE_PS_AS_OUT(0) |
 			BF_PXP_CTRL_ENABLE_DITHER(dither_enable) |
+			BF_PXP_CTRL_ENABLE_WFE_A(wfe_a_enable) |
+			BF_PXP_CTRL_ENABLE_WFE_B(wfe_b_enable) |
+			BF_PXP_CTRL_ENABLE_INPUT_FETCH_STORE(0) |
+			BF_PXP_CTRL_ENABLE_ALPHA_B(0) |
 			BF_PXP_CTRL_BLOCK_SIZE(0) |
 			BF_PXP_CTRL_ENABLE_CSC2(0) |
 			BF_PXP_CTRL_ENABLE_LUT(0) |
 			BF_PXP_CTRL_ENABLE_ROTATE0(0) |
 			BF_PXP_CTRL_ENABLE_ROTATE1(0) |
-			BF_PXP_CTRL_EN_REPEAT(0) |
-			val,
+			BF_PXP_CTRL_EN_REPEAT(0),
 			pxp->base + HW_PXP_CTRL);
-
-	if (pxp_is_v3(pxp))
-		val = BF_PXP_CTRL2_ENABLE_WFE_A             (0) |
-		      BF_PXP_CTRL2_ENABLE_WFE_B             (0) |
-		      BF_PXP_CTRL2_ENABLE_INPUT_FETCH_STORE (0) |
-		      BF_PXP_CTRL2_ENABLE_ALPHA_B           (0);
-	else if (pxp_is_v3p(pxp))
-		val = BF_PXP_CTRL2_ENABLE_WFE_B(0);
 
 	__raw_writel(
 			BF_PXP_CTRL2_ENABLE                   (0) |
@@ -4982,6 +4162,10 @@ static void pxp_start2(struct pxps *pxp)
 			BF_PXP_CTRL2_HFLIP1                   (0) |
 			BF_PXP_CTRL2_VFLIP1                   (0) |
 			BF_PXP_CTRL2_ENABLE_DITHER            (0) |
+			BF_PXP_CTRL2_ENABLE_WFE_A             (0) |
+			BF_PXP_CTRL2_ENABLE_WFE_B             (0) |
+			BF_PXP_CTRL2_ENABLE_INPUT_FETCH_STORE (0) |
+			BF_PXP_CTRL2_ENABLE_ALPHA_B           (0) |
 			BF_PXP_CTRL2_BLOCK_SIZE               (0) |
 			BF_PXP_CTRL2_ENABLE_CSC2              (0) |
 			BF_PXP_CTRL2_ENABLE_LUT               (0) |
@@ -5019,6 +4203,7 @@ static int pxp_dma_init(struct pxps *pxp)
 		struct dma_chan *dma_chan = &pxp_chan->dma_chan;
 
 		spin_lock_init(&pxp_chan->lock);
+		mutex_init(&pxp_chan->chan_mutex);
 
 		/* Only one EOF IRQ for PxP, shared by all channels */
 		pxp_chan->eof_irq = pxp->irq;
@@ -5079,85 +4264,18 @@ static ssize_t block_size_store(struct device *dev,
 static DEVICE_ATTR(block_size, S_IWUSR | S_IRUGO,
 		   block_size_show, block_size_store);
 
-static struct platform_device_id imx_pxpdma_devtype[] = {
-	{
-		.name = "imx7d-pxp-dma",
-		.driver_data = PXP_V3,
-	}, {
-		.name = "imx6ull-pxp-dma",
-		.driver_data = PXP_V3P,
-	}, {
-		/* sentinel */
-	}
-};
-MODULE_DEVICE_TABLE(platform, imx_pxpdma_devtype);
-
 static const struct of_device_id imx_pxpdma_dt_ids[] = {
-	{ .compatible = "fsl,imx7d-pxp-dma", .data = &imx_pxpdma_devtype[0], },
-	{ .compatible = "fsl,imx6ull-pxp-dma", .data = &imx_pxpdma_devtype[1], },
+	{ .compatible = "fsl,imx7d-pxp-dma", },
 	{ /* sentinel */ }
 };
 MODULE_DEVICE_TABLE(of, imx_pxpdma_dt_ids);
 
-static int has_pending_task(struct pxps *pxp, struct pxp_channel *task)
-{
-	int found;
-	unsigned long flags;
-
-	spin_lock_irqsave(&pxp->lock, flags);
-	found = !list_empty(&head);
-	spin_unlock_irqrestore(&pxp->lock, flags);
-
-	return found;
-}
-
-static int pxp_dispatch_thread(void *argv)
-{
-	struct pxps *pxp = (struct pxps *)argv;
-	struct pxp_channel *pending = NULL;
-	unsigned long flags;
-
-	set_freezable();
-
-	while (!kthread_should_stop()) {
-		int ret;
-		ret = wait_event_freezable(pxp->thread_waitq,
-					has_pending_task(pxp, pending) ||
-					kthread_should_stop());
-		if (ret < 0)
-			continue;
-
-		if (kthread_should_stop())
-			break;
-
-		spin_lock_irqsave(&pxp->lock, flags);
-		pxp->pxp_ongoing = 1;
-		spin_unlock_irqrestore(&pxp->lock, flags);
-		init_completion(&pxp->complete);
-		pxpdma_dostart_work(pxp);
-		ret = wait_for_completion_timeout(&pxp->complete, 2 * HZ);
-		if (ret == 0) {
-			printk(KERN_EMERG "%s: task is timeout\n\n", __func__);
-			break;
-		}
-		if (pxp->devdata && pxp->devdata->pxp_lut_cleanup_multiple)
-			pxp->devdata->pxp_lut_cleanup_multiple(pxp, 0, 0);
-	}
-
-	return 0;
-}
-
 static int pxp_probe(struct platform_device *pdev)
 {
-	const struct of_device_id *of_id =
-			of_match_device(imx_pxpdma_dt_ids, &pdev->dev);
 	struct pxps *pxp;
 	struct resource *res;
 	int irq, std_irq;
 	int err = 0;
-
-	if (of_id)
-		pdev->id_entry = of_id->data;
 
 	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
 	irq = platform_get_irq(pdev, 0);
@@ -5184,6 +4302,7 @@ static int pxp_probe(struct platform_device *pdev)
 
 	spin_lock_init(&pxp->lock);
 	mutex_init(&pxp->clk_mutex);
+	sema_init(&pxp->sema, 1);
 
 	pxp->base = devm_ioremap_resource(&pdev->dev, res);
 	if (pxp->base == NULL) {
@@ -5194,7 +4313,6 @@ static int pxp_probe(struct platform_device *pdev)
 	pxp_reg_base = pxp->base;
 
 	pxp->pdev = pdev;
-	pxp->devdata = &pxp_devdata[pdev->id_entry->driver_data];
 
 	pxp->ipg_clk = devm_clk_get(&pdev->dev, "pxp_ipg");
 	pxp->axi_clk = devm_clk_get(&pdev->dev, "pxp_axi");
@@ -5215,6 +4333,9 @@ static int pxp_probe(struct platform_device *pdev)
 	if (err)
 		goto exit;
 
+	/* enable all the possible irq raised by PXP */
+	__raw_writel(0xffff, pxp->base + HW_PXP_IRQ_MASK);
+
 	/* Initialize DMA engine */
 	err = pxp_dma_init(pxp);
 	if (err < 0)
@@ -5228,12 +4349,6 @@ static int pxp_probe(struct platform_device *pdev)
 
 	device_create_file(&pdev->dev, &dev_attr_block_size);
 	pxp_clk_enable(pxp);
-	pxp_soft_reset(pxp);
-	if (pxp->devdata && pxp->devdata->pxp_data_path_config)
-		pxp->devdata->pxp_data_path_config(pxp);
-	/* enable all the possible irq raised by PXP */
-	__raw_writel(0xffff, pxp->base + HW_PXP_IRQ_MASK);
-
 	dump_pxp_reg(pxp);
 	pxp_clk_disable(pxp);
 
@@ -5241,20 +4356,6 @@ static int pxp_probe(struct platform_device *pdev)
 	init_timer(&pxp->clk_timer);
 	pxp->clk_timer.function = pxp_clkoff_timer;
 	pxp->clk_timer.data = (unsigned long)pxp;
-
-	init_waitqueue_head(&pxp->thread_waitq);
-	/* allocate a kernel thread to dispatch pxp conf */
-	pxp->dispatch = kthread_run(pxp_dispatch_thread, pxp, "pxp_dispatch");
-	if (IS_ERR(pxp->dispatch)) {
-		err = PTR_ERR(pxp->dispatch);
-		goto exit;
-	}
-	tx_desc_cache = kmem_cache_create("tx_desc", sizeof(struct pxp_tx_desc),
-					  0, SLAB_HWCACHE_ALIGN, NULL);
-	if (!tx_desc_cache) {
-		err = -ENOMEM;
-		goto exit;
-	}
 
 #ifdef	CONFIG_MXC_FPGA_M4_TEST
 	fpga_tcml_base = ioremap(FPGA_TCML_ADDR, SZ_32K);
@@ -5293,8 +4394,6 @@ static int pxp_remove(struct platform_device *pdev)
 	struct pxps *pxp = platform_get_drvdata(pdev);
 
 	unregister_pxp_device();
-	kmem_cache_destroy(tx_desc_cache);
-	kthread_stop(pxp->dispatch);
 	cancel_work_sync(&pxp->work);
 	del_timer_sync(&pxp->clk_timer);
 	clk_disable_unprepare(pxp->ipg_clk);
@@ -5327,11 +4426,7 @@ static int pxp_resume(struct device *dev)
 
 	pxp_clk_enable(pxp);
 	/* Pull PxP out of reset */
-	pxp_soft_reset(pxp);
-	if (pxp->devdata && pxp->devdata->pxp_data_path_config)
-		pxp->devdata->pxp_data_path_config(pxp);
-	/* enable all the possible irq raised by PXP */
-	__raw_writel(0xffff, pxp->base + HW_PXP_IRQ_MASK);
+	__raw_writel(0, pxp->base + HW_PXP_CTRL);
 	pxp_clk_disable(pxp);
 
 	return 0;

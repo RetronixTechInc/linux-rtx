@@ -1,5 +1,5 @@
 /*
- * Copyright 2013-2016 Freescale Semiconductor, Inc.
+ * Copyright 2013-2015 Freescale Semiconductor, Inc.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 as
@@ -18,7 +18,6 @@
 
 #include "common.h"
 #include "cpuidle.h"
-#include "hardware.h"
 
 static void __init imx6sl_fec_clk_init(void)
 {
@@ -47,11 +46,7 @@ static void __init imx6sl_init_late(void)
 	if (IS_ENABLED(CONFIG_ARM_IMX6Q_CPUFREQ))
 		platform_device_register_simple("imx6q-cpufreq", -1, NULL, 0);
 
-	/* cpuidle will be enabled later for i.MX6SLL */
-	if (cpu_is_imx6sll())
-		imx6sll_cpuidle_init();
-	else
-		imx6sl_cpuidle_init();
+	imx6sl_cpuidle_init();
 }
 
 static void __init imx6sl_init_machine(void)
@@ -64,8 +59,7 @@ static void __init imx6sl_init_machine(void)
 
 	of_platform_populate(NULL, of_default_bus_match_table, NULL, parent);
 
-	if (!cpu_is_imx6sll())
-		imx6sl_fec_init();
+	imx6sl_fec_init();
 	imx_anatop_init();
 	imx6sl_pm_init();
 }
@@ -90,7 +84,6 @@ static void __init imx6sl_map_io(void)
 
 static const char * const imx6sl_dt_compat[] __initconst = {
 	"fsl,imx6sl",
-	"fsl,imx6sll",
 	NULL,
 };
 

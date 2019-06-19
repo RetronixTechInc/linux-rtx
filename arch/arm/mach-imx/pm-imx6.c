@@ -1,5 +1,5 @@
 /*
- * Copyright 2011-2016 Freescale Semiconductor, Inc.
+ * Copyright 2011-2015 Freescale Semiconductor, Inc.
  * Copyright 2011 Linaro Ltd.
  *
  * The code contained herein is licensed under the GNU General Public
@@ -90,8 +90,6 @@
 #define UART_UBMR	0xa8
 #define UART_UBRC	0xac
 #define UART_UTS	0xb4
-
-#define IOMUXC_GPR5_CLOCK_AFCG_X_BYPASS_MASK	0xf800
 
 extern unsigned long iram_tlb_base_addr;
 extern unsigned long iram_tlb_phys_addr;
@@ -423,24 +421,6 @@ static const u32 imx6ul_mmdc_lpddr2_offset[] __initconst = {
 	0x800, 0x004, 0x01c,
 };
 
-static const u32 imx6sll_mmdc_io_offset[] __initconst = {
-	0x294, 0x298, 0x29c, 0x2a0, /* DQM0 ~ DQM3 */
-	0x544, 0x54c, 0x554, 0x558, /* GPR_B0DS ~ GPR_B3DS */
-	0x530, 0x540, 0x2ac, 0x52c, /* MODE_CTL, MODE, SDCLK_0, GPR_ADDDS */
-	0x2a4, 0x2a8,		    /* SDCKE0, SDCKE1*/
-};
-
-static const u32 imx6sll_mmdc_lpddr3_offset[] __initconst = {
-	0x01c, 0x85c, 0x800, 0x890,
-	0x8b8, 0x81c, 0x820, 0x82c,
-	0x830, 0x83c, 0x848, 0x850,
-	0x8c0, 0x8b8, 0x004, 0x008,
-	0x00c, 0x010, 0x038, 0x014,
-	0x018, 0x01c, 0x02c, 0x030,
-	0x040, 0x000, 0x020, 0x818,
-	0x800, 0x004, 0x01c,
-};
-
 static const struct imx6_pm_socdata imx6q_pm_data __initconst = {
 	.mmdc_compat = "fsl,imx6q-mmdc",
 	.src_compat = "fsl,imx6q-src",
@@ -529,17 +509,6 @@ static const struct imx6_pm_socdata imx6ul_lpddr2_pm_data __initconst = {
 	.mmdc_offset = imx6ul_mmdc_lpddr2_offset,
 };
 
-static const struct imx6_pm_socdata imx6sll_pm_data __initconst = {
-	.mmdc_compat = "fsl,imx6sll-mmdc",
-	.src_compat = "fsl,imx6sll-src",
-	.iomuxc_compat = "fsl,imx6sll-iomuxc",
-	.gpc_compat = "fsl,imx6sll-gpc",
-	.mmdc_io_num = ARRAY_SIZE(imx6sll_mmdc_io_offset),
-	.mmdc_io_offset = imx6sll_mmdc_io_offset,
-	.mmdc_num = ARRAY_SIZE(imx6sll_mmdc_lpddr3_offset),
-	.mmdc_offset = imx6sll_mmdc_lpddr3_offset,
-};
-
 static struct map_desc iram_tlb_io_desc __initdata = {
 	/* .virtual and .pfn are run-time assigned */
 	.length     = SZ_1M,
@@ -593,7 +562,7 @@ struct imx6_cpu_pm_info {
 	struct imx6_pm_base anatop_base;
 	u32 ttbr1; /* Store TTBR1 */
 	u32 mmdc_io_num; /* Number of MMDC IOs which need saved/restored. */
-	u32 mmdc_io_val[MX6_MAX_MMDC_IO_NUM][3]; /* To save offset, value, low power settings */
+	u32 mmdc_io_val[MX6_MAX_MMDC_IO_NUM][2]; /* To save offset and value */
 	u32 mmdc_num; /* Number of MMDC registers which need saved/restored. */
 	u32 mmdc_val[MX6_MAX_MMDC_NUM][2];
 } __aligned(8);
@@ -674,18 +643,11 @@ int imx6q_set_lpm(enum mxc_cpu_pwr_mode mode)
 		val |= 0x2 << BP_CLPCR_LPM;
 		val &= ~BM_CLPCR_VSTBY;
 		val &= ~BM_CLPCR_SBYOS;
-		if (cpu_is_imx6sl() || cpu_is_imx6sx() || cpu_is_imx6sll())
+		if (cpu_is_imx6sl() || cpu_is_imx6sx())
 			val |= BM_CLPCR_BYPASS_PMIC_READY;
 		if (cpu_is_imx6sl() || cpu_is_imx6sx() ||
-		    cpu_is_imx6ul() || cpu_is_imx6ull() || cpu_is_imx6sll())
+		    cpu_is_imx6ul())
 			val |= BM_CLPCR_BYP_MMDC_CH0_LPM_HS;
-		else if (cpu_is_imx6q() &&
-		    imx_mmdc_get_ddr_type() == IMX_DDR_TYPE_LPDDR2 &&
-		    imx_mmdc_get_lpddr2_2ch_mode() == IMX_LPDDR2_2CH_MODE) {
-			/* keep handshake enabled for lpddr2 2ch-mode */
-			val &= ~BM_CLPCR_BYP_MMDC_CH0_LPM_HS;
-			val &= ~BM_CLPCR_BYP_MMDC_CH1_LPM_HS;
-		}
 		else
 			val |= BM_CLPCR_BYP_MMDC_CH1_LPM_HS;
 		break;
@@ -699,18 +661,11 @@ int imx6q_set_lpm(enum mxc_cpu_pwr_mode mode)
 		val |= 0x3 << BP_CLPCR_STBY_COUNT;
 		val |= BM_CLPCR_VSTBY;
 		val |= BM_CLPCR_SBYOS;
-		if (cpu_is_imx6sl() || cpu_is_imx6sx() || cpu_is_imx6sll())
+		if (cpu_is_imx6sl() || cpu_is_imx6sx())
 			val |= BM_CLPCR_BYPASS_PMIC_READY;
 		if (cpu_is_imx6sl() || cpu_is_imx6sx() ||
-		    cpu_is_imx6ul() || cpu_is_imx6ull() || cpu_is_imx6sll())
+		    cpu_is_imx6ul())
 			val |= BM_CLPCR_BYP_MMDC_CH0_LPM_HS;
-		else if (cpu_is_imx6q() &&
-		    imx_mmdc_get_ddr_type() == IMX_DDR_TYPE_LPDDR2 &&
-		    imx_mmdc_get_lpddr2_2ch_mode() == IMX_LPDDR2_2CH_MODE) {
-			/* keep handshake enabled for lpddr2 2ch-mode */
-			val &= ~BM_CLPCR_BYP_MMDC_CH0_LPM_HS;
-			val &= ~BM_CLPCR_BYP_MMDC_CH1_LPM_HS;
-		}
 		else
 			val |= BM_CLPCR_BYP_MMDC_CH1_LPM_HS;
 		break;
@@ -732,11 +687,9 @@ int imx6q_set_lpm(enum mxc_cpu_pwr_mode mode)
 	 *
 	 * Note that IRQ #32 is GIC SPI #0.
 	 */
-	if (mode != WAIT_CLOCKED)
-		imx_gpc_hwirq_unmask(0);
+	imx_gpc_hwirq_unmask(0);
 	writel_relaxed(val, ccm_base + CLPCR);
-	if (mode != WAIT_CLOCKED)
-		imx_gpc_hwirq_mask(0);
+	imx_gpc_hwirq_mask(0);
 
 	return 0;
 }
@@ -771,7 +724,8 @@ static void imx6_console_save(unsigned int *regs)
 	regs[6] = readl_relaxed(console_base + UART_UTIM);
 	regs[7] = readl_relaxed(console_base + UART_UBIR);
 	regs[8] = readl_relaxed(console_base + UART_UBMR);
-	regs[9] = readl_relaxed(console_base + UART_UTS);
+	regs[9] = readl_relaxed(console_base + UART_UBRC);
+	regs[10] = readl_relaxed(console_base + UART_UTS);
 }
 
 static void imx6_console_restore(unsigned int *regs)
@@ -784,7 +738,8 @@ static void imx6_console_restore(unsigned int *regs)
 	writel_relaxed(regs[6], console_base + UART_UTIM);
 	writel_relaxed(regs[7], console_base + UART_UBIR);
 	writel_relaxed(regs[8], console_base + UART_UBMR);
-	writel_relaxed(regs[9], console_base + UART_UTS);
+	writel_relaxed(regs[9], console_base + UART_UBRC);
+	writel_relaxed(regs[10], console_base + UART_UTS);
 	writel_relaxed(regs[0], console_base + UART_UCR1);
 	writel_relaxed(regs[1] | 0x1, console_base + UART_UCR2);
 	writel_relaxed(regs[2], console_base + UART_UCR3);
@@ -818,7 +773,7 @@ static void imx6_qspi_restore(struct qspi_regs *pregs, int reg_num)
 
 static int imx6q_pm_enter(suspend_state_t state)
 {
-	unsigned int console_saved_reg[10] = {0};
+	unsigned int console_saved_reg[11] = {0};
 	static unsigned int ccm_ccgr4, ccm_ccgr6;
 
 #ifdef CONFIG_SOC_IMX6SX
@@ -840,6 +795,7 @@ static int imx6q_pm_enter(suspend_state_t state)
 		}
 	}
 #endif
+
 	switch (state) {
 	case PM_SUSPEND_STANDBY:
 		imx6q_set_lpm(STOP_POWER_ON);
@@ -870,9 +826,6 @@ static int imx6q_pm_enter(suspend_state_t state)
 			imx6_enable_rbc(true);
 		imx_gpc_pre_suspend(true);
 		imx_anatop_pre_suspend();
-		if ((cpu_is_imx6ull() || cpu_is_imx6sll()) &&
-			imx_gpc_is_mf_mix_off())
-			imx6_console_save(console_saved_reg);
 		if (cpu_is_imx6sx() && imx_gpc_is_mf_mix_off()) {
 			ccm_ccgr4 = readl_relaxed(ccm_base + CCGR4);
 			ccm_ccgr6 = readl_relaxed(ccm_base + CCGR6);
@@ -911,9 +864,6 @@ static int imx6q_pm_enter(suspend_state_t state)
 					sizeof(qspi_regs_imx6sx) /
 					sizeof(struct qspi_regs));
 		}
-		if ((cpu_is_imx6ull() || cpu_is_imx6sll()) &&
-			imx_gpc_is_mf_mix_off())
-			imx6_console_restore(console_saved_reg);
 		if (cpu_is_imx6q() || cpu_is_imx6dl())
 			imx_smp_prepare();
 		imx_anatop_post_resume();
@@ -1132,20 +1082,6 @@ static int __init imx6q_suspend_init(const struct imx6_pm_socdata *socdata)
 		pm_info->mmdc_io_val[i][1] =
 			readl_relaxed(pm_info->iomuxc_base.vbase +
 			mmdc_io_offset_array[i]);
-		pm_info->mmdc_io_val[i][2] = 0;
-	}
-
-	/* i.MX6SLL has no DRAM RESET pin */
-	if (cpu_is_imx6sll()) {
-			pm_info->mmdc_io_val[pm_info->mmdc_io_num - 2][2] = 0x1000;
-			pm_info->mmdc_io_val[pm_info->mmdc_io_num - 1][2] = 0x1000;
-	} else {
-		if (pm_info->ddr_type == IMX_DDR_TYPE_LPDDR2) {
-			/* for LPDDR2, CKE0/1 and RESET pin need special setting */
-			pm_info->mmdc_io_val[pm_info->mmdc_io_num - 3][2] = 0x1000;
-			pm_info->mmdc_io_val[pm_info->mmdc_io_num - 2][2] = 0x1000;
-			pm_info->mmdc_io_val[pm_info->mmdc_io_num - 1][2] = 0x80000;
-		}
 	}
 
 	/* initialize MMDC settings */
@@ -1157,20 +1093,8 @@ static int __init imx6q_suspend_init(const struct imx6_pm_socdata *socdata)
 			mmdc_offset_array[i]);
 	}
 
-	if (cpu_is_imx6sll() && pm_info->ddr_type == IMX_MMDC_DDR_TYPE_LPDDR3) {
-		pm_info->mmdc_val[0][1] = 0x8000;
-		pm_info->mmdc_val[2][1] = 0xa1390003;
-		pm_info->mmdc_val[3][1] = 0x400000;
-		pm_info->mmdc_val[4][1] = 0x800;
-		pm_info->mmdc_val[13][1] = 0x800;
-		pm_info->mmdc_val[14][1] = 0x20052;
-		pm_info->mmdc_val[20][1] = 0x201718;
-		pm_info->mmdc_val[21][1] = 0x8000;
-		pm_info->mmdc_val[28][1] = 0xa1310003;
-	}
-
 	/* need to overwrite the value for some mmdc registers */
-	if ((cpu_is_imx6sx() || cpu_is_imx6ul() || cpu_is_imx6ull()) &&
+	if ((cpu_is_imx6sx() || cpu_is_imx6ul()) &&
 		pm_info->ddr_type != IMX_DDR_TYPE_LPDDR2) {
 		pm_info->mmdc_val[20][1] = (pm_info->mmdc_val[20][1]
 			& 0xffff0000) | 0x0202;
@@ -1189,7 +1113,7 @@ static int __init imx6q_suspend_init(const struct imx6_pm_socdata *socdata)
 		pm_info->mmdc_val[32][1] = 0xa1310003;
 	}
 
-	if ((cpu_is_imx6ul() || cpu_is_imx6ull()) &&
+	if (cpu_is_imx6ul() &&
 		pm_info->ddr_type == IMX_DDR_TYPE_LPDDR2) {
 		pm_info->mmdc_val[0][1] = 0x8000;
 		pm_info->mmdc_val[2][1] = 0xa1390003;
@@ -1258,23 +1182,6 @@ void __init imx6dl_pm_init(void)
 
 void __init imx6sl_pm_init(void)
 {
-	struct device_node *np;
-	struct regmap *gpr;
-
-	if (cpu_is_imx6sll()) {
-		imx6_pm_common_init(&imx6sll_pm_data);
-		np = of_find_node_by_path(
-			"/soc/aips-bus@02000000/spba-bus@02000000/serial@02020000");
-		if (np)
-			console_base = of_iomap(np, 0);
-		/* i.MX6SLL has bus auto clock gating function */
-		gpr = syscon_regmap_lookup_by_compatible("fsl,imx6q-iomuxc-gpr");
-		if (!IS_ERR(gpr))
-			regmap_update_bits(gpr, IOMUXC_GPR5,
-				IOMUXC_GPR5_CLOCK_AFCG_X_BYPASS_MASK, 0);
-		return;
-	}
-
 	imx6_pm_common_init(&imx6sl_pm_data);
 }
 
@@ -1337,17 +1244,8 @@ void __init imx6sx_pm_init(void)
 
 void __init imx6ul_pm_init(void)
 {
-	struct device_node *np;
-
 	if (imx_mmdc_get_ddr_type() == IMX_DDR_TYPE_LPDDR2)
 		imx6_pm_common_init(&imx6ul_lpddr2_pm_data);
 	else
 		imx6_pm_common_init(&imx6ul_pm_data);
-
-	if (cpu_is_imx6ull()) {
-		np = of_find_node_by_path(
-			"/soc/aips-bus@02000000/spba-bus@02000000/serial@02020000");
-		if (np)
-			console_base = of_iomap(np, 0);
-	}
 }

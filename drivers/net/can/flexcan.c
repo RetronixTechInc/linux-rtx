@@ -272,11 +272,6 @@ struct flexcan_priv {
 	struct regulator *reg_xceiver;
 	struct flexcan_stop_mode stm;
 	int id;
-    
-    int can_mode;
-    struct pinctrl *pinctrl;
-	struct pinctrl_state *pins_can;
-    struct pinctrl_state *pins_gpio;
 };
 
 static struct flexcan_devtype_data fsl_p1010_devtype_data = {
@@ -1250,59 +1245,6 @@ static const struct platform_device_id flexcan_id_table[] = {
 };
 MODULE_DEVICE_TABLE(platform, flexcan_id_table);
 
-static ssize_t can_mode_show(struct device *device, struct device_attribute *attr, char *buf)
-{
-	struct net_device *dev = dev_get_drvdata(device);
-	struct flexcan_priv *priv = netdev_priv(dev);
-    
-	if ( priv == NULL)
-	{
-		return -EINVAL ;
-	}
-	
-	switch( priv->can_mode )
-	{
-		case 0 : return sprintf(buf, "can");
-		case 1 : return sprintf(buf, "gpio");
-		default :
-			priv->can_mode = 0 ;
-			return sprintf(buf, "can");
-			
-	}
-
-	return sprintf(buf, "can");
-}
-
-static ssize_t can_mode_store(struct device *device, struct device_attribute *attr, const char *buf, size_t count)
-{
-	struct net_device *dev = dev_get_drvdata(device);
-	struct flexcan_priv *priv = netdev_priv(dev);
-	
-	if ( priv )
-	{
-		if (sysfs_streq(buf, "can"))
-		{
-			priv->can_mode = 0 ;
-            if ( priv->pinctrl && priv->pins_can )
-            {
-                pinctrl_select_state(priv->pinctrl, priv->pins_can);
-            }
-		}
-        if (sysfs_streq(buf, "gpio"))
-		{
-			priv->can_mode = 1 ;
-            if ( priv->pinctrl && priv->pins_gpio )
-            {
-                pinctrl_select_state(priv->pinctrl, priv->pins_gpio);
-            }
-		}
-	}
-	
-	return count ;
-}
-
-static DEVICE_ATTR(can_mode, S_IRUGO | S_IWUSR, can_mode_show, can_mode_store);
-
 static int flexcan_probe(struct platform_device *pdev)
 {
 	const struct of_device_id *of_id;
@@ -1316,7 +1258,6 @@ static int flexcan_probe(struct platform_device *pdev)
 	int err, irq;
 	u32 clock_freq = 0;
 	int wakeup = 1;
-    int error;
 
 	reg_xceiver = devm_regulator_get(&pdev->dev, "xceiver");
 	if (PTR_ERR(reg_xceiver) == -EPROBE_DEFER)
@@ -1386,13 +1327,6 @@ static int flexcan_probe(struct platform_device *pdev)
 
 	priv->reg_xceiver = reg_xceiver;
 
-    priv->pinctrl = devm_pinctrl_get(&pdev->dev);
-    priv->pins_can = pinctrl_lookup_state(priv->pinctrl,	PINCTRL_STATE_DEFAULT);
-    priv->pins_gpio = pinctrl_lookup_state(priv->pinctrl,	"gpio");
-    error = device_create_file(&pdev->dev, &dev_attr_can_mode); 
-    if (error)
-        dev_err(&pdev->dev, "Error %d on creating file\n", error);
-            
 	netif_napi_add(dev, &priv->napi, flexcan_poll, FLEXCAN_NAPI_WEIGHT);
 
 	platform_set_drvdata(pdev, dev);

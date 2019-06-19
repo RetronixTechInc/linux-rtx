@@ -33,7 +33,3 @@
 		status = "okay";
 	};
 };
-
-&ov5640 {
-	status = "disabled";
-};

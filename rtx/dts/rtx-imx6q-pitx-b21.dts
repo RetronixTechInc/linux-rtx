@@ -23,7 +23,7 @@
 
 / {
 	model = "Retronix i.MX6 Quad PITX Board";
-	compatible = "rtx,rtx-imx6q-pitx", "fsl,imx6q";
+	compatible = "fsl,imx6q-rtx-pitx", "fsl,imx6q";
 	
 	aliases {
 		mxcfb0 = &mxcfb1;
@@ -114,27 +114,23 @@
 		
 	};
 
-	safetyesp {
-		compatible = "rtx,rtxgpio";
-		pinctrl-names = "spi", "spi_gpio" , "can" , "can_gpio" , "uart1" , "uart1_gpio";
-		pinctrl-0 = <&pinctrl_cspi3_pitx>;
-        pinctrl-1 = <&pinctrl_cspi3_gpio>;
-        pinctrl-2 = <&pinctrl_flexcan1_pitx>;
-        pinctrl-3 = <&pinctrl_flexcan1_gpio>;
-        pinctrl-4 = <&pinctrl_uart1_dte_rs232>;
-        pinctrl-5 = <&pinctrl_uart1_gpio>;
-
-	};
-    
 	gpio_export {
 		compatible = "gpio-export";
 
-		/* can1_standby = <&gpio1 5 0>; 5 */
-		can1_standby {
-			/*gpio-export,name = "can1_standby";*/
+		/* current_gpio1 = <&gpio5 2 0>; 130 */
+		current_gpio1 {
+			/*gpio-export,name = "current_gpio1";*/
+			gpio-export,output = <0>;
+			gpio-export,direction_may_change ;
+			gpios = <&gpio5 2 1>;
+		};
+
+		/* current_gpio2 = <&gpio3 18 0>; 82 */
+		current_gpio2 {
+			/*gpio-export,name = "current_gpio2";*/
 			gpio-export,output = <1>;
 			gpio-export,direction_may_change ;
-			gpios = <&gpio1 5 1>;
+			gpios = <&gpio3 18 1>;
 		};
 
 		/* 3234_en = <&gpio3 22 1>; 86 */
@@ -175,137 +171,6 @@
 			gpio-export,direction_may_change ;
 			gpios = <&gpio4 10 1>;
 		}; */
-        
-        		
-		/* gpio_01 = <&gpio5 2 0>; */
-		gpio_01 {
-			gpio-export,name = "gpio_01";
-			gpio-export,output = <0>;
-			gpio-export,direction_may_change ;
-			gpios = <&gpio5 2 1>;
-		};
-
-		/* gpio_02 = <&gpio3 18 0>; */
-		gpio_02 {
-			gpio-export,name = "gpio_02";
-			gpio-export,output = <0>;
-			gpio-export,direction_may_change ;
-			gpios = <&gpio3 18 1>;
-		};
-        
-		/* gpio_03 = <&gpio4 21 0>; */
-		gpio_03 {
-			gpio-export,name = "gpio_03";
-			gpio-export,output = <0>;
-			gpio-export,direction_may_change ;
-			gpios = <&gpio4 21 0>;
-		};
-        
-		/* gpio_04 = <&gpio4 22 0>; */
-		gpio_04 {
-			gpio-export,name = "gpio_04";
-			gpio-export,output = <0>;
-			gpio-export,direction_may_change ;
-			gpios = <&gpio4 22 0>;
-		};
-                        
-		/* gpio_05 = <&gpio4 23 0>; */
-		gpio_05 {
-			gpio-export,name = "gpio_05";
-			gpio-export,output = <0>;
-			gpio-export,direction_may_change ;
-			gpios = <&gpio4 23 0 >;
-		};
-                        
-		/* gpio_06 = <&gpio4 24 0>; */
-		gpio_06 {
-			gpio-export,name = "gpio_06";
-			gpio-export,output = <0>;
-			gpio-export,direction_may_change ;
-			gpios = <&gpio4 24 0>;
-		};
-                        
-		/* gpio_0 = <&gpio1 7 0>; */
-		gpio_07 {
-			gpio-export,name = "gpio_07";
-			gpio-export,output = <0>;
-			gpio-export,direction_may_change ;
-			gpios = <&gpio1 7 0>;
-		};
-                        
-		/* gpio_08 = <&gpio1 8 0>; */
-		gpio_08 {
-			gpio-export,name = "gpio_08";
-			gpio-export,output = <0>;
-			gpio-export,direction_may_change ;
-			gpios = <&gpio1 8 0>;
-		};
-                     
-		/* gpio_09 = <&gpio3 23 0>; */
-		gpio_09 {
-			gpio-export,name = "gpio_09";
-			gpio-export,output = <0>;
-			gpio-export,direction_may_change ;
-			gpios = <&gpio3 23 0>;
-		};
-                        
-		/* gpio_10 = <&gpio3 25 0>; */
-		gpio_10 {
-			gpio-export,name = "gpio_10";
-			gpio-export,output = <0>;
-			gpio-export,direction_may_change ;
-			gpios = <&gpio3 25 0>;
-		};
-                        
-		/* gpio_11 = <&gpio5 29 0>; */
-		gpio_11 {
-			gpio-export,name = "gpio_11";
-			gpio-export,output = <0>;
-			gpio-export,direction_may_change ;
-			gpios = <&gpio5 29 0>;
-		};
-                        
-		/* gpio_12 = <&gpio3 20 0>; */
-		gpio_12 {
-			gpio-export,name = "gpio_12";
-			gpio-export,output = <0>;
-			gpio-export,direction_may_change ;
-			gpios = <&gpio3 20 0>;
-		};
-                        
-		/* gpio_13= <&gpio5 28 0>; */
-		gpio_13 {
-			gpio-export,name = "gpio_13";
-			gpio-export,output = <0>;
-			gpio-export,direction_may_change ;
-			gpios = <&gpio5 28 0>;
-		};
-                        
-		/* gpio_14 = <&gpio3 19 0>; */
-		gpio_14 {
-			gpio-export,name = "gpio_14";
-			gpio-export,output = <0>;
-			gpio-export,direction_may_change ;
-			gpios = <&gpio3 19 0>;
-		};
-                        
-		/* gpio_15 = <&gpio3 24 0>; */
-		gpio_15 {
-			gpio-export,name = "gpio_15";
-			gpio-export,output = <0>;
-			gpio-export,direction_may_change ;
-			gpios = <&gpio3 24 0>;
-		};
-                        
-		/* gpio_16 = <&gpio2 31 0>; */
-		gpio_16 {
-			gpio-export,name = "gpio_16";
-			gpio-export,output = <0>;
-			gpio-export,direction_may_change ;
-			gpios = <&gpio2 31 0>;
-		};
-                        
-        
 
 	};
 
@@ -434,14 +299,14 @@
 };
 
 &cpu0 {
-	arm-supply = <&reg_arm>;
-	soc-supply = <&reg_soc>;
+	arm-supply = <&sw1a_reg>;
+	soc-supply = <&sw1c_reg>;
 };
 
 &ecspi3 {
 	fsl,spi-num-chipselects = <1>;
 	cs-gpios = <&gpio4 24 0>;
-    pinctrl-names = "default";
+	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl_cspi3_pitx>;
 	status = "okay"; 
 
@@ -476,14 +341,15 @@
 };
 
 &can1 {
-    pinctrl-names = "default" , "gpio";
+	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl_flexcan1_pitx>;
-    pinctrl-1 = <&pinctrl_flexcan1_gpio>;
-    status = "okay";
+	trx-stby-gpio = <&gpio1 5 GPIO_ACTIVE_LOW>;
+	
+	status = "okay";
 };
 
 &gpc {
-	fsl,ldo-bypass = <0>; /* use ldo-bypass, u-boot will check it and configure */
+	fsl,ldo-bypass = <1>; /* use ldo-bypass, u-boot will check it and configure */
 	fsl,wdog-reset = <2>; /* watchdog select of reset source */
 };
 
@@ -738,8 +604,8 @@
 
 &uart1 {
 	pinctrl-names = "default", "rs422" ;
-	pinctrl-0 = <&pinctrl_uart1_dte_rs232>;
-	pinctrl-1 = <&pinctrl_uart1_dte_rs422>;
+	pinctrl-0 = <&pinctrl_uart1_dte_rs232 &pinctrl_uart1_ctrl2>;
+	pinctrl-1 = <&pinctrl_uart1_dte_rs422 &pinctrl_uart1_ctrl2>;
     /* fsl,dte-mode;
     DTE mode : CSI0_DAT10 is RX; CSI0_DAT11 is TX; EIM_D19 is RTS; EIM_D20 is CTS;
     DCE mode : CSI0_DAT10 is TX; CSI0_DAT11 is RX; EIM_D19 is CTS; EIM_D20 is RTS;

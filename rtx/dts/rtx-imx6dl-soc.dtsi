@@ -1,4 +1,5 @@
 /*
+ * Copyright 2016 Retronix, Inc.
  * Copyright 2011-2016 Freescale Semiconductor, Inc.
  * Copyright 2011 Linaro Ltd.
  *
@@ -10,8 +11,6 @@
  * http://www.gnu.org/copyleft/gpl.html
  */
 
-#include <dt-bindings/interrupt-controller/irq.h>
-#include "imx6dl-pinfunc.h"
 #include <dt-bindings/clock/imx6qdl-clock.h>
 #include <dt-bindings/interrupt-controller/arm-gic.h>
 
@@ -50,7 +49,7 @@
 		usbphy0 = &usbphy1;
 		usbphy1 = &usbphy2;
 	};
-
+	
 	cpus {
 		#address-cells = <1>;
 		#size-cells = <0>;
@@ -149,7 +148,7 @@
 		compatible = "simple-bus";
 		interrupt-parent = <&gpc>;
 		ranges;
-
+		
 		busfreq {
 			compatible = "fsl,imx_busfreq";
 			clocks = <&clks IMX6QDL_CLK_PLL2_BUS>, <&clks IMX6QDL_CLK_PLL2_PFD2_396M>,
@@ -165,7 +164,7 @@
 			interrupt-names = "irq_busfreq_0", "irq_busfreq_1";
 			fsl,max_ddr_freq = <400000000>;
 		};
-
+		
 		caam_sm: caam-sm@00100000 {
 			compatible = "fsl,imx6q-caam-sm";
 			reg = <0x00100000 0x3fff>;
@@ -188,10 +187,6 @@
 			compatible = "fsl,imx6q-caam-secvio";
 			interrupts = <0 20 0x04>;
 			secvio_src = <0x8000001d>;
-			jtag-tamper = "disabled";
-			watchdog-tamper = "enabled";
-			internal-boot-tamper = "enabled";
-			external-pin-tamper = "disabled";
 		};
 
 		gpmi: gpmi-nand@00112000 {
@@ -430,7 +425,7 @@
 					dma-names = "rx", "tx";
 					status = "disabled";
 				};
-
+							
 				uart1: serial@02020000 {
 					compatible = "fsl,imx6q-uart", "fsl,imx21-uart";
 					reg = <0x02020000 0x4000>;
@@ -968,15 +963,16 @@
 			};
 
 			iomuxc: iomuxc@020e0000 {
-				compatible = "fsl,imx6dl-iomuxc";
+				compatible = "fsl,imx6dl-iomuxc", "fsl,imx6q-iomuxc";
 				reg = <0x020e0000 0x4000>;
 			};
 
 			ldb: ldb@020e0008 {
 				#address-cells = <1>;
 				#size-cells = <0>;
-				compatible = "fsl,imx6dl-ldb", "fsl,imx53-ldb";
 				gpr = <&gpr>;
+				status = "disabled";
+				compatible = "fsl,imx6dl-ldb", "fsl,imx53-ldb";
 				clocks = <&clks IMX6QDL_CLK_LDB_DI0>, <&clks IMX6QDL_CLK_LDB_DI1>,
 					 <&clks IMX6QDL_CLK_IPU1_DI0_SEL>, <&clks IMX6QDL_CLK_IPU1_DI1_SEL>,
 					 <&clks IMX6QDL_CLK_IPU2_DI0_SEL>,
@@ -984,13 +980,11 @@
 					 <&clks IMX6QDL_CLK_LDB_DI0_DIV_7>, <&clks IMX6QDL_CLK_LDB_DI1_DIV_7>,
 					 <&clks IMX6QDL_CLK_LDB_DI0_DIV_SEL>, <&clks IMX6QDL_CLK_LDB_DI1_DIV_SEL>;
 				clock-names = "ldb_di0", "ldb_di1",
-					 "di0_sel", "di1_sel",
-					 "di2_sel",
-					 "ldb_di0_div_3_5", "ldb_di1_div_3_5",
-					 "ldb_di0_div_7", "ldb_di1_div_7",
-					 "ldb_di0_div_sel", "ldb_di1_div_sel";
-				status = "disabled";
-
+					      "di0_sel", "di1_sel",
+					      "di2_sel",
+					      "ldb_di0_div_3_5", "ldb_di1_div_3_5",
+					      "ldb_di0_div_7", "ldb_di1_div_7",
+					      "ldb_di0_div_sel", "ldb_di1_div_sel";
 				lvds-channel@0 {
 					#address-cells = <1>;
 					#size-cells = <0>;
@@ -1022,7 +1016,7 @@
 				interrupts = <0 125 IRQ_TYPE_LEVEL_HIGH>;
 				clocks = <&clks IMX6QDL_CLK_DCIC1 >,
 						<&clks IMX6QDL_CLK_DCIC2>; /* DCIC2 depend on DCIC1 clock in imx6dl*/
-				clock-names = "dcic", "disp-axi";				
+				clock-names = "dcic", "disp-axi";
 				gpr = <&gpr>;
 				status = "disabled";
 			};
@@ -1037,7 +1031,7 @@
 				#dma-cells = <3>;
 				fsl,sdma-ram-script-name = "imx/sdma/sdma-imx6q.bin";
 			};
-
+			
 			pxp: pxp@020f0000 {
 				compatible = "fsl,imx6dl-pxp-dma";
 				reg = <0x020f0000 0x4000>;
@@ -1059,6 +1053,7 @@
 				reg = <0x020f8000 0x4000>;
 				interrupts = <0 39 IRQ_TYPE_LEVEL_HIGH>;
 			};
+			
 		};
 
 		aips-bus@02100000 { /* AIPS2 */
@@ -1079,17 +1074,17 @@
 				clock-names = "caam_mem", "caam_aclk", "caam_ipg", "caam_emi_slow";
 
 				sec_jr0: jr0@1000 {
-					compatible = "fsl,sec-v4.0-job-ring";
-					reg = <0x1000 0x1000>;
-					interrupt-parent = <&intc>;
-					interrupts = <0 105 0x4>;
+						compatible = "fsl,sec-v4.0-job-ring";
+						reg = <0x1000 0x1000>;
+						interrupt-parent = <&intc>;
+						interrupts = <0 105 0x4>;
 				};
 
 				sec_jr1: jr1@2000 {
-					compatible = "fsl,sec-v4.0-job-ring";
-					reg = <0x2000 0x1000>;
-					interrupt-parent = <&intc>;
-					interrupts = <0 106 0x4>;
+						compatible = "fsl,sec-v4.0-job-ring";
+						reg = <0x2000 0x1000>;
+						interrupt-parent = <&intc>;
+						interrupts = <0 106 0x4>;
 				};
 			};
 
@@ -1269,7 +1264,17 @@
 				clocks = <&clks IMX6QDL_CLK_I2C3>;
 				status = "disabled";
 			};
-
+			
+			i2c4: i2c@021f8000 {
+				#address-cells = <1>;
+				#size-cells = <0>;
+				compatible = "fsl,imx6q-i2c", "fsl,imx21-i2c";
+				reg = <0x021f8000 0x4000>;
+				interrupts = <0 35 IRQ_TYPE_LEVEL_HIGH>;
+				clocks = <&clks IMX6DL_CLK_I2C4>;
+				status = "disabled";
+			};
+			
 			romcp@021ac000 {
 				reg = <0x021ac000 0x4000>;
 			};
@@ -1342,7 +1347,7 @@
 				clock-names = "mipi_pllref_clk", "mipi_cfg_clk";
 				status = "disabled";
 			};
-
+			
 			vdoa@021e4000 {
 				compatible = "fsl,imx6q-vdoa";
 				reg = <0x021e4000 0x4000>;
@@ -1398,18 +1403,8 @@
 				dma-names = "rx", "tx";
 				status = "disabled";
 			};
-
-			i2c4: i2c@021f8000 {
-				#address-cells = <1>;
-				#size-cells = <0>;
-				compatible = "fsl,imx6q-i2c", "fsl,imx21-i2c";
-				reg = <0x021f8000 0x4000>;
-				interrupts = <0 35 IRQ_TYPE_LEVEL_HIGH>;
-				clocks = <&clks IMX6DL_CLK_I2C4>;
-				status = "disabled";
-			};
 		};
-
+		
 		ipu1: ipu@02400000 {
 			#address-cells = <1>;
 			#size-cells = <0>;
@@ -1428,6 +1423,6 @@
 			resets = <&src 2>;
 			bypass_reset = <0>;
 		};
+		
 	};
 };
-

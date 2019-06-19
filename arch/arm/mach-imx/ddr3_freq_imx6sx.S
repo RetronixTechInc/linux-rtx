@@ -401,11 +401,7 @@ poll_dvfs_clear_1:
 	orr	r8, r8, #0x4
 	str	r8, [r4, #MMDC0_MDCF1]
 
-	ldr	r8, [r4, #MMDC0_MDMISC]
-	bic	r8, r8, #(0x3 << 16) /* walat = 0x1 */
-	orr	r8, r8, #(0x1 << 16)
-	bic	r8, r8, #(0x7 << 6)  /* ralat = 0x2 */
-	orr	r8, r8, #(0x2 << 6)
+	ldr	r8, =0x00091680
 	str	r8, [r4, #MMDC0_MDMISC]
 
 	/* enable dqs pull down in the IOMUX. */
@@ -510,9 +506,7 @@ poll_dvfs_clear_2:
 	cmp	r2, #0
 	beq	update_calibration_only
 
-	/* issue zq calibration command */
-	ldr	r8, [r4, #MMDC0_MPZQHWCTRL]
-	orr	r8, r8, #0x3
+	ldr	r8, =0xa5390003
 	str	r8, [r4, #MMDC0_MPZQHWCTRL]
 
 	/* enable DQS gating. */
@@ -556,6 +550,10 @@ update_iomux1:
 	ldr	r11, [r1, #0x4]
 	str	r11, [r4, r10]
 	add	r1, r1, #8
+
+	/* update MISC register: WALAT, RALAT */
+	ldr	r8, =0x00081740
+	str	r8, [r4, #MMDC0_MDMISC]
 
 	/* configure ddr devices to dll on, odt. */
 	ldr	r8, =0x00028031

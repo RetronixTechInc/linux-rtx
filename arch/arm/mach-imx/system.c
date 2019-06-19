@@ -41,7 +41,8 @@ static struct clk *wdog_clk;
 void mxc_restart(enum reboot_mode mode, const char *cmd)
 {
 	unsigned int wcr_enable;
-
+    printk(KERN_INFO "mxc_restart.\n");
+    
 	if (!wdog_base)
 		goto reset_fallback;
 

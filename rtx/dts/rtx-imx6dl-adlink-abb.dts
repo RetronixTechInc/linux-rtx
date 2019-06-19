@@ -23,7 +23,7 @@
 
 / {
 	model = "Retronix i.MX6 DualLite ADLINK Board";
-	compatible = "rtx,rtx-imx6dl-adlink-abb", "fsl,imx6dl";
+	compatible = "fsl,imx6dl-rtx-adlink", "fsl,imx6dl";
 	
 	aliases {
 		mxcfb0 = &mxcfb1;
@@ -78,7 +78,7 @@
 			regulator-name = "usb_otg_vbus";
 			regulator-min-microvolt = <5000000>;
 			regulator-max-microvolt = <5000000>;
-			gpio = <&gpio4 5 0>;
+			gpio = <&gpio4 15 0>;
 			enable-active-high;
 		};
 
@@ -87,7 +87,7 @@
 			regulator-name = "usb_h1_vbus";
 			regulator-min-microvolt = <5000000>;
 			regulator-max-microvolt = <5000000>;
-			gpio = <&gpio1 30 0>;
+			gpio = <&gpio4 6 0>;
 			enable-active-high;
 		};
 
@@ -120,7 +120,7 @@
 		/* current_gpio1 = <&gpio5 2 0>; 130 */
 		current_gpio1 {
 			/*gpio-export,name = "current_gpio1";*/
-			gpio-export,output = <1>;
+			gpio-export,output = <0>;
 			gpio-export,direction_may_change ;
 			gpios = <&gpio5 2 1>;
 		};
@@ -140,7 +140,7 @@
 			gpios = <&gpio3 18 0>;
 		};
 		
-		/* 3234_en = <&gpio3 22 1>; 101 */
+		/* 3234_en = <&gpio3 22 1>; 86 */
 		3234_en {
 			/*gpio-export,name = "3234_en";*/
 			gpio-export,output = <1>;
@@ -148,29 +148,29 @@
 			gpios = <&gpio3 22 1>;
 		};
 
-		/* UR1_M1 = <&gpio6 8 0>; 168 */
+		/* UR1_M1 = <&gpio6 14 0>; 174 
 		UR1_M1 {
-			/*gpio-export,name = "UR1_M1";*/
+			gpio-export,name = "UR1_M1";
 			gpio-export,output = <0>;
 			gpio-export,direction_may_change ;
-			gpios = <&gpio6 8 0>;
-		};
+			gpios = <&gpio6 14 0>;
+		};*/
 		
-		/* UR1_M0 = <&gpio6 7 1>; 167 */
+		/* UR1_M0 = <&gpio6 7 1>; 167 
 		UR1_M0 {
-			/*gpio-export,name = "UR1_M0";*/
+			gpio-export,name = "UR1_M0";
 			gpio-export,output = <1>;
 			gpio-export,direction_may_change ;
 			gpios = <&gpio6 7 1>;
-		};
+		};*/
 		
-		/* UR1_TM = <&gpio6 16 0>; 176 */
+		/* UR1_TM = <&gpio6 16 0>; 176 
 		UR1_TM {
-			/*gpio-export,name = "UR1_TM";*/
+			gpio-export,name = "UR1_TM";
 			gpio-export,output = <0>;
 			gpio-export,direction_may_change ;
 			gpios = <&gpio6 16 0>;
-		};	
+		};*/
 				
 		/* amp_standby = <&gpio4 10 0>; 106 */
 		amp_standby {
@@ -183,9 +183,9 @@
 	};
 
 	sound {
-		compatible = "fsl,imx6q-rtx-pitx-sgtl5000",
+		compatible = "fsl,imx6dl-adlink-sgtl5000",
 			     "fsl,imx-audio-sgtl5000";
-		model = "imx6q-rtx-pitx-sgtl5000";
+		model = "imx6dl-adlink-sgtl5000";
 		ssi-controller = <&ssi1>;
 		audio-codec = <&codec>;
 		audio-routing =
@@ -236,7 +236,7 @@
 		late_init = <0>;
 		status = "okay";
 	};
-	
+
 	mxcfb3: fb@2 {
 		compatible = "fsl,mxc_sdc_fb";
 		disp_dev = "ldb";
@@ -257,7 +257,7 @@
 		late_init = <0>;
 		status = "disabled";
 	};
-	
+
 };
 
 &audmux {
@@ -269,6 +269,25 @@
 &cpu0 {
 	arm-supply = <&sw1a_reg>;
 	soc-supply = <&sw1c_reg>;
+};
+
+&ecspi2 {
+	fsl,spi-num-chipselects = <1>;
+	cs-gpios = <&gpio5 12 0>;
+	pinctrl-names = "default";
+	pinctrl-0 = <&pinctrl_cspi2_adlink>;
+	status = "okay"; 
+
+	flash@microchip {
+		compatible = "mchip,25lc01a0";
+		spi-max-frequency = <1000000>;
+        size = <128>;
+        pagesize = <16>;
+        address-width = <8>;
+        /*spi-cpha;
+        spi-cpol;*/
+		reg = <0>;
+	};
 };
 
 &ecspi3 {
@@ -334,25 +353,25 @@
 };
 
 &hdmi_audio {
-	status = "disabled";
+	status = "okay";
 };
 
 &hdmi_cec {
 	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl_hdmi_cec_adlink>;
-	status = "disabled";
+	status = "okay";
 };
 
 &hdmi_core {
 	ipu_id = <0>;
 	disp_id = <1>;
-	status = "disabled";
+	status = "okay";
 };
 
 &hdmi_video {
 	fsl,phy_reg_vlev = <0x0294>;
 	fsl,phy_reg_cksymtx = <0x800d>;
-	status = "disabled";
+	status = "okay";
 };
 
 &i2c1 {
@@ -511,13 +530,6 @@
 	};
 };
 
-&i2c4 {
-	clock-frequency = <100000>;
-	pinctrl-names = "default";
-	pinctrl-0 = <&pinctrl_i2c4_adlink>;
-	status = "okay";
-};
-
 &ldb {
 	status = "okay";
 
@@ -582,10 +594,16 @@
 };
 
 &uart5 {
-	pinctrl-names = "default";
-	pinctrl-0 = <&pinctrl_uart5_dte>;
+	pinctrl-names = "default","rs422";
+	pinctrl-0 = <&pinctrl_uart5_dte_rs232>;
+	pinctrl-1 = <&pinctrl_uart5_dte_rs422>;
 	fsl,dte-mode;
 	fsl,uart-has-rtscts;
+	fsl,sp339e;
+	fsl,sp339e-dir    = <&gpio6 4 0> ;
+	fsl,sp339e-m0     = <&gpio6 7 0> ;
+	fsl,sp339e-m1     = <&gpio6 14 0> ;
+	fsl,sp339e-tm     = <&gpio6 16 0> ;
 	status = "okay";
 };
 
@@ -623,5 +641,15 @@
 	non-removable;
 	no-1-8-v;
 	keep-power-in-suspend;
+	status = "okay";
+};
+
+&wdog1 {
+	status = "disabled";
+};
+
+&wdog2 {
+	pinctrl-names = "default";
+	fsl,wdog_b;
 	status = "okay";
 };

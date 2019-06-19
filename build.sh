@@ -1,33 +1,59 @@
 #! /bin/bash
 
 set -e
-#### Cross compiler ####################################################
-[ -d /opt/freescale/usr/local ] && CROSS_COMPILE_PATH=/opt/freescale/usr/local
-[ -d /home/artie/JOB-Area/Android ] && CROSS_COMPILE_PATH=/home/artie/JOB-Area/Android
-[ -d /media/tom/ext2t/freescale/cross-compile ] && CROSS_COMPILE_PATH=/media/tom/ext2t/freescale/cross-compile
 
+TOP=`pwd`
+OUT=${TOP}/out
+
+#### Cross compiler tool path ####################################################
 if [ -z $CROSS_COMPILE_PATH ];then
-	CROSS_COMPILE_PATH=/opt/cross
+    [ -d /opt/freescale/usr/local ] && CROSS_COMPILE_PATH=/opt/freescale/usr/local
 fi
 
-#Check CROSS_COMPILE_PATH
-if [ -z "${CROSS_COMPILE_PATH}" ] ; then
-	echo "Please set the cross compiler path."
-	exit 1
+if [ -z $CROSS_COMPILE_PATH ];then
+    [ -d /home/artie/JOB-Area/Android ] && CROSS_COMPILE_PATH=/home/artie/JOB-Area/Android
+fi
+
+if [ -z $CROSS_COMPILE_PATH ];then
+    [ -d /media/tom/ext2t/freescale/cross-compile ] && CROSS_COMPILE_PATH=/media/tom/ext2t/freescale/cross-compile
+fi
+
+if [ -z $CROSS_COMPILE_PATH ];then
+	[ -d /opt/cross ] && CROSS_COMPILE_PATH=/opt/cross
 fi
 
 #### Define the CROSS COMPILE TOOL #########################################################
-#CROSS_COMPILE_TOOL=rtx-gcc-4.9.3-glibc-2.19-hf-32bits/bin/arm-linux-gnueabihf-
-#CROSS_COMPILE_TOOL=rtx-gcc-4.9.3-glibc-2.19-hf-64bits/arm-rtx-linux-gnueabihf/bin/arm-rtx-linux-gnueabihf-
-CROSS_COMPILE_TOOL=rtx-gcc-5.3.0-glibc-2.23-hf/arm-rtx-linux-gnueabihf/bin/arm-rtx-linux-gnueabihf-
-#CROSS_COMPILE_TOOL=rtx-gcc-6.3.0-glibc-2.25-hf-32bits/bin/arm-rtx-linux-gnueabihf-
-#CROSS_COMPILE_TOOL=
+#CROSS_COMPILE_TOOL=rtx-gcc-4.9.3-glibc-2.19-hf-32bits/bin
+CROSS_COMPILE_TOOL=rtx-gcc-4.9.3-glibc-2.19-hf-64bits/arm-rtx-linux-gnueabihf/bin
+#CROSS_COMPILE_TOOL=rtx-gcc-5.3.0-glibc-2.23-hf/arm-rtx-linux-gnueabihf/bin
+#CROSS_COMPILE_TOOL=rtx-gcc-6.3.0-glibc-2.25-hf-32bits/bin
+
+CROSS_COMPILE_GCC=arm-rtx-linux-gnueabihf-
+
+#Check CROSS_COMPILE_PATH
+if [ -z "${CROSS_COMPILE_PATH}" ] ; then
+    echo "Please set the cross compiler path."
+    exit 1
+fi
 
 #Check CROSS_COMPILE_TOOL
 if [ -z $CROSS_COMPILE_TOOL ];then
     echo "Please set the CROSS_COMPILE_TOOL."
     exit 1
 fi
+
+if [ ! -d ${CROSS_COMPILE_PATH}/${CROSS_COMPILE_TOOL} ];then
+    echo "The ${CROSS_COMPILE_PATH}/${CROSS_COMPILE_TOOL} fold is not exist!"
+    exit 1
+fi
+
+CROSS_COMPILE=${CROSS_COMPILE_PATH}/${CROSS_COMPILE_TOOL}/${CROSS_COMPILE_GCC}
+
+########################################################################
+export ARCH=arm
+export CROSS_COMPILE=${CROSS_COMPILE}
+
+########################################################################
 
 #### Default Define ####################################################
 IS_ANDROID_BUILD="no"
@@ -39,10 +65,10 @@ fi
 
 #### Target Customer Project ###########################################
 #TARGET_CUSTOMER="RTX-A6"
-TARGET_CUSTOMER="RTX-A6Plus"
+#TARGET_CUSTOMER="RTX-A6Plus"
 #TARGET_CUSTOMER="RTX-Q7"
 #TARGET_CUSTOMER="RTX-PITX-B10"
-#TARGET_CUSTOMER="RTX-PITX-B21"
+TARGET_CUSTOMER="RTX-PITX-B21"
 #TARGET_CUSTOMER="ADLINK-ABB"
 #TARGET_CUSTOMER="AcBel-VPP"
 #TARGET_CUSTOMER="PITX-AOPEN"
@@ -125,14 +151,6 @@ case "${TARGET_CUSTOMER}" in
 esac
 
 
-TOP=`pwd`
-OUT=${TOP}/out
-
-########################################################################
-export ARCH=arm
-export CROSS_COMPILE=${CROSS_COMPILE_PATH}/${CROSS_COMPILE_TOOL}
-
-########################################################################
 if [ ${IS_ANDROID_BUILD} == "yes" ] ; then
 	KERNEL_DEFAULT_CONFIG=imx_v7_android_defconfig
 else
@@ -342,6 +360,22 @@ function build_gpu_viv_module()
 	fi
 }
 
+help() {
+bn=`basename $0`
+cat << EOF
+usage $bn build_type
+  build_type   [all/config/menuconfig/saveconfig/uImage/modules/install/clean/distclean/rootfs]
+example:
+    $bn all
+    $bn menuconfig
+
+PS.
+    Extract CROSS COMPILE TOOL and modify CROSS_COMPILE_PATH, CROSS_COMPILE_TOOL and CROSS_COMPILE_GCC for your gcc tools.
+
+EOF
+
+}
+
 # Main function
 
 # Build the necessary directions
@@ -349,9 +383,10 @@ build_dir
 
 #
 case "${1}" in
-	"info")
+    "info")
 		echo "CROSS_COMPILE_PATH          = ${CROSS_COMPILE_PATH}"
 		echo "CROSS_COMPILE_TOOL          = ${CROSS_COMPILE_TOOL}"
+		echo "CROSS_COMPILE_GCC           = ${CROSS_COMPILE_GCC}"
 		echo "CROSS_COMPILE               = ${CROSS_COMPILE}"
 		echo "TARGET_CUSTOMER             = ${TARGET_CUSTOMER}"
 		echo "TARGET_VENDER               = ${TARGET_VENDER}"
@@ -487,7 +522,7 @@ case "${1}" in
 		fi
 		;;
 	*)
-		echo "${0} [all/config/menuconfig/saveconfig/uImage/modules/install/clean/distclean/rootfs]"
+ 		help
 		exit 1
 		;;
 esac

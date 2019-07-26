@@ -10,8 +10,6 @@
 #define __ASM_SPINLOCK_H
 
 #include <linux/smp.h>
-#include <asm/barrier.h>
-#include <asm/processor.h>
 
 #define SPINLOCK_LOCKVAL (S390_lowcore.spinlock_lockval)
 
@@ -89,6 +87,7 @@ static inline void arch_spin_unlock(arch_spinlock_t *lp)
 {
 	typecheck(unsigned int, lp->lock);
 	asm volatile(
+		__ASM_BARRIER
 		"st	%1,%0\n"
 		: "+Q" (lp->lock)
 		: "d" (0)
@@ -99,7 +98,6 @@ static inline void arch_spin_unlock_wait(arch_spinlock_t *lock)
 {
 	while (arch_spin_is_locked(lock))
 		arch_spin_relax(lock);
-	smp_acquire__after_ctrl_dep();
 }
 
 /*
@@ -171,6 +169,7 @@ static inline int arch_write_trylock_once(arch_rwlock_t *rw)
 							\
 	typecheck(unsigned int *, ptr);			\
 	asm volatile(					\
+		"bcr	14,0\n"				\
 		op_string "	%0,%2,%1\n"		\
 		: "=d" (old_val), "+Q" (*ptr)		\
 		: "d" (op_val)				\
@@ -244,6 +243,7 @@ static inline void arch_write_unlock(arch_rwlock_t *rw)
 
 	rw->owner = 0;
 	asm volatile(
+		__ASM_BARRIER
 		"st	%1,%0\n"
 		: "+Q" (rw->lock)
 		: "d" (0)

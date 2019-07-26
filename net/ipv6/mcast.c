@@ -81,7 +81,7 @@ static void mld_gq_timer_expire(unsigned long data);
 static void mld_ifc_timer_expire(unsigned long data);
 static void mld_ifc_event(struct inet6_dev *idev);
 static void mld_add_delrec(struct inet6_dev *idev, struct ifmcaddr6 *pmc);
-static void mld_del_delrec(struct inet6_dev *idev, struct ifmcaddr6 *pmc);
+static void mld_del_delrec(struct inet6_dev *idev, const struct in6_addr *addr);
 static void mld_clear_delrec(struct inet6_dev *idev);
 static bool mld_in_v1_mode(const struct inet6_dev *idev);
 static int sf_setstate(struct ifmcaddr6 *pmc);
@@ -276,14 +276,16 @@ static struct inet6_dev *ip6_mc_find_dev_rcu(struct net *net,
 	return idev;
 }
 
-void __ipv6_sock_mc_close(struct sock *sk)
+void ipv6_sock_mc_close(struct sock *sk)
 {
 	struct ipv6_pinfo *np = inet6_sk(sk);
 	struct ipv6_mc_socklist *mc_lst;
 	struct net *net = sock_net(sk);
 
-	ASSERT_RTNL();
+	if (!rcu_access_pointer(np->ipv6_mc_list))
+		return;
 
+	rtnl_lock();
 	while ((mc_lst = rtnl_dereference(np->ipv6_mc_list)) != NULL) {
 		struct net_device *dev;
 
@@ -301,17 +303,8 @@ void __ipv6_sock_mc_close(struct sock *sk)
 
 		atomic_sub(sizeof(*mc_lst), &sk->sk_omem_alloc);
 		kfree_rcu(mc_lst, rcu);
+
 	}
-}
-
-void ipv6_sock_mc_close(struct sock *sk)
-{
-	struct ipv6_pinfo *np = inet6_sk(sk);
-
-	if (!rcu_access_pointer(np->ipv6_mc_list))
-		return;
-	rtnl_lock();
-	__ipv6_sock_mc_close(sk);
 	rtnl_unlock();
 }
 
@@ -692,9 +685,9 @@ static void igmp6_group_dropped(struct ifmcaddr6 *mc)
 			dev_mc_del(dev, buf);
 	}
 
-	spin_unlock_bh(&mc->mca_lock);
 	if (mc->mca_flags & MAF_NOREPORT)
-		return;
+		goto done;
+	spin_unlock_bh(&mc->mca_lock);
 
 	if (!mc->idev->dead)
 		igmp6_leave_group(mc);
@@ -702,6 +695,8 @@ static void igmp6_group_dropped(struct ifmcaddr6 *mc)
 	spin_lock_bh(&mc->mca_lock);
 	if (del_timer(&mc->mca_timer))
 		atomic_dec(&mc->mca_refcnt);
+done:
+	ip6_mc_clear_src(mc);
 	spin_unlock_bh(&mc->mca_lock);
 }
 
@@ -746,11 +741,10 @@ static void mld_add_delrec(struct inet6_dev *idev, struct ifmcaddr6 *im)
 	spin_unlock_bh(&idev->mc_lock);
 }
 
-static void mld_del_delrec(struct inet6_dev *idev, struct ifmcaddr6 *im)
+static void mld_del_delrec(struct inet6_dev *idev, const struct in6_addr *pmca)
 {
 	struct ifmcaddr6 *pmc, *pmc_prev;
-	struct ip6_sf_list *psf;
-	struct in6_addr *pmca = &im->mca_addr;
+	struct ip6_sf_list *psf, *psf_next;
 
 	spin_lock_bh(&idev->mc_lock);
 	pmc_prev = NULL;
@@ -767,21 +761,14 @@ static void mld_del_delrec(struct inet6_dev *idev, struct ifmcaddr6 *im)
 	}
 	spin_unlock_bh(&idev->mc_lock);
 
-	spin_lock_bh(&im->mca_lock);
 	if (pmc) {
-		im->idev = pmc->idev;
-		im->mca_crcount = idev->mc_qrv;
-		im->mca_sfmode = pmc->mca_sfmode;
-		if (pmc->mca_sfmode == MCAST_INCLUDE) {
-			im->mca_tomb = pmc->mca_tomb;
-			im->mca_sources = pmc->mca_sources;
-			for (psf = im->mca_sources; psf; psf = psf->sf_next)
-				psf->sf_crcount = im->mca_crcount;
+		for (psf = pmc->mca_tomb; psf; psf = psf_next) {
+			psf_next = psf->sf_next;
+			kfree(psf);
 		}
 		in6_dev_put(pmc->idev);
 		kfree(pmc);
 	}
-	spin_unlock_bh(&im->mca_lock);
 }
 
 static void mld_clear_delrec(struct inet6_dev *idev)
@@ -910,7 +897,7 @@ int ipv6_dev_mc_inc(struct net_device *dev, const struct in6_addr *addr)
 	mca_get(mc);
 	write_unlock_bh(&idev->lock);
 
-	mld_del_delrec(idev, mc);
+	mld_del_delrec(idev, &mc->mca_addr);
 	igmp6_group_added(mc);
 	ma_put(mc);
 	return 0;
@@ -933,7 +920,6 @@ int __ipv6_dev_mc_dec(struct inet6_dev *idev, const struct in6_addr *addr)
 				write_unlock_bh(&idev->lock);
 
 				igmp6_group_dropped(ma);
-				ip6_mc_clear_src(ma);
 
 				ma_put(ma);
 				return 0;
@@ -1588,8 +1574,9 @@ static struct sk_buff *mld_newpack(struct inet6_dev *idev, unsigned int mtu)
 		return NULL;
 
 	skb->priority = TC_PRIO_CONTROL;
+	skb->reserved_tailroom = skb_end_offset(skb) -
+				 min(mtu, skb_end_offset(skb));
 	skb_reserve(skb, hlen);
-	skb_tailroom_reserve(skb, mtu, tlen);
 
 	if (__ipv6_get_lladdr(idev, &addr_buf, IFA_F_TENTATIVE)) {
 		/* <draft-ietf-magma-mld-source-05.txt>:
@@ -1658,8 +1645,8 @@ static void mld_sendpack(struct sk_buff *skb)
 	payload_len = skb->len;
 
 	err = NF_HOOK(NFPROTO_IPV6, NF_INET_LOCAL_OUT,
-		      net, net->ipv6.igmp_sk, skb, NULL, skb->dev,
-		      dst_output);
+		      net->ipv6.igmp_sk, skb, NULL, skb->dev,
+		      dst_output_sk);
 out:
 	if (!err) {
 		ICMP6MSGOUT_INC_STATS(net, idev, ICMPV6_MLD2_REPORT);
@@ -1682,16 +1669,16 @@ static int grec_size(struct ifmcaddr6 *pmc, int type, int gdel, int sdel)
 }
 
 static struct sk_buff *add_grhead(struct sk_buff *skb, struct ifmcaddr6 *pmc,
-	int type, struct mld2_grec **ppgr, unsigned int mtu)
+	int type, struct mld2_grec **ppgr)
 {
+	struct net_device *dev = pmc->idev->dev;
 	struct mld2_report *pmr;
 	struct mld2_grec *pgr;
 
-	if (!skb) {
-		skb = mld_newpack(pmc->idev, mtu);
-		if (!skb)
-			return NULL;
-	}
+	if (!skb)
+		skb = mld_newpack(pmc->idev, dev->mtu);
+	if (!skb)
+		return NULL;
 	pgr = (struct mld2_grec *)skb_put(skb, sizeof(struct mld2_grec));
 	pgr->grec_type = type;
 	pgr->grec_auxwords = 0;
@@ -1714,13 +1701,8 @@ static struct sk_buff *add_grec(struct sk_buff *skb, struct ifmcaddr6 *pmc,
 	struct mld2_grec *pgr = NULL;
 	struct ip6_sf_list *psf, *psf_next, *psf_prev, **psf_list;
 	int scount, stotal, first, isquery, truncate;
-	unsigned int mtu;
 
 	if (pmc->mca_flags & MAF_NOREPORT)
-		return skb;
-
-	mtu = READ_ONCE(dev->mtu);
-	if (mtu < IPV6_MIN_MTU)
 		return skb;
 
 	isquery = type == MLD2_MODE_IS_INCLUDE ||
@@ -1743,7 +1725,7 @@ static struct sk_buff *add_grec(struct sk_buff *skb, struct ifmcaddr6 *pmc,
 		    AVAILABLE(skb) < grec_size(pmc, type, gdeleted, sdeleted)) {
 			if (skb)
 				mld_sendpack(skb);
-			skb = mld_newpack(idev, mtu);
+			skb = mld_newpack(idev, dev->mtu);
 		}
 	}
 	first = 1;
@@ -1758,15 +1740,6 @@ static struct sk_buff *add_grec(struct sk_buff *skb, struct ifmcaddr6 *pmc,
 			continue;
 		}
 
-		/* Based on RFC3810 6.1. Should not send source-list change
-		 * records when there is a filter mode change.
-		 */
-		if (((gdeleted && pmc->mca_sfmode == MCAST_EXCLUDE) ||
-		     (!gdeleted && pmc->mca_crcount)) &&
-		    (type == MLD2_ALLOW_NEW_SOURCES ||
-		     type == MLD2_BLOCK_OLD_SOURCES) && psf->sf_crcount)
-			goto decrease_sf_crcount;
-
 		/* clear marks on query responses */
 		if (isquery)
 			psf->sf_gsresp = 0;
@@ -1779,12 +1752,12 @@ static struct sk_buff *add_grec(struct sk_buff *skb, struct ifmcaddr6 *pmc,
 				pgr->grec_nsrcs = htons(scount);
 			if (skb)
 				mld_sendpack(skb);
-			skb = mld_newpack(idev, mtu);
+			skb = mld_newpack(idev, dev->mtu);
 			first = 1;
 			scount = 0;
 		}
 		if (first) {
-			skb = add_grhead(skb, pmc, type, &pgr, mtu);
+			skb = add_grhead(skb, pmc, type, &pgr);
 			first = 0;
 		}
 		if (!skb)
@@ -1794,7 +1767,6 @@ static struct sk_buff *add_grec(struct sk_buff *skb, struct ifmcaddr6 *pmc,
 		scount++; stotal++;
 		if ((type == MLD2_ALLOW_NEW_SOURCES ||
 		     type == MLD2_BLOCK_OLD_SOURCES) && psf->sf_crcount) {
-decrease_sf_crcount:
 			psf->sf_crcount--;
 			if ((sdeleted || gdeleted) && psf->sf_crcount == 0) {
 				if (psf_prev)
@@ -1819,7 +1791,7 @@ empty_source:
 				mld_sendpack(skb);
 				skb = NULL; /* add_grhead will get a new one */
 			}
-			skb = add_grhead(skb, pmc, type, &pgr, mtu);
+			skb = add_grhead(skb, pmc, type, &pgr);
 		}
 	}
 	if (pgr)
@@ -2035,9 +2007,8 @@ static void igmp6_send(struct in6_addr *addr, struct net_device *dev, int type)
 	}
 
 	skb_dst_set(skb, dst);
-	err = NF_HOOK(NFPROTO_IPV6, NF_INET_LOCAL_OUT,
-		      net, sk, skb, NULL, skb->dev,
-		      dst_output);
+	err = NF_HOOK(NFPROTO_IPV6, NF_INET_LOCAL_OUT, sk, skb,
+		      NULL, skb->dev, dst_output_sk);
 out:
 	if (!err) {
 		ICMP6MSGOUT_INC_STATS(net, idev, type);
@@ -2513,17 +2484,15 @@ void ipv6_mc_down(struct inet6_dev *idev)
 	/* Withdraw multicast list */
 
 	read_lock_bh(&idev->lock);
-
-	for (i = idev->mc_list; i; i = i->next)
-		igmp6_group_dropped(i);
-
-	/* Should stop timer after group drop. or we will
-	 * start timer again in mld_ifc_event()
-	 */
 	mld_ifc_stop_timer(idev);
 	mld_gq_stop_timer(idev);
 	mld_dad_stop_timer(idev);
+
+	for (i = idev->mc_list; i; i = i->next)
+		igmp6_group_dropped(i);
 	read_unlock_bh(&idev->lock);
+
+	mld_clear_delrec(idev);
 }
 
 static void ipv6_mc_reset(struct inet6_dev *idev)
@@ -2545,10 +2514,8 @@ void ipv6_mc_up(struct inet6_dev *idev)
 
 	read_lock_bh(&idev->lock);
 	ipv6_mc_reset(idev);
-	for (i = idev->mc_list; i; i = i->next) {
-		mld_del_delrec(idev, i);
+	for (i = idev->mc_list; i; i = i->next)
 		igmp6_group_added(i);
-	}
 	read_unlock_bh(&idev->lock);
 }
 
@@ -2581,7 +2548,6 @@ void ipv6_mc_destroy_dev(struct inet6_dev *idev)
 
 	/* Deactivate timers */
 	ipv6_mc_down(idev);
-	mld_clear_delrec(idev);
 
 	/* Delete all-nodes address. */
 	/* We cannot call ipv6_dev_mc_dec() directly, our caller in
@@ -2596,9 +2562,11 @@ void ipv6_mc_destroy_dev(struct inet6_dev *idev)
 	write_lock_bh(&idev->lock);
 	while ((i = idev->mc_list) != NULL) {
 		idev->mc_list = i->next;
-
 		write_unlock_bh(&idev->lock);
+
+		igmp6_group_dropped(i);
 		ma_put(i);
+
 		write_lock_bh(&idev->lock);
 	}
 	write_unlock_bh(&idev->lock);

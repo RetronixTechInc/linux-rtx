@@ -96,7 +96,7 @@ retry:
 			return 0;
 
 		if (have_drawable_releases && sc > 300) {
-			FENCE_WARN(fence, "failed to wait on release %llu "
+			FENCE_WARN(fence, "failed to wait on release %d "
 					  "after spincount %d\n",
 					  fence->context & ~0xf0000000, sc);
 			goto signaled;
@@ -122,7 +122,7 @@ static const struct fence_ops qxl_fence_ops = {
 	.wait = qxl_fence_wait,
 };
 
-static int
+static uint64_t
 qxl_release_alloc(struct qxl_device *qdev, int type,
 		  struct qxl_release **ret)
 {
@@ -153,7 +153,7 @@ qxl_release_alloc(struct qxl_device *qdev, int type,
 		return handle;
 	}
 	*ret = release;
-	QXL_INFO(qdev, "allocated release %d\n", handle);
+	QXL_INFO(qdev, "allocated release %lld\n", handle);
 	release->id = handle;
 	return handle;
 }
@@ -203,9 +203,12 @@ qxl_release_free(struct qxl_device *qdev,
 static int qxl_release_bo_alloc(struct qxl_device *qdev,
 				struct qxl_bo **bo)
 {
+	int ret;
 	/* pin releases bo's they are too messy to evict */
-	return qxl_bo_create(qdev, PAGE_SIZE, false, true,
-			     QXL_GEM_DOMAIN_VRAM, NULL, bo);
+	ret = qxl_bo_create(qdev, PAGE_SIZE, false, true,
+			    QXL_GEM_DOMAIN_VRAM, NULL,
+			    bo);
+	return ret;
 }
 
 int qxl_release_list_add(struct qxl_release *release, struct qxl_bo *bo)
@@ -304,7 +307,7 @@ int qxl_alloc_surface_release_reserved(struct qxl_device *qdev,
 		idr_ret = qxl_release_alloc(qdev, QXL_RELEASE_SURFACE_CMD, release);
 		if (idr_ret < 0)
 			return idr_ret;
-		bo = to_qxl_bo(entry->tv.bo);
+		bo = qxl_bo_ref(to_qxl_bo(entry->tv.bo));
 
 		(*release)->release_offset = create_rel->release_offset + 64;
 
@@ -313,6 +316,8 @@ int qxl_alloc_surface_release_reserved(struct qxl_device *qdev,
 		info = qxl_release_map(qdev, *release);
 		info->id = idr_ret;
 		qxl_release_unmap(qdev, *release, info);
+
+		qxl_bo_unref(&bo);
 		return 0;
 	}
 
@@ -358,7 +363,6 @@ int qxl_alloc_release_reserved(struct qxl_device *qdev, unsigned long size,
 		ret = qxl_release_bo_alloc(qdev, &qdev->current_release_bo[cur_idx]);
 		if (ret) {
 			mutex_unlock(&qdev->release_mutex);
-			qxl_release_free(qdev, *release);
 			return ret;
 		}
 	}
@@ -373,17 +377,13 @@ int qxl_alloc_release_reserved(struct qxl_device *qdev, unsigned long size,
 
 	mutex_unlock(&qdev->release_mutex);
 
-	ret = qxl_release_list_add(*release, bo);
-	qxl_bo_unref(&bo);
-	if (ret) {
-		qxl_release_free(qdev, *release);
-		return ret;
-	}
+	qxl_release_list_add(*release, bo);
 
 	info = qxl_release_map(qdev, *release);
 	info->id = idr_ret;
 	qxl_release_unmap(qdev, *release, info);
 
+	qxl_bo_unref(&bo);
 	return ret;
 }
 

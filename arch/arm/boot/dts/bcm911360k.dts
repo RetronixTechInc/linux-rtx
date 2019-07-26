@@ -43,10 +43,11 @@
 	};
 
 	chosen {
-		stdout-path = "serial0:115200n8";
+		stdout-path = &uart3;
+		bootargs = "console=ttyS0,115200";
 	};
-};
 
-&uart3 {
-	status = "okay";
+	uart3: serial@18023000 {
+		status = "okay";
+	};
 };

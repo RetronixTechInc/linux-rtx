@@ -1072,9 +1072,9 @@ void fb_edid_add_monspecs(unsigned char *edid, struct fb_monspecs *specs)
 
 	for (i = specs->modedb_len + num; i < specs->modedb_len + num + svd_n; i++) {
 		int idx = svd[i - specs->modedb_len - num];
-		if (!idx || idx >= ARRAY_SIZE(cea_modes)) {
+		if (!idx || idx > 63) {
 			pr_warning("Reserved SVD code %d\n", idx);
-		} else if (!cea_modes[idx].xres) {
+		} else if (idx > ARRAY_SIZE(cea_modes) || !cea_modes[idx].xres) {
 			pr_warning("Unimplemented SVD code %d\n", idx);
 		} else {
 			memcpy(&m[i], cea_modes + idx, sizeof(m[i]));
@@ -1475,9 +1475,7 @@ int of_get_fb_videomode(struct device_node *np, struct fb_videomode *fb,
 	if (ret)
 		return ret;
 
-	ret = fb_videomode_from_videomode(&vm, fb);
-	if (ret)
-		return ret;
+	fb_videomode_from_videomode(&vm, fb);
 
 	pr_debug("%s: got %dx%d display mode from %s\n",
 		of_node_full_name(np), vm.hactive, vm.vactive, np->name);
@@ -1496,6 +1494,7 @@ int fb_parse_edid(unsigned char *edid, struct fb_var_screeninfo *var)
 }
 void fb_edid_to_monspecs(unsigned char *edid, struct fb_monspecs *specs)
 {
+	specs = NULL;
 }
 void fb_edid_add_monspecs(unsigned char *edid, struct fb_monspecs *specs)
 {

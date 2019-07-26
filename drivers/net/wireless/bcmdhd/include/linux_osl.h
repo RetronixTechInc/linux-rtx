@@ -21,7 +21,7 @@
  * software in any way with any other Broadcom software provided under a license
  * other than the GPL, without Broadcom's express prior written consent.
  *
- * $Id: linux_osl.h 657415 2016-09-01 05:45:34Z $
+ * $Id: linux_osl.h 432719 2013-10-29 12:04:59Z $
  */
 
 #ifndef _linux_osl_h_
@@ -179,16 +179,23 @@ extern void osl_dma_unmap(osl_t *osh, uint pa, uint size, int direction);
 #endif 
 
 /* register access macros */
+#if defined(BCMSDIO)
 	#include <bcmsdh.h>
 	#define OSL_WRITE_REG(osh, r, v) (bcmsdh_reg_write(osl_get_bus_handle(osh), \
 		(uintptr)(r), sizeof(*(r)), (v)))
 	#define OSL_READ_REG(osh, r) (bcmsdh_reg_read(osl_get_bus_handle(osh), \
 		(uintptr)(r), sizeof(*(r))))
+#endif 
 
+#if defined(BCMSDIO)
 	#define SELECT_BUS_WRITE(osh, mmap_op, bus_op) if (((osl_pubinfo_t*)(osh))->mmbus) \
 		mmap_op else bus_op
 	#define SELECT_BUS_READ(osh, mmap_op, bus_op) (((osl_pubinfo_t*)(osh))->mmbus) ? \
 		mmap_op : bus_op
+#else
+	#define SELECT_BUS_WRITE(osh, mmap_op, bus_op) ({BCM_REFERENCE(osh); mmap_op;})
+	#define SELECT_BUS_READ(osh, mmap_op, bus_op) ({BCM_REFERENCE(osh); mmap_op;})
+#endif 
 
 #define OSL_ERROR(bcmerror)	osl_error(bcmerror)
 extern int osl_error(int bcmerror);
@@ -310,8 +317,6 @@ extern int osl_error(int bcmerror);
 #endif /* CONFIG_DHD_USE_STATIC_BUF */
 #define	PKTDATA(osh, skb)		({BCM_REFERENCE(osh); (((struct sk_buff*)(skb))->data);})
 #define	PKTLEN(osh, skb)		({BCM_REFERENCE(osh); (((struct sk_buff*)(skb))->len);})
-
-
 #define PKTHEADROOM(osh, skb)		(PKTDATA(osh, skb)-(((struct sk_buff*)(skb))->head))
 #define PKTEXPHEADROOM(osh, skb, b)	\
 	({ \
@@ -358,11 +363,6 @@ extern int osl_error(int bcmerror);
 #define PKTID(skb)              ({BCM_REFERENCE(skb); 0;})
 #define PKTSETID(skb, id)       ({BCM_REFERENCE(skb); BCM_REFERENCE(id);})
 #define PKTSHRINK(osh, m)		({BCM_REFERENCE(osh); m;})
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 6, 0)
-#define PKTORPHAN(skb)          skb_orphan(skb)
-#else
-#define PKTORPHAN(skb)          ({BCM_REFERENCE(skb); 0;})
-#endif /* LINUX VERSION >= 3.6 */
 
 #ifdef BCMDBG_CTRACE
 #define	DEL_CTRACE(zosh, zskb) { \

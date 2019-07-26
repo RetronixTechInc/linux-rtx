@@ -7,8 +7,7 @@
 #include <linux/prctl.h>
 #include <linux/slab.h>
 #include <linux/sched.h>
-#include <linux/init.h>
-#include <linux/export.h>
+#include <linux/module.h>
 #include <linux/pm.h>
 #include <linux/tick.h>
 #include <linux/random.h>
@@ -26,13 +25,11 @@
 #include <asm/idle.h>
 #include <asm/uaccess.h>
 #include <asm/mwait.h>
-#include <asm/fpu/internal.h>
+#include <asm/i387.h>
+#include <asm/fpu-internal.h>
 #include <asm/debugreg.h>
 #include <asm/nmi.h>
 #include <asm/tlbflush.h>
-#include <asm/mce.h>
-#include <asm/vm86.h>
-#include <asm/switch_to.h>
 
 /*
  * per-CPU TSS segments. Threads are completely 'soft' on Linux,
@@ -41,7 +38,7 @@
  * section. Since TSS's are completely CPU-local, we want them
  * on exact cacheline boundaries, to eliminate cacheline ping-pong.
  */
-__visible DEFINE_PER_CPU_SHARED_ALIGNED_USER_MAPPED(struct tss_struct, cpu_tss) = {
+__visible DEFINE_PER_CPU_SHARED_ALIGNED(struct tss_struct, cpu_tss) = {
 	.x86_tss = {
 		.sp0 = TOP_OF_INIT_STACK,
 #ifdef CONFIG_X86_32
@@ -59,9 +56,6 @@ __visible DEFINE_PER_CPU_SHARED_ALIGNED_USER_MAPPED(struct tss_struct, cpu_tss) 
 	  */
 	.io_bitmap		= { [0 ... IO_BITMAP_LONGS] = ~0 },
 #endif
-#ifdef CONFIG_X86_32
-	.SYSENTER_stack_canary	= STACK_END_MAGIC,
-#endif
 };
 EXPORT_PER_CPU_SYMBOL(cpu_tss);
 
@@ -69,28 +63,57 @@ EXPORT_PER_CPU_SYMBOL(cpu_tss);
 static DEFINE_PER_CPU(unsigned char, is_idle);
 #endif
 
+struct kmem_cache *task_xstate_cachep;
+EXPORT_SYMBOL_GPL(task_xstate_cachep);
+
 /*
  * this gets called so that we can store lazy state into memory and copy the
  * current task into the new thread.
  */
 int arch_dup_task_struct(struct task_struct *dst, struct task_struct *src)
 {
-	memcpy(dst, src, arch_task_struct_size);
-#ifdef CONFIG_VM86
-	dst->thread.vm86 = NULL;
-#endif
+	*dst = *src;
 
-	return fpu__copy(&dst->thread.fpu, &src->thread.fpu);
+	dst->thread.fpu_counter = 0;
+	dst->thread.fpu.has_fpu = 0;
+	dst->thread.fpu.state = NULL;
+	task_disable_lazy_fpu_restore(dst);
+	if (tsk_used_math(src)) {
+		int err = fpu_alloc(&dst->thread.fpu);
+		if (err)
+			return err;
+		fpu_copy(dst, src);
+	}
+	return 0;
+}
+
+void free_thread_xstate(struct task_struct *tsk)
+{
+	fpu_free(&tsk->thread.fpu);
+}
+
+void arch_release_task_struct(struct task_struct *tsk)
+{
+	free_thread_xstate(tsk);
+}
+
+void arch_task_cache_init(void)
+{
+        task_xstate_cachep =
+        	kmem_cache_create("task_xstate", xstate_size,
+				  __alignof__(union thread_xstate),
+				  SLAB_PANIC | SLAB_NOTRACK, NULL);
+	setup_xstate_comp();
 }
 
 /*
  * Free current thread data structures etc..
  */
-void exit_thread(struct task_struct *tsk)
+void exit_thread(void)
 {
-	struct thread_struct *t = &tsk->thread;
+	struct task_struct *me = current;
+	struct thread_struct *t = &me->thread;
 	unsigned long *bp = t->io_bitmap_ptr;
-	struct fpu *fpu = &t->fpu;
 
 	if (bp) {
 		struct tss_struct *tss = &per_cpu(cpu_tss, get_cpu());
@@ -106,9 +129,7 @@ void exit_thread(struct task_struct *tsk)
 		kfree(bp);
 	}
 
-	free_vm86(t);
-
-	fpu__drop(fpu);
+	drop_fpu(me);
 }
 
 void flush_thread(void)
@@ -118,7 +139,19 @@ void flush_thread(void)
 	flush_ptrace_hw_breakpoint(tsk);
 	memset(tsk->thread.tls_array, 0, sizeof(tsk->thread.tls_array));
 
-	fpu__clear(&tsk->thread.fpu);
+	if (!use_eager_fpu()) {
+		/* FPU state will be reallocated lazily at the first use. */
+		drop_fpu(tsk);
+		free_thread_xstate(tsk);
+	} else {
+		if (!tsk_used_math(tsk)) {
+			/* kthread execs. TODO: cleanup this horror. */
+			if (WARN_ON(init_fpu(tsk)))
+				force_sig(SIGKILL, tsk);
+			user_fpu_begin();
+		}
+		restore_init_xstate();
+	}
 }
 
 static void hard_disable_TSC(void)
@@ -289,7 +322,7 @@ void arch_cpu_idle(void)
 /*
  * We use this if we don't have any better idle routine..
  */
-void __cpuidle default_idle(void)
+void default_idle(void)
 {
 	trace_cpu_idle_rcuidle(1, smp_processor_id());
 	safe_halt();
@@ -317,7 +350,6 @@ void stop_this_cpu(void *dummy)
 	 */
 	set_cpu_online(smp_processor_id(), false);
 	disable_local_APIC();
-	mcheck_cpu_clear(this_cpu_ptr(&cpu_info));
 
 	for (;;)
 		halt();
@@ -393,25 +425,26 @@ static int prefer_mwait_c1_over_halt(const struct cpuinfo_x86 *c)
 	if (c->x86_vendor != X86_VENDOR_INTEL)
 		return 0;
 
-	if (!cpu_has(c, X86_FEATURE_MWAIT) || static_cpu_has_bug(X86_BUG_MONITOR))
+	if (!cpu_has(c, X86_FEATURE_MWAIT))
 		return 0;
 
 	return 1;
 }
 
 /*
- * MONITOR/MWAIT with no hints, used for default C1 state. This invokes MWAIT
- * with interrupts enabled and no flags, which is backwards compatible with the
- * original MWAIT implementation.
+ * MONITOR/MWAIT with no hints, used for default default C1 state.
+ * This invokes MWAIT with interrutps enabled and no flags,
+ * which is backwards compatible with the original MWAIT implementation.
  */
-static __cpuidle void mwait_idle(void)
+
+static void mwait_idle(void)
 {
 	if (!current_set_polling_and_test()) {
 		trace_cpu_idle_rcuidle(1, smp_processor_id());
 		if (this_cpu_has(X86_BUG_CLFLUSH_MONITOR)) {
-			mb(); /* quirk */
+			smp_mb(); /* quirk */
 			clflush((void *)&current_thread_info()->flags);
-			mb(); /* quirk */
+			smp_mb(); /* quirk */
 		}
 
 		__monitor((void *)&current_thread_info()->flags, 0, 0);
@@ -435,7 +468,8 @@ void select_idle_routine(const struct cpuinfo_x86 *c)
 	if (x86_idle || boot_option_idle_override == IDLE_POLL)
 		return;
 
-	if (boot_cpu_has_bug(X86_BUG_AMD_E400)) {
+	if (cpu_has_bug(c, X86_BUG_AMD_APIC_C1E)) {
+		/* E400: APIC timer interrupt does not wake up CPU from C1e */
 		pr_info("using AMD E400 aware idle routine\n");
 		x86_idle = amd_e400_idle;
 	} else if (prefer_mwait_c1_over_halt(c)) {
@@ -495,78 +529,7 @@ unsigned long arch_align_stack(unsigned long sp)
 
 unsigned long arch_randomize_brk(struct mm_struct *mm)
 {
-	return randomize_page(mm->brk, 0x02000000);
+	unsigned long range_end = mm->brk + 0x02000000;
+	return randomize_range(mm->brk, range_end, 0) ? : mm->brk;
 }
 
-/*
- * Return saved PC of a blocked thread.
- * What is this good for? it will be always the scheduler or ret_from_fork.
- */
-unsigned long thread_saved_pc(struct task_struct *tsk)
-{
-	struct inactive_task_frame *frame =
-		(struct inactive_task_frame *) READ_ONCE(tsk->thread.sp);
-	return READ_ONCE_NOCHECK(frame->ret_addr);
-}
-
-/*
- * Called from fs/proc with a reference on @p to find the function
- * which called into schedule(). This needs to be done carefully
- * because the task might wake up and we might look at a stack
- * changing under us.
- */
-unsigned long get_wchan(struct task_struct *p)
-{
-	unsigned long start, bottom, top, sp, fp, ip, ret = 0;
-	int count = 0;
-
-	if (!p || p == current || p->state == TASK_RUNNING)
-		return 0;
-
-	if (!try_get_task_stack(p))
-		return 0;
-
-	start = (unsigned long)task_stack_page(p);
-	if (!start)
-		goto out;
-
-	/*
-	 * Layout of the stack page:
-	 *
-	 * ----------- topmax = start + THREAD_SIZE - sizeof(unsigned long)
-	 * PADDING
-	 * ----------- top = topmax - TOP_OF_KERNEL_STACK_PADDING
-	 * stack
-	 * ----------- bottom = start
-	 *
-	 * The tasks stack pointer points at the location where the
-	 * framepointer is stored. The data on the stack is:
-	 * ... IP FP ... IP FP
-	 *
-	 * We need to read FP and IP, so we need to adjust the upper
-	 * bound by another unsigned long.
-	 */
-	top = start + THREAD_SIZE - TOP_OF_KERNEL_STACK_PADDING;
-	top -= 2 * sizeof(unsigned long);
-	bottom = start;
-
-	sp = READ_ONCE(p->thread.sp);
-	if (sp < bottom || sp > top)
-		goto out;
-
-	fp = READ_ONCE_NOCHECK(((struct inactive_task_frame *)sp)->bp);
-	do {
-		if (fp < bottom || fp > top)
-			goto out;
-		ip = READ_ONCE_NOCHECK(*(unsigned long *)(fp + sizeof(unsigned long)));
-		if (!in_sched_functions(ip)) {
-			ret = ip;
-			goto out;
-		}
-		fp = READ_ONCE_NOCHECK(*(unsigned long *)fp);
-	} while (count++ < 16 && p->state != TASK_RUNNING);
-
-out:
-	put_task_stack(p);
-	return ret;
-}

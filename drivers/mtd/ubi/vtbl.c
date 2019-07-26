@@ -70,26 +70,6 @@ static void self_vtbl_check(const struct ubi_device *ubi);
 static struct ubi_vtbl_record empty_vtbl_record;
 
 /**
- * ubi_update_layout_vol - helper for updatting layout volumes on flash
- * @ubi: UBI device description object
- */
-static int ubi_update_layout_vol(struct ubi_device *ubi)
-{
-	struct ubi_volume *layout_vol;
-	int i, err;
-
-	layout_vol = ubi->volumes[vol_id2idx(ubi, UBI_LAYOUT_VOLUME_ID)];
-	for (i = 0; i < UBI_LAYOUT_VOLUME_EBS; i++) {
-		err = ubi_eba_atomic_leb_change(ubi, layout_vol, i, ubi->vtbl,
-						ubi->vtbl_size);
-		if (err)
-			return err;
-	}
-
-	return 0;
-}
-
-/**
  * ubi_change_vtbl_record - change volume table record.
  * @ubi: UBI device description object
  * @idx: table index to change
@@ -103,10 +83,12 @@ static int ubi_update_layout_vol(struct ubi_device *ubi)
 int ubi_change_vtbl_record(struct ubi_device *ubi, int idx,
 			   struct ubi_vtbl_record *vtbl_rec)
 {
-	int err;
+	int i, err;
 	uint32_t crc;
+	struct ubi_volume *layout_vol;
 
 	ubi_assert(idx >= 0 && idx < ubi->vtbl_slots);
+	layout_vol = ubi->volumes[vol_id2idx(ubi, UBI_LAYOUT_VOLUME_ID)];
 
 	if (!vtbl_rec)
 		vtbl_rec = &empty_vtbl_record;
@@ -116,10 +98,15 @@ int ubi_change_vtbl_record(struct ubi_device *ubi, int idx,
 	}
 
 	memcpy(&ubi->vtbl[idx], vtbl_rec, sizeof(struct ubi_vtbl_record));
-	err = ubi_update_layout_vol(ubi);
+	for (i = 0; i < UBI_LAYOUT_VOLUME_EBS; i++) {
+		err = ubi_eba_atomic_leb_change(ubi, layout_vol, i, ubi->vtbl,
+						ubi->vtbl_size);
+		if (err)
+			return err;
+	}
 
 	self_vtbl_check(ubi);
-	return err ? err : 0;
+	return 0;
 }
 
 /**
@@ -134,7 +121,9 @@ int ubi_change_vtbl_record(struct ubi_device *ubi, int idx,
 int ubi_vtbl_rename_volumes(struct ubi_device *ubi,
 			    struct list_head *rename_list)
 {
+	int i, err;
 	struct ubi_rename_entry *re;
+	struct ubi_volume *layout_vol;
 
 	list_for_each_entry(re, rename_list, list) {
 		uint32_t crc;
@@ -156,7 +145,15 @@ int ubi_vtbl_rename_volumes(struct ubi_device *ubi,
 		vtbl_rec->crc = cpu_to_be32(crc);
 	}
 
-	return ubi_update_layout_vol(ubi);
+	layout_vol = ubi->volumes[vol_id2idx(ubi, UBI_LAYOUT_VOLUME_ID)];
+	for (i = 0; i < UBI_LAYOUT_VOLUME_EBS; i++) {
+		err = ubi_eba_atomic_leb_change(ubi, layout_vol, i, ubi->vtbl,
+						ubi->vtbl_size);
+		if (err)
+			return err;
+	}
+
+	return 0;
 }
 
 /**
@@ -299,17 +296,14 @@ static int create_vtbl(struct ubi_device *ubi, struct ubi_attach_info *ai,
 		       int copy, void *vtbl)
 {
 	int err, tries = 0;
-	struct ubi_vid_io_buf *vidb;
 	struct ubi_vid_hdr *vid_hdr;
 	struct ubi_ainf_peb *new_aeb;
 
 	dbg_gen("create volume table (copy #%d)", copy + 1);
 
-	vidb = ubi_alloc_vid_buf(ubi, GFP_KERNEL);
-	if (!vidb)
+	vid_hdr = ubi_zalloc_vid_hdr(ubi, GFP_KERNEL);
+	if (!vid_hdr)
 		return -ENOMEM;
-
-	vid_hdr = ubi_get_vid_hdr(vidb);
 
 retry:
 	new_aeb = ubi_early_get_peb(ubi, ai);
@@ -327,7 +321,7 @@ retry:
 	vid_hdr->sqnum = cpu_to_be64(++ai->max_sqnum);
 
 	/* The EC header is already there, write the VID header */
-	err = ubi_io_write_vid_hdr(ubi, new_aeb->pnum, vidb);
+	err = ubi_io_write_vid_hdr(ubi, new_aeb->pnum, vid_hdr);
 	if (err)
 		goto write_error;
 
@@ -341,8 +335,8 @@ retry:
 	 * of this LEB as it will be deleted and freed in 'ubi_add_to_av()'.
 	 */
 	err = ubi_add_to_av(ubi, ai, new_aeb->pnum, new_aeb->ec, vid_hdr, 0);
-	ubi_free_aeb(ai, new_aeb);
-	ubi_free_vid_buf(vidb);
+	kmem_cache_free(ai->aeb_slab_cache, new_aeb);
+	ubi_free_vid_hdr(ubi, vid_hdr);
 	return err;
 
 write_error:
@@ -354,9 +348,9 @@ write_error:
 		list_add(&new_aeb->u.list, &ai->erase);
 		goto retry;
 	}
-	ubi_free_aeb(ai, new_aeb);
+	kmem_cache_free(ai->aeb_slab_cache, new_aeb);
 out_free:
-	ubi_free_vid_buf(vidb);
+	ubi_free_vid_hdr(ubi, vid_hdr);
 	return err;
 
 }

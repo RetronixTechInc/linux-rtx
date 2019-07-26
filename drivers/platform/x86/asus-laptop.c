@@ -54,7 +54,6 @@
 #include <linux/slab.h>
 #include <linux/dmi.h>
 #include <linux/acpi.h>
-#include <acpi/video.h>
 
 #define ASUS_LAPTOP_VERSION	"0.42"
 
@@ -332,7 +331,6 @@ static const struct key_entry asus_keymap[] = {
 	{KE_KEY, 0x65, { KEY_SWITCHVIDEOMODE } }, /* SDSP LCD + TV */
 	{KE_KEY, 0x66, { KEY_SWITCHVIDEOMODE } }, /* SDSP CRT + TV */
 	{KE_KEY, 0x67, { KEY_SWITCHVIDEOMODE } }, /* SDSP LCD + CRT + TV */
-	{KE_KEY, 0x6A, { KEY_TOUCHPAD_TOGGLE } }, /* Lock Touchpad Fn + F9 */
 	{KE_KEY, 0x6B, { KEY_TOUCHPAD_TOGGLE } }, /* Lock Touchpad */
 	{KE_KEY, 0x6C, { KEY_SLEEP } }, /* Suspend */
 	{KE_KEY, 0x6D, { KEY_SLEEP } }, /* Hibernate */
@@ -771,14 +769,12 @@ static int asus_read_brightness(struct backlight_device *bd)
 {
 	struct asus_laptop *asus = bl_get_data(bd);
 	unsigned long long value;
-	acpi_status rv;
+	acpi_status rv = AE_OK;
 
 	rv = acpi_evaluate_integer(asus->handle, METHOD_BRIGHTNESS_GET,
 				   NULL, &value);
-	if (ACPI_FAILURE(rv)) {
+	if (ACPI_FAILURE(rv))
 		pr_warn("Error reading brightness\n");
-		return 0;
-	}
 
 	return value;
 }
@@ -867,7 +863,7 @@ static ssize_t infos_show(struct device *dev, struct device_attribute *attr,
 	int len = 0;
 	unsigned long long temp;
 	char buf[16];		/* enough for all info */
-	acpi_status rv;
+	acpi_status rv = AE_OK;
 
 	/*
 	 * We use the easy way, we don't care of off and count,
@@ -932,19 +928,31 @@ static ssize_t infos_show(struct device *dev, struct device_attribute *attr,
 }
 static DEVICE_ATTR_RO(infos);
 
+static int parse_arg(const char *buf, unsigned long count, int *val)
+{
+	if (!count)
+		return 0;
+	if (count > 31)
+		return -EINVAL;
+	if (sscanf(buf, "%i", val) != 1)
+		return -EINVAL;
+	return count;
+}
+
 static ssize_t sysfs_acpi_set(struct asus_laptop *asus,
 			      const char *buf, size_t count,
 			      const char *method)
 {
 	int rv, value;
+	int out = 0;
 
-	rv = kstrtoint(buf, 0, &value);
-	if (rv < 0)
-		return rv;
+	rv = parse_arg(buf, count, &value);
+	if (rv > 0)
+		out = value ? 1 : 0;
 
 	if (write_acpi_int(asus->handle, method, value))
 		return -ENODEV;
-	return count;
+	return rv;
 }
 
 /*
@@ -964,17 +972,15 @@ static ssize_t ledd_store(struct device *dev, struct device_attribute *attr,
 	struct asus_laptop *asus = dev_get_drvdata(dev);
 	int rv, value;
 
-	rv = kstrtoint(buf, 0, &value);
-	if (rv < 0)
-		return rv;
-
-	if (write_acpi_int(asus->handle, METHOD_LEDD, value)) {
-		pr_warn("LED display write failed\n");
-		return -ENODEV;
+	rv = parse_arg(buf, count, &value);
+	if (rv > 0) {
+		if (write_acpi_int(asus->handle, METHOD_LEDD, value)) {
+			pr_warn("LED display write failed\n");
+			return -ENODEV;
+		}
+		asus->ledd_status = (u32) value;
 	}
-
-	asus->ledd_status = (u32) value;
-	return count;
+	return rv;
 }
 static DEVICE_ATTR_RW(ledd);
 
@@ -1139,12 +1145,10 @@ static ssize_t display_store(struct device *dev, struct device_attribute *attr,
 	struct asus_laptop *asus = dev_get_drvdata(dev);
 	int rv, value;
 
-	rv = kstrtoint(buf, 0, &value);
-	if (rv < 0)
-		return rv;
-
-	asus_set_display(asus, value);
-	return count;
+	rv = parse_arg(buf, count, &value);
+	if (rv > 0)
+		asus_set_display(asus, value);
+	return rv;
 }
 static DEVICE_ATTR_WO(display);
 
@@ -1183,12 +1187,11 @@ static ssize_t ls_switch_store(struct device *dev,
 	struct asus_laptop *asus = dev_get_drvdata(dev);
 	int rv, value;
 
-	rv = kstrtoint(buf, 0, &value);
-	if (rv < 0)
-		return rv;
+	rv = parse_arg(buf, count, &value);
+	if (rv > 0)
+		asus_als_switch(asus, value ? 1 : 0);
 
-	asus_als_switch(asus, value ? 1 : 0);
-	return count;
+	return rv;
 }
 static DEVICE_ATTR_RW(ls_switch);
 
@@ -1213,15 +1216,14 @@ static ssize_t ls_level_store(struct device *dev, struct device_attribute *attr,
 	struct asus_laptop *asus = dev_get_drvdata(dev);
 	int rv, value;
 
-	rv = kstrtoint(buf, 0, &value);
-	if (rv < 0)
-		return rv;
+	rv = parse_arg(buf, count, &value);
+	if (rv > 0) {
+		value = (0 < value) ? ((15 < value) ? 15 : value) : 0;
+		/* 0 <= value <= 15 */
+		asus_als_level(asus, value);
+	}
 
-	value = (0 < value) ? ((15 < value) ? 15 : value) : 0;
-	/* 0 <= value <= 15 */
-	asus_als_level(asus, value);
-
-	return count;
+	return rv;
 }
 static DEVICE_ATTR_RW(ls_level);
 
@@ -1261,7 +1263,7 @@ static DEVICE_ATTR_RO(ls_value);
 static int asus_gps_status(struct asus_laptop *asus)
 {
 	unsigned long long status;
-	acpi_status rv;
+	acpi_status rv = AE_OK;
 
 	rv = acpi_evaluate_integer(asus->handle, METHOD_GPS_STATUS,
 				   NULL, &status);
@@ -1296,14 +1298,14 @@ static ssize_t gps_store(struct device *dev, struct device_attribute *attr,
 	int rv, value;
 	int ret;
 
-	rv = kstrtoint(buf, 0, &value);
-	if (rv < 0)
-		return rv;
+	rv = parse_arg(buf, count, &value);
+	if (rv <= 0)
+		return -EINVAL;
 	ret = asus_gps_switch(asus, !!value);
 	if (ret)
 		return ret;
 	rfkill_set_sw_state(asus->gps.rfkill, !value);
-	return count;
+	return rv;
 }
 static DEVICE_ATTR_RW(gps);
 
@@ -1882,11 +1884,12 @@ static int asus_acpi_add(struct acpi_device *device)
 	if (result)
 		goto fail_platform;
 
-	if (acpi_video_get_backlight_type() == acpi_backlight_vendor) {
+	if (!acpi_video_backlight_support()) {
 		result = asus_backlight_init(asus);
 		if (result)
 			goto fail_backlight;
-	}
+	} else
+		pr_info("Backlight controlled by ACPI video driver\n");
 
 	result = asus_input_init(asus);
 	if (result)

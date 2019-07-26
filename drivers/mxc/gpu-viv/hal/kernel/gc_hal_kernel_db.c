@@ -2,7 +2,7 @@
 *
 *    The MIT License (MIT)
 *
-*    Copyright (c) 2014 - 2017 Vivante Corporation
+*    Copyright (c) 2014 - 2016 Vivante Corporation
 *
 *    Permission is hereby granted, free of charge, to any person obtaining a
 *    copy of this software and associated documentation files (the "Software"),
@@ -26,7 +26,7 @@
 *
 *    The GPL License (GPL)
 *
-*    Copyright (C) 2014 - 2017 Vivante Corporation
+*    Copyright (C) 2014 - 2016 Vivante Corporation
 *
 *    This program is free software; you can redistribute it and/or
 *    modify it under the terms of the GNU General Public License
@@ -91,7 +91,6 @@ gckKERNEL_NewDatabase(
 {
     gceSTATUS status;
     gcsDATABASE_PTR database;
-    gctPOINTER pointer = gcvNULL;
     gctBOOL acquired = gcvFALSE;
     gctSIZE_T slot;
     gcsDATABASE_PTR existingDatabase;
@@ -125,6 +124,8 @@ gckKERNEL_NewDatabase(
     }
     else
     {
+        gctPOINTER pointer = gcvNULL;
+
         /* Allocate a new database from the heap. */
         gcmkONERROR(gckOS_Allocate(Kernel->os,
                                    gcmSIZEOF(gcsDATABASE),
@@ -155,11 +156,6 @@ gckKERNEL_NewDatabase(
     return gcvSTATUS_OK;
 
 OnError:
-    if (pointer)
-    {
-        gcmkOS_SAFE_FREE(Kernel->os, pointer);
-    }
-
     if (acquired)
     {
         /* Release the database mutex. */
@@ -741,6 +737,9 @@ gckKERNEL_CreateProcessDB(
     database->mapUserMemory.bytes      = 0;
     database->mapUserMemory.maxBytes   = 0;
     database->mapUserMemory.totalBytes = 0;
+    database->virtualCommandBuffer.bytes = 0;
+    database->virtualCommandBuffer.maxBytes = 0;
+    database->virtualCommandBuffer.totalBytes = 0;
 
     for (i = 0; i < gcmCOUNTOF(database->list); i++)
     {
@@ -993,6 +992,10 @@ gckKERNEL_AddProcessDB(
         count = &database->mapUserMemory;
         break;
 
+    case gcvDB_COMMAND_BUFFER:
+        count = &database->virtualCommandBuffer;
+        break;
+
     default:
         count = gcvNULL;
         break;
@@ -1087,7 +1090,7 @@ gckKERNEL_RemoveProcessDB(
     gcsDATABASE_PTR database;
     gctSIZE_T bytes = 0;
     gctUINT32 vidMemType;
-    gcePOOL vidMemPool;
+    gcePOOL vidMempool;
 
     gcmkHEADER_ARG("Kernel=0x%x ProcessID=%d Type=%d Pointer=0x%x",
                    Kernel, ProcessID, Type, Pointer);
@@ -1098,7 +1101,7 @@ gckKERNEL_RemoveProcessDB(
 
     /* Decode type. */
     vidMemType = (Type & gcdDB_VIDEO_MEMORY_TYPE_MASK) >> gcdDB_VIDEO_MEMORY_TYPE_SHIFT;
-    vidMemPool = (Type & gcdDB_VIDEO_MEMORY_POOL_MASK) >> gcdDB_VIDEO_MEMORY_POOL_SHIFT;
+    vidMempool = (Type & gcdDB_VIDEO_MEMORY_POOL_MASK) >> gcdDB_VIDEO_MEMORY_POOL_SHIFT;
 
     Type &= gcdDATABASE_TYPE_MASK;
 
@@ -1119,8 +1122,8 @@ gckKERNEL_RemoveProcessDB(
         database->vidMem.freeCount++;
         database->vidMemType[vidMemType].bytes -= bytes;
         database->vidMemType[vidMemType].freeCount++;
-        database->vidMemPool[vidMemPool].bytes -= bytes;
-        database->vidMemPool[vidMemPool].freeCount++;
+        database->vidMemPool[vidMempool].bytes -= bytes;
+        database->vidMemPool[vidMempool].freeCount++;
         break;
 
     case gcvDB_NON_PAGED:
@@ -1141,6 +1144,11 @@ gckKERNEL_RemoveProcessDB(
     case gcvDB_MAP_USER_MEMORY:
         database->mapUserMemory.bytes -= bytes;
         database->mapUserMemory.freeCount++;
+        break;
+
+    case gcvDB_COMMAND_BUFFER:
+        database->virtualCommandBuffer.bytes -= bytes;
+        database->virtualCommandBuffer.freeCount++;
         break;
 
     default:
@@ -1334,7 +1342,7 @@ gckKERNEL_DestroyProcessDB(
                                             record->data);
 
             /* Free the non paged memory. */
-            status = gckEVENT_FreeNonPagedMemory(record->kernel->eventObj,
+            status = gckEVENT_FreeNonPagedMemory(Kernel->eventObj,
                                                  record->bytes,
                                                  physical,
                                                  record->data,
@@ -1369,7 +1377,7 @@ gckKERNEL_DestroyProcessDB(
                                             record->data);
 
             /* Free the contiguous memory. */
-            status = gckEVENT_FreeContiguousMemory(record->kernel->eventObj,
+            status = gckEVENT_FreeContiguousMemory(Kernel->eventObj,
                                                    record->bytes,
                                                    physical,
                                                    record->data,
@@ -1414,6 +1422,7 @@ gckKERNEL_DestroyProcessDB(
             {
                 if (gcmIS_SUCCESS(status) && (gcvTRUE == asynchronous))
                 {
+                    /* TODO: we maybe need to schedule a event here */
                     status = gckVIDMEM_Unlock(record->kernel,
                                               nodeObject,
                                               nodeObject->type,
@@ -1454,7 +1463,8 @@ gckKERNEL_DestroyProcessDB(
             break;
 
         case gcvDB_CONTEXT:
-            status = gckCOMMAND_Detach(record->kernel->command, gcmNAME_TO_PTR(record->data));
+            /* TODO: Free the context */
+            status = gckCOMMAND_Detach(Kernel->command, gcmNAME_TO_PTR(record->data));
             gcmRELEASE_NAME(record->data);
 
             gcmkTRACE_ZONE(gcvLEVEL_WARNING, gcvZONE_DATABASE,
@@ -1464,7 +1474,7 @@ gckKERNEL_DestroyProcessDB(
 
         case gcvDB_MAP_MEMORY:
             /* Unmap memory. */
-            status = gckKERNEL_UnmapMemory(record->kernel,
+            status = gckKERNEL_UnmapMemory(Kernel,
                                            record->physical,
                                            record->bytes,
                                            record->data);
@@ -1475,6 +1485,7 @@ gckKERNEL_DestroyProcessDB(
             break;
 
         case gcvDB_MAP_USER_MEMORY:
+            /* TODO: Unmap user memory. */
             status = gckOS_UnmapUserMemory(Kernel->os,
                                            Kernel->core,
                                            record->physical,
@@ -1488,9 +1499,21 @@ gckKERNEL_DestroyProcessDB(
                            gcmPTR2INT32(record->data), status);
             break;
 
+#if gcdANDROID_NATIVE_FENCE_SYNC
+        case gcvDB_SYNC_POINT:
+            /* Free the user signal. */
+            status = gckOS_DestroySyncPoint(Kernel->os,
+                                            (gctSYNC_POINT) record->data);
+
+            gcmkTRACE_ZONE(gcvLEVEL_WARNING, gcvZONE_DATABASE,
+                           "DB: SYNC POINT %d (status=%d)",
+                           (gctINT)(gctUINTPTR_T)record->data, status);
+            break;
+#endif
+
         case gcvDB_SHBUF:
             /* Free shared buffer. */
-            status = gckKERNEL_DestroyShBuffer(record->kernel,
+            status = gckKERNEL_DestroyShBuffer(Kernel,
                                                (gctSHBUF) record->data);
 
             gcmkTRACE_ZONE(gcvLEVEL_WARNING, gcvZONE_DATABASE,
@@ -1631,6 +1654,12 @@ gckKERNEL_QueryProcessDB(
         gckOS_MemCopy(&Info->counters,
                                   &database->mapUserMemory,
                                   gcmSIZEOF(database->mapUserMemory));
+        break;
+
+    case gcvDB_COMMAND_BUFFER:
+        gckOS_MemCopy(&Info->counters,
+                                  &database->virtualCommandBuffer,
+                                  gcmSIZEOF(database->virtualCommandBuffer));
         break;
 
     default:
@@ -1839,10 +1868,6 @@ gckKERNEL_DumpVidMemUsage(
         "MASK",
         "SCISSOR",
         "HIERARCHICAL_DEPTH",
-        "ICACHE",
-        "TXDESC",
-        "FENCE",
-        "TFBHEADER",
     };
 
     gcmkHEADER_ARG("Kernel=0x%x ProcessID=%d",

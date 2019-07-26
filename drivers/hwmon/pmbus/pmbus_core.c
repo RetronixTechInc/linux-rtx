@@ -20,7 +20,6 @@
  */
 
 #include <linux/kernel.h>
-#include <linux/math64.h>
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/err.h>
@@ -477,8 +476,8 @@ static long pmbus_reg2data_linear(struct pmbus_data *data,
 static long pmbus_reg2data_direct(struct pmbus_data *data,
 				  struct pmbus_sensor *sensor)
 {
-	s64 b, val = (s16)sensor->data;
-	s32 m, R;
+	long val = (s16) sensor->data;
+	long m, b, R;
 
 	m = data->info->m[sensor->class];
 	b = data->info->b[sensor->class];
@@ -506,35 +505,26 @@ static long pmbus_reg2data_direct(struct pmbus_data *data,
 		R--;
 	}
 	while (R < 0) {
-		val = div_s64(val + 5LL, 10L);  /* round closest */
+		val = DIV_ROUND_CLOSEST(val, 10);
 		R++;
 	}
 
-	val = div_s64(val - b, m);
-	return clamp_val(val, LONG_MIN, LONG_MAX);
+	return (val - b) / m;
 }
 
 /*
  * Convert VID sensor values to milli- or micro-units
  * depending on sensor type.
+ * We currently only support VR11.
  */
 static long pmbus_reg2data_vid(struct pmbus_data *data,
 			       struct pmbus_sensor *sensor)
 {
 	long val = sensor->data;
-	long rv = 0;
 
-	switch (data->info->vrm_version) {
-	case vr11:
-		if (val >= 0x02 && val <= 0xb2)
-			rv = DIV_ROUND_CLOSEST(160000 - (val - 2) * 625, 100);
-		break;
-	case vr12:
-		if (val >= 0x01)
-			rv = 250 + (val - 1) * 5;
-		break;
-	}
-	return rv;
+	if (val < 0x02 || val > 0xb2)
+		return 0;
+	return DIV_ROUND_CLOSEST(160000 - (val - 2) * 625, 100);
 }
 
 static long pmbus_reg2data(struct pmbus_data *data, struct pmbus_sensor *sensor)
@@ -631,8 +621,7 @@ static u16 pmbus_data2reg_linear(struct pmbus_data *data,
 static u16 pmbus_data2reg_direct(struct pmbus_data *data,
 				 struct pmbus_sensor *sensor, long val)
 {
-	s64 b, val64 = val;
-	s32 m, R;
+	long m, b, R;
 
 	m = data->info->m[sensor->class];
 	b = data->info->b[sensor->class];
@@ -649,18 +638,18 @@ static u16 pmbus_data2reg_direct(struct pmbus_data *data,
 		R -= 3;		/* Adjust R and b for data in milli-units */
 		b *= 1000;
 	}
-	val64 = val64 * m + b;
+	val = val * m + b;
 
 	while (R > 0) {
-		val64 *= 10;
+		val *= 10;
 		R--;
 	}
 	while (R < 0) {
-		val64 = div_s64(val64 + 5LL, 10L);  /* round closest */
+		val = DIV_ROUND_CLOSEST(val, 10);
 		R++;
 	}
 
-	return (u16)clamp_val(val64, S16_MIN, S16_MAX);
+	return val;
 }
 
 static u16 pmbus_data2reg_vid(struct pmbus_data *data,
@@ -1340,10 +1329,6 @@ static const struct pmbus_limit_attr pin_limit_attrs[] = {
 		.update = true,
 		.attr = "average",
 	}, {
-		.reg = PMBUS_VIRT_READ_PIN_MIN,
-		.update = true,
-		.attr = "input_lowest",
-	}, {
 		.reg = PMBUS_VIRT_READ_PIN_MAX,
 		.update = true,
 		.attr = "input_highest",
@@ -1373,10 +1358,6 @@ static const struct pmbus_limit_attr pout_limit_attrs[] = {
 		.reg = PMBUS_VIRT_READ_POUT_AVG,
 		.update = true,
 		.attr = "average",
-	}, {
-		.reg = PMBUS_VIRT_READ_POUT_MIN,
-		.update = true,
-		.attr = "input_lowest",
 	}, {
 		.reg = PMBUS_VIRT_READ_POUT_MAX,
 		.update = true,
@@ -1754,11 +1735,6 @@ static int pmbus_init_common(struct i2c_client *client, struct pmbus_data *data,
 		}
 	}
 
-	/* Enable PEC if the controller supports it */
-	ret = i2c_smbus_read_byte_data(client, PMBUS_CAPABILITY);
-	if (ret >= 0 && (ret & PB_CAPABILITY_ERROR_CHECK))
-		client->flags |= I2C_CLIENT_PEC;
-
 	pmbus_clear_faults(client);
 
 	if (info->identify) {
@@ -1820,7 +1796,7 @@ static int pmbus_regulator_disable(struct regulator_dev *rdev)
 	return _pmbus_regulator_on_off(rdev, 0);
 }
 
-const struct regulator_ops pmbus_regulator_ops = {
+struct regulator_ops pmbus_regulator_ops = {
 	.enable = pmbus_regulator_enable,
 	.disable = pmbus_regulator_disable,
 	.is_enabled = pmbus_regulator_is_enabled,

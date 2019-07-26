@@ -1,3 +1,4 @@
+
 /*
  * CAAM Secure Memory Storage Interface
  * Copyright (C) 2008-2015 Freescale Semiconductor, Inc.
@@ -1000,13 +1001,6 @@ int caam_sm_startup(struct platform_device *pdev)
 	ctrlpriv = dev_get_drvdata(ctrldev);
 
 	/*
-	 * If ctrlpriv is NULL, it's probably because the caam driver wasn't
-	 * properly initialized (e.g. RNG4 init failed). Thus, bail out here.
-	 */
-	if (!ctrlpriv)
-		return -ENODEV;
-
-	/*
 	 * Set up the private block for secure memory
 	 * Only one instance is possible
 	 */
@@ -1016,7 +1010,6 @@ int caam_sm_startup(struct platform_device *pdev)
 		return -ENOMEM;
 	}
 	smpriv->parentdev = ctrldev; /* copy of parent dev is handy */
-	spin_lock_init(&smpriv->kslock);
 
 	/* Create the dev */
 #ifdef CONFIG_OF

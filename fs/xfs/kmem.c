@@ -24,6 +24,24 @@
 #include "kmem.h"
 #include "xfs_message.h"
 
+/*
+ * Greedy allocation.  May fail and may return vmalloced memory.
+ */
+void *
+kmem_zalloc_greedy(size_t *size, size_t minsize, size_t maxsize)
+{
+	void		*ptr;
+	size_t		kmsize = maxsize;
+
+	while (!(ptr = vzalloc(kmsize))) {
+		if ((kmsize >>= 1) <= minsize)
+			kmsize = minsize;
+	}
+	if (ptr)
+		*size = kmsize;
+	return ptr;
+}
+
 void *
 kmem_alloc(size_t size, xfs_km_flags_t flags)
 {
@@ -37,9 +55,8 @@ kmem_alloc(size_t size, xfs_km_flags_t flags)
 			return ptr;
 		if (!(++retries % 100))
 			xfs_err(NULL,
-	"%s(%u) possible memory allocation deadlock size %u in %s (mode:0x%x)",
-				current->comm, current->pid,
-				(unsigned int)size, __func__, lflags);
+		"possible memory allocation deadlock in %s (mode:0x%x)",
+					__func__, lflags);
 		congestion_wait(BLK_RW_ASYNC, HZ/50);
 	} while (1);
 }
@@ -75,23 +92,19 @@ kmem_zalloc_large(size_t size, xfs_km_flags_t flags)
 }
 
 void *
-kmem_realloc(const void *old, size_t newsize, xfs_km_flags_t flags)
+kmem_realloc(const void *ptr, size_t newsize, size_t oldsize,
+	     xfs_km_flags_t flags)
 {
-	int	retries = 0;
-	gfp_t	lflags = kmem_flags_convert(flags);
-	void	*ptr;
+	void	*new;
 
-	do {
-		ptr = krealloc(old, newsize, lflags);
-		if (ptr || (flags & (KM_MAYFAIL|KM_NOSLEEP)))
-			return ptr;
-		if (!(++retries % 100))
-			xfs_err(NULL,
-	"%s(%u) possible memory allocation deadlock size %zu in %s (mode:0x%x)",
-				current->comm, current->pid,
-				newsize, __func__, lflags);
-		congestion_wait(BLK_RW_ASYNC, HZ/50);
-	} while (1);
+	new = kmem_alloc(newsize, flags);
+	if (ptr) {
+		if (new)
+			memcpy(new, ptr,
+				((oldsize < newsize) ? oldsize : newsize));
+		kmem_free(ptr);
+	}
+	return new;
 }
 
 void *
@@ -107,9 +120,8 @@ kmem_zone_alloc(kmem_zone_t *zone, xfs_km_flags_t flags)
 			return ptr;
 		if (!(++retries % 100))
 			xfs_err(NULL,
-		"%s(%u) possible memory allocation deadlock in %s (mode:0x%x)",
-				current->comm, current->pid,
-				__func__, lflags);
+		"possible memory allocation deadlock in %s (mode:0x%x)",
+					__func__, lflags);
 		congestion_wait(BLK_RW_ASYNC, HZ/50);
 	} while (1);
 }

@@ -242,7 +242,7 @@ static struct dma_page *pool_alloc_page(struct dma_pool *pool, gfp_t mem_flags)
 	return page;
 }
 
-static inline bool is_page_busy(struct dma_page *page)
+static inline int is_page_busy(struct dma_page *page)
 {
 	return page->in_use != 0;
 }
@@ -271,9 +271,6 @@ void dma_pool_destroy(struct dma_pool *pool)
 {
 	bool empty = false;
 
-	if (unlikely(!pool))
-		return;
-
 	mutex_lock(&pools_reg_lock);
 	mutex_lock(&pools_lock);
 	list_del(&pool->pools);
@@ -294,7 +291,8 @@ void dma_pool_destroy(struct dma_pool *pool)
 					"dma_pool_destroy %s, %p busy\n",
 					pool->name, page->vaddr);
 			else
-				pr_err("dma_pool_destroy %s, %p busy\n",
+				printk(KERN_ERR
+				       "dma_pool_destroy %s, %p busy\n",
 				       pool->name, page->vaddr);
 			/* leak the still-in-use consistent memory */
 			list_del(&page->page_list);
@@ -325,7 +323,7 @@ void *dma_pool_alloc(struct dma_pool *pool, gfp_t mem_flags,
 	size_t offset;
 	void *retval;
 
-	might_sleep_if(gfpflags_allow_blocking(mem_flags));
+	might_sleep_if(mem_flags & __GFP_WAIT);
 
 	spin_lock_irqsave(&pool->lock, flags);
 	list_for_each_entry(page, &pool->page_list, page_list) {
@@ -336,7 +334,7 @@ void *dma_pool_alloc(struct dma_pool *pool, gfp_t mem_flags,
 	/* pool_alloc_page() might sleep, so temporarily drop &pool->lock */
 	spin_unlock_irqrestore(&pool->lock, flags);
 
-	page = pool_alloc_page(pool, mem_flags & (~__GFP_ZERO));
+	page = pool_alloc_page(pool, mem_flags);
 	if (!page)
 		return NULL;
 
@@ -374,14 +372,9 @@ void *dma_pool_alloc(struct dma_pool *pool, gfp_t mem_flags,
 			break;
 		}
 	}
-	if (!(mem_flags & __GFP_ZERO))
-		memset(retval, POOL_POISON_ALLOCATED, pool->size);
+	memset(retval, POOL_POISON_ALLOCATED, pool->size);
 #endif
 	spin_unlock_irqrestore(&pool->lock, flags);
-
-	if (mem_flags & __GFP_ZERO)
-		memset(retval, 0, pool->size);
-
 	return retval;
 }
 EXPORT_SYMBOL(dma_pool_alloc);
@@ -393,7 +386,7 @@ static struct dma_page *pool_find_page(struct dma_pool *pool, dma_addr_t dma)
 	list_for_each_entry(page, &pool->page_list, page_list) {
 		if (dma < page->dma)
 			continue;
-		if ((dma - page->dma) < pool->allocation)
+		if (dma < (page->dma + pool->allocation))
 			return page;
 	}
 	return NULL;
@@ -423,7 +416,7 @@ void dma_pool_free(struct dma_pool *pool, void *vaddr, dma_addr_t dma)
 				"dma_pool_free %s, %p/%lx (bad dma)\n",
 				pool->name, vaddr, (unsigned long)dma);
 		else
-			pr_err("dma_pool_free %s, %p/%lx (bad dma)\n",
+			printk(KERN_ERR "dma_pool_free %s, %p/%lx (bad dma)\n",
 			       pool->name, vaddr, (unsigned long)dma);
 		return;
 	}
@@ -437,7 +430,8 @@ void dma_pool_free(struct dma_pool *pool, void *vaddr, dma_addr_t dma)
 				"dma_pool_free %s, %p (bad vaddr)/%Lx\n",
 				pool->name, vaddr, (unsigned long long)dma);
 		else
-			pr_err("dma_pool_free %s, %p (bad vaddr)/%Lx\n",
+			printk(KERN_ERR
+			       "dma_pool_free %s, %p (bad vaddr)/%Lx\n",
 			       pool->name, vaddr, (unsigned long long)dma);
 		return;
 	}
@@ -450,11 +444,13 @@ void dma_pool_free(struct dma_pool *pool, void *vaddr, dma_addr_t dma)
 			}
 			spin_unlock_irqrestore(&pool->lock, flags);
 			if (pool->dev)
-				dev_err(pool->dev, "dma_pool_free %s, dma %Lx already free\n",
-					pool->name, (unsigned long long)dma);
+				dev_err(pool->dev, "dma_pool_free %s, dma %Lx "
+					"already free\n", pool->name,
+					(unsigned long long)dma);
 			else
-				pr_err("dma_pool_free %s, dma %Lx already free\n",
-				       pool->name, (unsigned long long)dma);
+				printk(KERN_ERR "dma_pool_free %s, dma %Lx "
+					"already free\n", pool->name,
+					(unsigned long long)dma);
 			return;
 		}
 	}

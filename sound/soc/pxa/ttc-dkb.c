@@ -128,12 +128,21 @@ static int ttc_dkb_probe(struct platform_device *pdev)
 
 	card->dev = &pdev->dev;
 
-	ret = devm_snd_soc_register_card(&pdev->dev, card);
+	ret = snd_soc_register_card(card);
 	if (ret)
 		dev_err(&pdev->dev, "snd_soc_register_card() failed: %d\n",
 			ret);
 
 	return ret;
+}
+
+static int ttc_dkb_remove(struct platform_device *pdev)
+{
+	struct snd_soc_card *card = platform_get_drvdata(pdev);
+
+	snd_soc_unregister_card(card);
+
+	return 0;
 }
 
 static struct platform_driver ttc_dkb_driver = {
@@ -142,6 +151,7 @@ static struct platform_driver ttc_dkb_driver = {
 		.pm     = &snd_soc_pm_ops,
 	},
 	.probe		= ttc_dkb_probe,
+	.remove		= ttc_dkb_remove,
 };
 
 module_platform_driver(ttc_dkb_driver);

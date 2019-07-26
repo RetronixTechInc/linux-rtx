@@ -29,7 +29,6 @@
 #include <linux/module.h>
 #include <linux/platform_device.h>
 #include <linux/printk.h>
-#include <linux/slab.h>
 #include <linux/stat.h>
 #include <linux/types.h>
 #include <linux/uaccess.h>
@@ -67,19 +66,13 @@ static ssize_t store_ec_reboot(struct device *dev,
 		{"hibernate",    EC_REBOOT_HIBERNATE, 0},
 		{"at-shutdown",  -1, EC_REBOOT_FLAG_ON_AP_SHUTDOWN},
 	};
-	struct cros_ec_command *msg;
-	struct ec_params_reboot_ec *param;
+	struct cros_ec_command msg = { 0 };
+	struct ec_params_reboot_ec *param =
+		(struct ec_params_reboot_ec *)msg.outdata;
 	int got_cmd = 0, offset = 0;
 	int i;
 	int ret;
-	struct cros_ec_dev *ec = container_of(dev,
-					      struct cros_ec_dev, class_dev);
-
-	msg = kmalloc(sizeof(*msg) + sizeof(*param), GFP_KERNEL);
-	if (!msg)
-		return -ENOMEM;
-
-	param = (struct ec_params_reboot_ec *)msg->data;
+	struct cros_ec_device *ec = dev_get_drvdata(dev);
 
 	param->flags = 0;
 	while (1) {
@@ -107,26 +100,19 @@ static ssize_t store_ec_reboot(struct device *dev,
 			offset++;
 	}
 
-	if (!got_cmd) {
-		count = -EINVAL;
-		goto exit;
+	if (!got_cmd)
+		return -EINVAL;
+
+	msg.command = EC_CMD_REBOOT_EC;
+	msg.outsize = sizeof(param);
+	ret = cros_ec_cmd_xfer(ec, &msg);
+	if (ret < 0)
+		return ret;
+	if (msg.result != EC_RES_SUCCESS) {
+		dev_dbg(ec->dev, "EC result %d\n", msg.result);
+		return -EINVAL;
 	}
 
-	msg->version = 0;
-	msg->command = EC_CMD_REBOOT_EC + ec->cmd_offset;
-	msg->outsize = sizeof(*param);
-	msg->insize = 0;
-	ret = cros_ec_cmd_xfer(ec->ec_dev, msg);
-	if (ret < 0) {
-		count = ret;
-		goto exit;
-	}
-	if (msg->result != EC_RES_SUCCESS) {
-		dev_dbg(ec->dev, "EC result %d\n", msg->result);
-		count = -EINVAL;
-	}
-exit:
-	kfree(msg);
 	return count;
 }
 
@@ -137,33 +123,22 @@ static ssize_t show_ec_version(struct device *dev,
 	struct ec_response_get_version *r_ver;
 	struct ec_response_get_chip_info *r_chip;
 	struct ec_response_board_version *r_board;
-	struct cros_ec_command *msg;
+	struct cros_ec_command msg = { 0 };
 	int ret;
 	int count = 0;
-	struct cros_ec_dev *ec = container_of(dev,
-					      struct cros_ec_dev, class_dev);
-
-	msg = kmalloc(sizeof(*msg) + EC_HOST_PARAM_SIZE, GFP_KERNEL);
-	if (!msg)
-		return -ENOMEM;
+	struct cros_ec_device *ec = dev_get_drvdata(dev);
 
 	/* Get versions. RW may change. */
-	msg->version = 0;
-	msg->command = EC_CMD_GET_VERSION + ec->cmd_offset;
-	msg->insize = sizeof(*r_ver);
-	msg->outsize = 0;
-	ret = cros_ec_cmd_xfer(ec->ec_dev, msg);
-	if (ret < 0) {
-		count = ret;
-		goto exit;
-	}
-	if (msg->result != EC_RES_SUCCESS) {
-		count = scnprintf(buf, PAGE_SIZE,
-				  "ERROR: EC returned %d\n", msg->result);
-		goto exit;
-	}
+	msg.command = EC_CMD_GET_VERSION;
+	msg.insize = sizeof(*r_ver);
+	ret = cros_ec_cmd_xfer(ec, &msg);
+	if (ret < 0)
+		return ret;
+	if (msg.result != EC_RES_SUCCESS)
+		return scnprintf(buf, PAGE_SIZE,
+				 "ERROR: EC returned %d\n", msg.result);
 
-	r_ver = (struct ec_response_get_version *)msg->data;
+	r_ver = (struct ec_response_get_version *)msg.indata;
 	/* Strings should be null-terminated, but let's be sure. */
 	r_ver->version_string_ro[sizeof(r_ver->version_string_ro) - 1] = '\0';
 	r_ver->version_string_rw[sizeof(r_ver->version_string_rw) - 1] = '\0';
@@ -177,33 +152,33 @@ static ssize_t show_ec_version(struct device *dev,
 			    image_names[r_ver->current_image] : "?"));
 
 	/* Get build info. */
-	msg->command = EC_CMD_GET_BUILD_INFO + ec->cmd_offset;
-	msg->insize = EC_HOST_PARAM_SIZE;
-	ret = cros_ec_cmd_xfer(ec->ec_dev, msg);
+	msg.command = EC_CMD_GET_BUILD_INFO;
+	msg.insize = sizeof(msg.indata);
+	ret = cros_ec_cmd_xfer(ec, &msg);
 	if (ret < 0)
 		count += scnprintf(buf + count, PAGE_SIZE - count,
 				   "Build info:    XFER ERROR %d\n", ret);
-	else if (msg->result != EC_RES_SUCCESS)
+	else if (msg.result != EC_RES_SUCCESS)
 		count += scnprintf(buf + count, PAGE_SIZE - count,
-				   "Build info:    EC error %d\n", msg->result);
+				   "Build info:    EC error %d\n", msg.result);
 	else {
-		msg->data[sizeof(msg->data) - 1] = '\0';
+		msg.indata[sizeof(msg.indata) - 1] = '\0';
 		count += scnprintf(buf + count, PAGE_SIZE - count,
-				   "Build info:    %s\n", msg->data);
+				   "Build info:    %s\n", msg.indata);
 	}
 
 	/* Get chip info. */
-	msg->command = EC_CMD_GET_CHIP_INFO + ec->cmd_offset;
-	msg->insize = sizeof(*r_chip);
-	ret = cros_ec_cmd_xfer(ec->ec_dev, msg);
+	msg.command = EC_CMD_GET_CHIP_INFO;
+	msg.insize = sizeof(*r_chip);
+	ret = cros_ec_cmd_xfer(ec, &msg);
 	if (ret < 0)
 		count += scnprintf(buf + count, PAGE_SIZE - count,
 				   "Chip info:     XFER ERROR %d\n", ret);
-	else if (msg->result != EC_RES_SUCCESS)
+	else if (msg.result != EC_RES_SUCCESS)
 		count += scnprintf(buf + count, PAGE_SIZE - count,
-				   "Chip info:     EC error %d\n", msg->result);
+				   "Chip info:     EC error %d\n", msg.result);
 	else {
-		r_chip = (struct ec_response_get_chip_info *)msg->data;
+		r_chip = (struct ec_response_get_chip_info *)msg.indata;
 
 		r_chip->vendor[sizeof(r_chip->vendor) - 1] = '\0';
 		r_chip->name[sizeof(r_chip->name) - 1] = '\0';
@@ -217,25 +192,23 @@ static ssize_t show_ec_version(struct device *dev,
 	}
 
 	/* Get board version */
-	msg->command = EC_CMD_GET_BOARD_VERSION + ec->cmd_offset;
-	msg->insize = sizeof(*r_board);
-	ret = cros_ec_cmd_xfer(ec->ec_dev, msg);
+	msg.command = EC_CMD_GET_BOARD_VERSION;
+	msg.insize = sizeof(*r_board);
+	ret = cros_ec_cmd_xfer(ec, &msg);
 	if (ret < 0)
 		count += scnprintf(buf + count, PAGE_SIZE - count,
 				   "Board version: XFER ERROR %d\n", ret);
-	else if (msg->result != EC_RES_SUCCESS)
+	else if (msg.result != EC_RES_SUCCESS)
 		count += scnprintf(buf + count, PAGE_SIZE - count,
-				   "Board version: EC error %d\n", msg->result);
+				   "Board version: EC error %d\n", msg.result);
 	else {
-		r_board = (struct ec_response_board_version *)msg->data;
+		r_board = (struct ec_response_board_version *)msg.indata;
 
 		count += scnprintf(buf + count, PAGE_SIZE - count,
 				   "Board version: %d\n",
 				   r_board->board_version);
 	}
 
-exit:
-	kfree(msg);
 	return count;
 }
 
@@ -243,39 +216,27 @@ static ssize_t show_ec_flashinfo(struct device *dev,
 				 struct device_attribute *attr, char *buf)
 {
 	struct ec_response_flash_info *resp;
-	struct cros_ec_command *msg;
+	struct cros_ec_command msg = { 0 };
 	int ret;
-	struct cros_ec_dev *ec = container_of(dev,
-					      struct cros_ec_dev, class_dev);
-
-	msg = kmalloc(sizeof(*msg) + sizeof(*resp), GFP_KERNEL);
-	if (!msg)
-		return -ENOMEM;
+	struct cros_ec_device *ec = dev_get_drvdata(dev);
 
 	/* The flash info shouldn't ever change, but ask each time anyway. */
-	msg->version = 0;
-	msg->command = EC_CMD_FLASH_INFO + ec->cmd_offset;
-	msg->insize = sizeof(*resp);
-	msg->outsize = 0;
-	ret = cros_ec_cmd_xfer(ec->ec_dev, msg);
+	msg.command = EC_CMD_FLASH_INFO;
+	msg.insize = sizeof(*resp);
+	ret = cros_ec_cmd_xfer(ec, &msg);
 	if (ret < 0)
-		goto exit;
-	if (msg->result != EC_RES_SUCCESS) {
-		ret = scnprintf(buf, PAGE_SIZE,
-				"ERROR: EC returned %d\n", msg->result);
-		goto exit;
-	}
+		return ret;
+	if (msg.result != EC_RES_SUCCESS)
+		return scnprintf(buf, PAGE_SIZE,
+				 "ERROR: EC returned %d\n", msg.result);
 
-	resp = (struct ec_response_flash_info *)msg->data;
+	resp = (struct ec_response_flash_info *)msg.indata;
 
-	ret = scnprintf(buf, PAGE_SIZE,
-			"FlashSize %d\nWriteSize %d\n"
-			"EraseSize %d\nProtectSize %d\n",
-			resp->flash_size, resp->write_block_size,
-			resp->erase_block_size, resp->protect_block_size);
-exit:
-	kfree(msg);
-	return ret;
+	return scnprintf(buf, PAGE_SIZE,
+			 "FlashSize %d\nWriteSize %d\n"
+			 "EraseSize %d\nProtectSize %d\n",
+			 resp->flash_size, resp->write_block_size,
+			 resp->erase_block_size, resp->protect_block_size);
 }
 
 /* Module initialization */
@@ -291,7 +252,20 @@ static struct attribute *__ec_attrs[] = {
 	NULL,
 };
 
-struct attribute_group cros_ec_attr_group = {
+static struct attribute_group ec_attr_group = {
 	.attrs = __ec_attrs,
 };
 
+void ec_dev_sysfs_init(struct cros_ec_device *ec)
+{
+	int error;
+
+	error = sysfs_create_group(&ec->vdev->kobj, &ec_attr_group);
+	if (error)
+		pr_warn("failed to create group: %d\n", error);
+}
+
+void ec_dev_sysfs_remove(struct cros_ec_device *ec)
+{
+	sysfs_remove_group(&ec->vdev->kobj, &ec_attr_group);
+}

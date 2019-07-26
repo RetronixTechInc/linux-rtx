@@ -21,7 +21,6 @@
 #include <linux/cpu.h>
 #include <linux/seq_file.h>
 #include <linux/irq.h>
-#include <linux/nmi.h>
 #include <linux/percpu.h>
 #include <linux/clockchips.h>
 #include <linux/completion.h>
@@ -69,22 +68,18 @@ enum ipi_msg_type {
 	IPI_TIMER,
 	IPI_RESCHEDULE,
 	IPI_CALL_FUNC,
+	IPI_CALL_FUNC_SINGLE,
 	IPI_CPU_STOP,
 	IPI_IRQ_WORK,
 	IPI_COMPLETION,
 	IPI_CPU_BACKTRACE,
-	/*
-	 * SGI8-15 can be reserved by secure firmware, and thus may
-	 * not be usable by the kernel. Please keep the above limited
-	 * to at most 8 entries.
-	 */
 };
 
 static DECLARE_COMPLETION(cpu_running);
 
-static struct smp_operations smp_ops __ro_after_init;
+static struct smp_operations smp_ops;
 
-void __init smp_set_ops(const struct smp_operations *ops)
+void __init smp_set_ops(struct smp_operations *ops)
 {
 	if (ops)
 		smp_ops = *ops;
@@ -92,11 +87,9 @@ void __init smp_set_ops(const struct smp_operations *ops)
 
 static unsigned long get_arch_pgd(pgd_t *pgd)
 {
-#ifdef CONFIG_ARM_LPAE
-	return __phys_to_pfn(virt_to_phys(pgd));
-#else
-	return virt_to_phys(pgd);
-#endif
+	phys_addr_t pgdir = virt_to_idmap(pgd);
+	BUG_ON(pgdir & ARCH_PGD_MASK);
+	return pgdir >> ARCH_PGD_SHIFT;
 }
 
 int __cpu_up(unsigned int cpu, struct task_struct *idle)
@@ -116,7 +109,7 @@ int __cpu_up(unsigned int cpu, struct task_struct *idle)
 #endif
 
 #ifdef CONFIG_MMU
-	secondary_data.pgdir = virt_to_phys(idmap_pgd);
+	secondary_data.pgdir = get_arch_pgd(idmap_pgd);
 	secondary_data.swapper_pg_dir = get_arch_pgd(swapper_pg_dir);
 #endif
 	sync_cache_w(&secondary_data);
@@ -181,26 +174,13 @@ static int platform_cpu_disable(unsigned int cpu)
 	if (smp_ops.cpu_disable)
 		return smp_ops.cpu_disable(cpu);
 
-	return 0;
-}
-
-int platform_can_hotplug_cpu(unsigned int cpu)
-{
-	/* cpu_die must be specified to support hotplug */
-	if (!smp_ops.cpu_die)
-		return 0;
-
-	if (smp_ops.cpu_can_disable)
-		return smp_ops.cpu_can_disable(cpu);
-
 	/*
 	 * By default, allow disabling all CPUs except the first one,
 	 * since this is special on a lot of platforms, e.g. because
 	 * of clock tick interrupts.
 	 */
-	return cpu != 0;
+	return cpu == 0 ? -EPERM : 0;
 }
-
 /*
  * __cpu_disable runs on the processor to be shutdown.
  */
@@ -272,7 +252,7 @@ void __cpu_die(unsigned int cpu)
  * of the other hotplug-cpu capable cores, so presumably coming
  * out of idle fixes this.
  */
-void arch_cpu_idle_dead(void)
+void __ref cpu_die(void)
 {
 	unsigned int cpu = smp_processor_id();
 
@@ -404,12 +384,11 @@ asmlinkage void secondary_start_kernel(void)
 
 	local_irq_enable();
 	local_fiq_enable();
-	local_abt_enable();
 
 	/*
 	 * OK, it's off to the idle thread for us
 	 */
-	cpu_startup_entry(CPUHP_AP_ONLINE_IDLE);
+	cpu_startup_entry(CPUHP_ONLINE);
 }
 
 void __init smp_cpus_done(unsigned int max_cpus)
@@ -479,14 +458,16 @@ static const char *ipi_types[NR_IPI] __tracepoint_string = {
 	S(IPI_TIMER, "Timer broadcast interrupts"),
 	S(IPI_RESCHEDULE, "Rescheduling interrupts"),
 	S(IPI_CALL_FUNC, "Function call interrupts"),
+	S(IPI_CALL_FUNC_SINGLE, "Single function call interrupts"),
 	S(IPI_CPU_STOP, "CPU stop interrupts"),
 	S(IPI_IRQ_WORK, "IRQ work interrupts"),
 	S(IPI_COMPLETION, "completion interrupts"),
+	S(IPI_CPU_BACKTRACE, "CPU backtrace"),
 };
 
 static void smp_cross_call(const struct cpumask *target, unsigned int ipinr)
 {
-	trace_ipi_raise_rcuidle(target, ipi_types[ipinr]);
+	trace_ipi_raise(target, ipi_types[ipinr]);
 	__smp_cross_call(target, ipinr);
 }
 
@@ -528,7 +509,7 @@ void arch_send_wakeup_ipi_mask(const struct cpumask *mask)
 
 void arch_send_call_function_single_ipi(int cpu)
 {
-	smp_cross_call(cpumask_of(cpu), IPI_CALL_FUNC);
+	smp_cross_call(cpumask_of(cpu), IPI_CALL_FUNC_SINGLE);
 }
 
 #ifdef CONFIG_IRQ_WORK
@@ -583,6 +564,58 @@ static void ipi_complete(unsigned int cpu)
 	complete(per_cpu(cpu_completion, cpu));
 }
 
+static cpumask_t backtrace_mask;
+static DEFINE_RAW_SPINLOCK(backtrace_lock);
+
+/* "in progress" flag of arch_trigger_all_cpu_backtrace */
+static unsigned long backtrace_flag;
+
+void smp_send_all_cpu_backtrace(void)
+{
+	unsigned int this_cpu = smp_processor_id();
+	int i;
+
+	if (test_and_set_bit(0, &backtrace_flag))
+		/*
+		 * If there is already a trigger_all_cpu_backtrace() in progress
+		 * (backtrace_flag == 1), don't output double cpu dump infos.
+		 */
+		return;
+
+	cpumask_copy(&backtrace_mask, cpu_online_mask);
+	cpumask_clear_cpu(this_cpu, &backtrace_mask);
+
+	pr_info("Backtrace for cpu %d (current):\n", this_cpu);
+	dump_stack();
+
+	pr_info("\nsending IPI to all other CPUs:\n");
+	smp_cross_call(&backtrace_mask, IPI_CPU_BACKTRACE);
+
+	/* Wait for up to 10 seconds for all other CPUs to do the backtrace */
+	for (i = 0; i < 10 * 1000; i++) {
+		if (cpumask_empty(&backtrace_mask))
+			break;
+		mdelay(1);
+	}
+
+	clear_bit(0, &backtrace_flag);
+	smp_mb__after_atomic();
+}
+
+/*
+ * ipi_cpu_backtrace - handle IPI from smp_send_all_cpu_backtrace()
+ */
+static void ipi_cpu_backtrace(unsigned int cpu, struct pt_regs *regs)
+{
+	if (cpumask_test_cpu(cpu, &backtrace_mask)) {
+		raw_spin_lock(&backtrace_lock);
+		pr_warning("IPI backtrace for cpu %d\n", cpu);
+		show_regs(regs);
+		raw_spin_unlock(&backtrace_lock);
+		cpumask_clear_cpu(cpu, &backtrace_mask);
+	}
+}
+
 /*
  * Main handler for inter-processor interrupts
  */
@@ -623,6 +656,12 @@ void handle_IPI(int ipinr, struct pt_regs *regs)
 		irq_exit();
 		break;
 
+	case IPI_CALL_FUNC_SINGLE:
+		irq_enter();
+		generic_smp_call_function_single_interrupt();
+		irq_exit();
+		break;
+
 	case IPI_CPU_STOP:
 		irq_enter();
 		ipi_cpu_stop(cpu);
@@ -644,11 +683,7 @@ void handle_IPI(int ipinr, struct pt_regs *regs)
 		break;
 
 	case IPI_CPU_BACKTRACE:
-		printk_nmi_enter();
-		irq_enter();
-		nmi_cpu_backtrace(regs);
-		irq_exit();
-		printk_nmi_exit();
+		ipi_cpu_backtrace(cpu, regs);
 		break;
 
 	default:
@@ -745,13 +780,3 @@ static int __init register_cpufreq_notifier(void)
 core_initcall(register_cpufreq_notifier);
 
 #endif
-
-static void raise_nmi(cpumask_t *mask)
-{
-	smp_cross_call(mask, IPI_CPU_BACKTRACE);
-}
-
-void arch_trigger_cpumask_backtrace(const cpumask_t *mask, bool exclude_self)
-{
-	nmi_trigger_cpumask_backtrace(mask, exclude_self, raise_nmi);
-}

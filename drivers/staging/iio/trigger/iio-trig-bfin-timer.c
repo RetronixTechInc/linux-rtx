@@ -55,12 +55,12 @@ static struct bfin_timer iio_bfin_timer_code[MAX_BLACKFIN_GPTIMERS] = {
 };
 
 struct bfin_tmr_state {
-	struct iio_trigger	*trig;
-	struct bfin_timer	*t;
-	unsigned int		timer_num;
-	bool			output_enable;
-	unsigned int		duty;
-	int			irq;
+	struct iio_trigger *trig;
+	struct bfin_timer *t;
+	unsigned timer_num;
+	bool output_enable;
+	unsigned int duty;
+	int irq;
 };
 
 static int iio_bfin_tmr_set_state(struct iio_trigger *trig, bool state)
@@ -79,8 +79,7 @@ static int iio_bfin_tmr_set_state(struct iio_trigger *trig, bool state)
 }
 
 static ssize_t iio_bfin_tmr_frequency_store(struct device *dev,
-					    struct device_attribute *attr,
-					    const char *buf, size_t count)
+		struct device_attribute *attr, const char *buf, size_t count)
 {
 	struct iio_trigger *trig = to_iio_trigger(dev);
 	struct bfin_tmr_state *st = iio_trigger_get_drvdata(trig);
@@ -100,7 +99,7 @@ static ssize_t iio_bfin_tmr_frequency_store(struct device *dev,
 	if (enabled)
 		disable_gptimers(st->t->bit);
 
-	if (!val)
+	if (val == 0)
 		return count;
 
 	val = get_sclk() / val;
@@ -117,15 +116,15 @@ static ssize_t iio_bfin_tmr_frequency_store(struct device *dev,
 }
 
 static ssize_t iio_bfin_tmr_frequency_show(struct device *dev,
-					   struct device_attribute *attr,
-					   char *buf)
+				 struct device_attribute *attr,
+				 char *buf)
 {
 	struct iio_trigger *trig = to_iio_trigger(dev);
 	struct bfin_tmr_state *st = iio_trigger_get_drvdata(trig);
 	unsigned int period = get_gptimer_period(st->t->id);
 	unsigned long val;
 
-	if (!period)
+	if (period == 0)
 		val = 0;
 	else
 		val = get_sclk() / get_gptimer_period(st->t->id);
@@ -178,7 +177,7 @@ static const struct iio_trigger_ops iio_bfin_tmr_trigger_ops = {
 
 static int iio_bfin_tmr_trigger_probe(struct platform_device *pdev)
 {
-	struct iio_bfin_timer_trigger_pdata *pdata;
+	struct iio_bfin_timer_trigger_pdata *pdata = pdev->dev.platform_data;
 	struct bfin_tmr_state *st;
 	unsigned int config;
 	int ret;
@@ -221,7 +220,6 @@ static int iio_bfin_tmr_trigger_probe(struct platform_device *pdev)
 
 	config = PWM_OUT | PERIOD_CNT | IRQ_ENA;
 
-	pdata =	dev_get_platdata(&pdev->dev);
 	if (pdata && pdata->output_enable) {
 		unsigned long long val;
 
@@ -260,7 +258,7 @@ out_free_irq:
 out1:
 	iio_trigger_unregister(st->trig);
 out:
-	iio_trigger_free(st->trig);
+	iio_trigger_put(st->trig);
 	return ret;
 }
 
@@ -273,7 +271,7 @@ static int iio_bfin_tmr_trigger_remove(struct platform_device *pdev)
 		peripheral_free(st->t->pin);
 	free_irq(st->irq, st);
 	iio_trigger_unregister(st->trig);
-	iio_trigger_free(st->trig);
+	iio_trigger_put(st->trig);
 
 	return 0;
 }

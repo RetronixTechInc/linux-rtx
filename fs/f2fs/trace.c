@@ -25,12 +25,11 @@ static inline void __print_last_io(void)
 	if (!last_io.len)
 		return;
 
-	trace_printk("%3x:%3x %4x %-16s %2x %5x %5x %12x %4x\n",
+	trace_printk("%3x:%3x %4x %-16s %2x %5x %12x %4x\n",
 			last_io.major, last_io.minor,
 			last_io.pid, "----------------",
 			last_io.type,
-			last_io.fio.op, last_io.fio.op_flags,
-			last_io.fio.new_blkaddr,
+			last_io.fio.rw, last_io.fio.blk_addr,
 			last_io.len);
 	memset(&last_io, 0, sizeof(last_io));
 }
@@ -81,7 +80,7 @@ out:
 	radix_tree_preload_end();
 }
 
-void f2fs_trace_ios(struct f2fs_io_info *fio, int flush)
+void f2fs_trace_ios(struct page *page, struct f2fs_io_info *fio, int flush)
 {
 	struct inode *inode;
 	pid_t pid;
@@ -92,8 +91,8 @@ void f2fs_trace_ios(struct f2fs_io_info *fio, int flush)
 		return;
 	}
 
-	inode = fio->page->mapping->host;
-	pid = page_private(fio->page);
+	inode = page->mapping->host;
+	pid = page_private(page);
 
 	major = MAJOR(inode->i_sb->s_dev);
 	minor = MINOR(inode->i_sb->s_dev);
@@ -101,10 +100,8 @@ void f2fs_trace_ios(struct f2fs_io_info *fio, int flush)
 	if (last_io.major == major && last_io.minor == minor &&
 			last_io.pid == pid &&
 			last_io.type == __file_type(inode, pid) &&
-			last_io.fio.op == fio->op &&
-			last_io.fio.op_flags == fio->op_flags &&
-			last_io.fio.new_blkaddr + last_io.len ==
-							fio->new_blkaddr) {
+			last_io.fio.rw == fio->rw &&
+			last_io.fio.blk_addr + last_io.len == fio->blk_addr) {
 		last_io.len++;
 		return;
 	}

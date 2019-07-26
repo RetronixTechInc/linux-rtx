@@ -642,7 +642,9 @@ static void uwb_drp_handle_alien_drp(struct uwb_rc *rc, struct uwb_ie_drp *drp_i
 	}
 
 	INIT_LIST_HEAD(&cnflt->rc_node);
-	setup_timer(&cnflt->timer, uwb_cnflt_timer, (unsigned long)cnflt);
+	init_timer(&cnflt->timer);
+	cnflt->timer.function = uwb_cnflt_timer;
+	cnflt->timer.data     = (unsigned long)cnflt;
 
 	cnflt->rc = rc;
 	INIT_WORK(&cnflt->cnflt_update_work, uwb_cnflt_update_work);

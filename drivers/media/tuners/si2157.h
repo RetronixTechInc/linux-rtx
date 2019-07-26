@@ -17,7 +17,7 @@
 #ifndef SI2157_H
 #define SI2157_H
 
-#include <media/media-device.h>
+#include <linux/kconfig.h>
 #include "dvb_frontend.h"
 
 /*
@@ -30,20 +30,10 @@ struct si2157_config {
 	 */
 	struct dvb_frontend *fe;
 
-#if defined(CONFIG_MEDIA_CONTROLLER)
-	struct media_device *mdev;
-#endif
-
 	/*
 	 * Spectral Inversion
 	 */
 	bool inversion;
-
-	/*
-	 * Port selection
-	 * Select the RF interface to use (pins 9+11 or 12+13)
-	 */
-	u8 if_port;
 };
 
 #endif

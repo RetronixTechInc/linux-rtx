@@ -9,9 +9,7 @@
 #define __WORDSIZE (__SIZEOF_LONG__ * 8)
 #endif
 
-#ifndef BITS_PER_LONG
-# define BITS_PER_LONG __WORDSIZE
-#endif
+#define BITS_PER_LONG __WORDSIZE
 
 #define BIT_MASK(nr)		(1UL << ((nr) % BITS_PER_LONG))
 #define BIT_WORD(nr)		((nr) / BITS_PER_LONG)

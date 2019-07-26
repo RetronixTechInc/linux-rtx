@@ -610,8 +610,8 @@ err_out_regions:
 #ifdef CONFIG_PCI
 	if (pdev)
 		pci_release_regions(pdev);
-err_out:
 #endif
+err_out:
 	if (pdev)
 		pci_disable_device(pdev);
 	return rc;
@@ -791,6 +791,7 @@ static void tlan_get_drvinfo(struct net_device *dev,
 			sizeof(info->bus_info));
 	else
 		strlcpy(info->bus_info, "EISA",	sizeof(info->bus_info));
+	info->eedump_len = TLAN_EEPROM_SIZE;
 }
 
 static int tlan_get_eeprom_len(struct net_device *dev)
@@ -1007,7 +1008,7 @@ static void tlan_tx_timeout(struct net_device *dev)
 	tlan_reset_lists(dev);
 	tlan_read_and_clear_stats(dev, TLAN_IGNORE);
 	tlan_reset_adapter(dev);
-	netif_trans_update(dev); /* prevent tx timeout */
+	dev->trans_start = jiffies; /* prevent tx timeout */
 	netif_wake_queue(dev);
 
 }
@@ -1651,6 +1652,7 @@ static u32 tlan_handle_tx_eoc(struct net_device *dev, u16 host_int)
 	dma_addr_t		head_list_phys;
 	u32			ack = 1;
 
+	host_int = 0;
 	if (priv->tlan_rev < 0x30) {
 		TLAN_DBG(TLAN_DEBUG_TX,
 			 "TRANSMIT:  handling TX EOC (Head=%d Tail=%d) -- IRQ\n",

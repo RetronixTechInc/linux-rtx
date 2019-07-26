@@ -80,7 +80,7 @@ static pgprot_t drm_dma_prot(uint32_t map_type, struct vm_area_struct *vma)
 	pgprot_t tmp = vm_get_page_prot(vma->vm_flags);
 
 #if defined(__powerpc__) && defined(CONFIG_NOT_COHERENT_CACHE)
-	tmp = pgprot_noncached_wc(tmp);
+	tmp |= _PAGE_NO_CACHE;
 #endif
 	return tmp;
 }
@@ -95,7 +95,7 @@ static pgprot_t drm_dma_prot(uint32_t map_type, struct vm_area_struct *vma)
  * Find the right map and if it's AGP memory find the real physical page to
  * map, get the page, increment the use count and return it.
  */
-#if IS_ENABLED(CONFIG_AGP)
+#if __OS_HAS_AGP
 static int drm_do_vm_fault(struct vm_area_struct *vma, struct vm_fault *vmf)
 {
 	struct drm_file *priv = vma->vm_file->private_data;
@@ -168,12 +168,12 @@ static int drm_do_vm_fault(struct vm_area_struct *vma, struct vm_fault *vmf)
 vm_fault_error:
 	return VM_FAULT_SIGBUS;	/* Disallow mremap */
 }
-#else
+#else				/* __OS_HAS_AGP */
 static int drm_do_vm_fault(struct vm_area_struct *vma, struct vm_fault *vmf)
 {
 	return VM_FAULT_SIGBUS;
 }
-#endif
+#endif				/* __OS_HAS_AGP */
 
 /**
  * \c nopage method for shared virtual memory.
@@ -395,8 +395,16 @@ static const struct vm_operations_struct drm_vm_sg_ops = {
 	.close = drm_vm_close,
 };
 
-static void drm_vm_open_locked(struct drm_device *dev,
-			       struct vm_area_struct *vma)
+/**
+ * \c open method for shared virtual memory.
+ *
+ * \param vma virtual memory area.
+ *
+ * Create a new drm_vma_entry structure as the \p vma private data entry and
+ * add it to drm_device::vmalist.
+ */
+void drm_vm_open_locked(struct drm_device *dev,
+		struct vm_area_struct *vma)
 {
 	struct drm_vma_entry *vma_entry;
 
@@ -421,8 +429,8 @@ static void drm_vm_open(struct vm_area_struct *vma)
 	mutex_unlock(&dev->struct_mutex);
 }
 
-static void drm_vm_close_locked(struct drm_device *dev,
-				struct vm_area_struct *vma)
+void drm_vm_close_locked(struct drm_device *dev,
+		struct vm_area_struct *vma)
 {
 	struct drm_vma_entry *pt, *temp;
 
@@ -548,7 +556,7 @@ static int drm_mmap_locked(struct file *filp, struct vm_area_struct *vma)
 	 * --BenH.
 	 */
 	if (!vma->vm_pgoff
-#if IS_ENABLED(CONFIG_AGP)
+#if __OS_HAS_AGP
 	    && (!dev->agp
 		|| dev->agp->agp_info.device->vendor != PCI_VENDOR_ID_APPLE)
 #endif
@@ -593,7 +601,7 @@ static int drm_mmap_locked(struct file *filp, struct vm_area_struct *vma)
 			 * pages and mappings in fault()
 			 */
 #if defined(__powerpc__)
-			vma->vm_page_prot = pgprot_noncached(vma->vm_page_prot);
+			pgprot_val(vma->vm_page_prot) |= _PAGE_NO_CACHE;
 #endif
 			vma->vm_ops = &drm_vm_ops;
 			break;
@@ -669,4 +677,58 @@ void drm_legacy_vma_flush(struct drm_device *dev)
 		list_del(&vma->head);
 		kfree(vma);
 	}
+}
+
+int drm_vma_info(struct seq_file *m, void *data)
+{
+	struct drm_info_node *node = (struct drm_info_node *) m->private;
+	struct drm_device *dev = node->minor->dev;
+	struct drm_vma_entry *pt;
+	struct vm_area_struct *vma;
+	unsigned long vma_count = 0;
+#if defined(__i386__)
+	unsigned int pgprot;
+#endif
+
+	mutex_lock(&dev->struct_mutex);
+	list_for_each_entry(pt, &dev->vmalist, head)
+		vma_count++;
+
+	seq_printf(m, "vma use count: %lu, high_memory = %pK, 0x%pK\n",
+		   vma_count, high_memory,
+		   (void *)(unsigned long)virt_to_phys(high_memory));
+
+	list_for_each_entry(pt, &dev->vmalist, head) {
+		vma = pt->vma;
+		if (!vma)
+			continue;
+		seq_printf(m,
+			   "\n%5d 0x%pK-0x%pK %c%c%c%c%c%c 0x%08lx000",
+			   pt->pid,
+			   (void *)vma->vm_start, (void *)vma->vm_end,
+			   vma->vm_flags & VM_READ ? 'r' : '-',
+			   vma->vm_flags & VM_WRITE ? 'w' : '-',
+			   vma->vm_flags & VM_EXEC ? 'x' : '-',
+			   vma->vm_flags & VM_MAYSHARE ? 's' : 'p',
+			   vma->vm_flags & VM_LOCKED ? 'l' : '-',
+			   vma->vm_flags & VM_IO ? 'i' : '-',
+			   vma->vm_pgoff);
+
+#if defined(__i386__)
+		pgprot = pgprot_val(vma->vm_page_prot);
+		seq_printf(m, " %c%c%c%c%c%c%c%c%c",
+			   pgprot & _PAGE_PRESENT ? 'p' : '-',
+			   pgprot & _PAGE_RW ? 'w' : 'r',
+			   pgprot & _PAGE_USER ? 'u' : 's',
+			   pgprot & _PAGE_PWT ? 't' : 'b',
+			   pgprot & _PAGE_PCD ? 'u' : 'c',
+			   pgprot & _PAGE_ACCESSED ? 'a' : '-',
+			   pgprot & _PAGE_DIRTY ? 'd' : '-',
+			   pgprot & _PAGE_PSE ? 'm' : 'k',
+			   pgprot & _PAGE_GLOBAL ? 'g' : 'l');
+#endif
+		seq_printf(m, "\n");
+	}
+	mutex_unlock(&dev->struct_mutex);
+	return 0;
 }

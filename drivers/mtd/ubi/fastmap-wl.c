@@ -172,30 +172,6 @@ void ubi_refill_pools(struct ubi_device *ubi)
 }
 
 /**
- * produce_free_peb - produce a free physical eraseblock.
- * @ubi: UBI device description object
- *
- * This function tries to make a free PEB by means of synchronous execution of
- * pending works. This may be needed if, for example the background thread is
- * disabled. Returns zero in case of success and a negative error code in case
- * of failure.
- */
-static int produce_free_peb(struct ubi_device *ubi)
-{
-	int err;
-
-	while (!ubi->free.rb_node && ubi->works_count) {
-		dbg_wl("do one work synchronously");
-		err = do_work(ubi);
-
-		if (err)
-			return err;
-	}
-
-	return 0;
-}
-
-/**
  * ubi_wl_get_peb - get a physical eraseblock.
  * @ubi: UBI device description object
  *
@@ -237,11 +213,6 @@ again:
 		}
 		retried = 1;
 		up_read(&ubi->fm_eba_sem);
-		ret = produce_free_peb(ubi);
-		if (ret < 0) {
-			down_read(&ubi->fm_eba_sem);
-			goto out;
-		}
 		goto again;
 	}
 
@@ -261,8 +232,6 @@ static struct ubi_wl_entry *get_peb_for_wl(struct ubi_device *ubi)
 {
 	struct ubi_fm_pool *pool = &ubi->fm_wl_pool;
 	int pnum;
-
-	ubi_assert(rwsem_is_locked(&ubi->fm_eba_sem));
 
 	if (pool->used == pool->size) {
 		/* We cannot update the fastmap here because this
@@ -305,7 +274,7 @@ int ubi_ensure_anchor_pebs(struct ubi_device *ubi)
 
 	wrk->anchor = 1;
 	wrk->func = &wear_leveling_worker;
-	__schedule_ubi_work(ubi, wrk);
+	schedule_ubi_work(ubi, wrk);
 	return 0;
 }
 
@@ -346,7 +315,7 @@ int ubi_wl_put_fm_peb(struct ubi_device *ubi, struct ubi_wl_entry *fm_e,
 	spin_unlock(&ubi->wl_lock);
 
 	vol_id = lnum ? UBI_FM_DATA_VOLUME_ID : UBI_FM_SB_VOLUME_ID;
-	return schedule_erase(ubi, e, vol_id, lnum, torture, true);
+	return schedule_erase(ubi, e, vol_id, lnum, torture);
 }
 
 /**

@@ -124,16 +124,8 @@
 		396000	1175000
 		198000	1175000
 	>;
-};
-
-&reg_arm {
-	vin-supply = <&sw1a_reg>;
-	regulator-allow-bypass;
-};
-
-&reg_soc {
-	vin-supply = <&sw1c_reg>;
-	regulator-allow-bypass;
+	arm-supply = <&sw1a_reg>;
+	soc-supply = <&sw1c_reg>;
 };
 
 &gpc {
@@ -535,7 +527,7 @@
 &wdog1 {
 	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl_wdog>;
-	fsl,ext-reset-output;
+	fsl,wdog_b;
 };
 
 &iomuxc {

@@ -264,10 +264,8 @@ static void update_audio_tstamp(struct snd_pcm_substream *substream,
 				runtime->rate);
 		*audio_tstamp = ns_to_timespec(audio_nsecs);
 	}
-	if (!timespec_equal(&runtime->status->audio_tstamp, audio_tstamp)) {
-		runtime->status->audio_tstamp = *audio_tstamp;
-		runtime->status->tstamp = *curr_tstamp;
-	}
+	runtime->status->audio_tstamp = *audio_tstamp;
+	runtime->status->tstamp = *curr_tstamp;
 
 	/*
 	 * re-take a driver timestamp to let apps detect if the reference tstamp
@@ -324,7 +322,7 @@ static int snd_pcm_update_hw_ptr0(struct snd_pcm_substream *substream,
 			char name[16];
 			snd_pcm_debug_name(substream, name, sizeof(name));
 			pcm_err(substream->pcm,
-				"invalid position: %s, pos = %ld, buffer size = %ld, period size = %ld\n",
+				"BUG: %s, pos = %ld, buffer size = %ld, period size = %ld\n",
 				name, pos, runtime->buffer_size,
 				runtime->period_size);
 		}
@@ -578,6 +576,7 @@ static inline unsigned int muldiv32(unsigned int a, unsigned int b,
 {
 	u_int64_t n = (u_int64_t) a * b;
 	if (c == 0) {
+		snd_BUG_ON(!n);
 		*r = 0;
 		return UINT_MAX;
 	}
@@ -802,7 +801,7 @@ void snd_interval_mulkdiv(const struct snd_interval *a, unsigned int k,
  * negative error code.
  */
 int snd_interval_ratnum(struct snd_interval *i,
-			unsigned int rats_count, const struct snd_ratnum *rats,
+			unsigned int rats_count, struct snd_ratnum *rats,
 			unsigned int *nump, unsigned int *denp)
 {
 	unsigned int best_num, best_den;
@@ -921,8 +920,7 @@ EXPORT_SYMBOL(snd_interval_ratnum);
  * negative error code.
  */
 static int snd_interval_ratden(struct snd_interval *i,
-			       unsigned int rats_count,
-			       const struct snd_ratden *rats,
+			       unsigned int rats_count, struct snd_ratden *rats,
 			       unsigned int *nump, unsigned int *denp)
 {
 	unsigned int best_num, best_diff, best_den;
@@ -1341,7 +1339,7 @@ EXPORT_SYMBOL(snd_pcm_hw_constraint_ranges);
 static int snd_pcm_hw_rule_ratnums(struct snd_pcm_hw_params *params,
 				   struct snd_pcm_hw_rule *rule)
 {
-	const struct snd_pcm_hw_constraint_ratnums *r = rule->private;
+	struct snd_pcm_hw_constraint_ratnums *r = rule->private;
 	unsigned int num = 0, den = 0;
 	int err;
 	err = snd_interval_ratnum(hw_param_interval(params, rule->var),
@@ -1365,10 +1363,10 @@ static int snd_pcm_hw_rule_ratnums(struct snd_pcm_hw_params *params,
 int snd_pcm_hw_constraint_ratnums(struct snd_pcm_runtime *runtime, 
 				  unsigned int cond,
 				  snd_pcm_hw_param_t var,
-				  const struct snd_pcm_hw_constraint_ratnums *r)
+				  struct snd_pcm_hw_constraint_ratnums *r)
 {
 	return snd_pcm_hw_rule_add(runtime, cond, var,
-				   snd_pcm_hw_rule_ratnums, (void *)r,
+				   snd_pcm_hw_rule_ratnums, r,
 				   var, -1);
 }
 
@@ -1377,7 +1375,7 @@ EXPORT_SYMBOL(snd_pcm_hw_constraint_ratnums);
 static int snd_pcm_hw_rule_ratdens(struct snd_pcm_hw_params *params,
 				   struct snd_pcm_hw_rule *rule)
 {
-	const struct snd_pcm_hw_constraint_ratdens *r = rule->private;
+	struct snd_pcm_hw_constraint_ratdens *r = rule->private;
 	unsigned int num = 0, den = 0;
 	int err = snd_interval_ratden(hw_param_interval(params, rule->var),
 				  r->nrats, r->rats, &num, &den);
@@ -1400,10 +1398,10 @@ static int snd_pcm_hw_rule_ratdens(struct snd_pcm_hw_params *params,
 int snd_pcm_hw_constraint_ratdens(struct snd_pcm_runtime *runtime, 
 				  unsigned int cond,
 				  snd_pcm_hw_param_t var,
-				  const struct snd_pcm_hw_constraint_ratdens *r)
+				  struct snd_pcm_hw_constraint_ratdens *r)
 {
 	return snd_pcm_hw_rule_add(runtime, cond, var,
-				   snd_pcm_hw_rule_ratdens, (void *)r,
+				   snd_pcm_hw_rule_ratdens, r,
 				   var, -1);
 }
 
@@ -1663,7 +1661,7 @@ int snd_pcm_hw_param_first(struct snd_pcm_substream *pcm,
 		return changed;
 	if (params->rmask) {
 		int err = snd_pcm_hw_refine(pcm, params);
-		if (err < 0)
+		if (snd_BUG_ON(err < 0))
 			return err;
 	}
 	return snd_pcm_hw_param_value(params, var, dir);
@@ -1710,7 +1708,7 @@ int snd_pcm_hw_param_last(struct snd_pcm_substream *pcm,
 		return changed;
 	if (params->rmask) {
 		int err = snd_pcm_hw_refine(pcm, params);
-		if (err < 0)
+		if (snd_BUG_ON(err < 0))
 			return err;
 	}
 	return snd_pcm_hw_param_value(params, var, dir);
@@ -1877,18 +1875,21 @@ void snd_pcm_period_elapsed(struct snd_pcm_substream *substream)
 		return;
 	runtime = substream->runtime;
 
+	if (runtime->transfer_ack_begin)
+		runtime->transfer_ack_begin(substream);
+
 	snd_pcm_stream_lock_irqsave(substream, flags);
 	if (!snd_pcm_running(substream) ||
 	    snd_pcm_update_hw_ptr0(substream, 1) < 0)
 		goto _end;
 
-#ifdef CONFIG_SND_PCM_TIMER
 	if (substream->timer_running)
 		snd_timer_interrupt(substream->timer, 1);
-#endif
  _end:
-	kill_fasync(&runtime->fasync, SIGIO, POLL_IN);
 	snd_pcm_stream_unlock_irqrestore(substream, flags);
+	if (runtime->transfer_ack_end)
+		runtime->transfer_ack_end(substream);
+	kill_fasync(&runtime->fasync, SIGIO, POLL_IN);
 }
 
 EXPORT_SYMBOL(snd_pcm_period_elapsed);
@@ -2492,7 +2493,7 @@ static int pcm_chmap_ctl_get(struct snd_kcontrol *kcontrol,
 	struct snd_pcm_substream *substream;
 	const struct snd_pcm_chmap_elem *map;
 
-	if (!info->chmap)
+	if (snd_BUG_ON(!info->chmap))
 		return -EINVAL;
 	substream = snd_pcm_chmap_substream(info, idx);
 	if (!substream)
@@ -2524,7 +2525,7 @@ static int pcm_chmap_ctl_tlv(struct snd_kcontrol *kcontrol, int op_flag,
 	unsigned int __user *dst;
 	int c, count = 0;
 
-	if (!info->chmap)
+	if (snd_BUG_ON(!info->chmap))
 		return -EINVAL;
 	if (size < 8)
 		return -ENOMEM;
@@ -2596,8 +2597,6 @@ int snd_pcm_add_chmap_ctls(struct snd_pcm *pcm, int stream,
 	};
 	int err;
 
-	if (WARN_ON(pcm->streams[stream].chmap_kctl))
-		return -EBUSY;
 	info = kzalloc(sizeof(*info), GFP_KERNEL);
 	if (!info)
 		return -ENOMEM;

@@ -41,7 +41,6 @@
  */
 
 /dts-v1/;
-#include <dt-bindings/input/input.h>
 #include "rk3066a.dtsi"
 
 / {
@@ -49,7 +48,6 @@
 	compatible = "chipspark,rayeager-px2", "rockchip,rk3066a";
 
 	memory {
-		device_type = "memory";
 		reg = <0x60000000 0x40000000>;
 	};
 
@@ -62,27 +60,17 @@
 
 	keys: gpio-keys {
 		compatible = "gpio-keys";
+		#address-cells = <1>;
+		#size-cells = <0>;
 
-		power {
-			wakeup-source;
+		button@0 {
+			gpio-key,wakeup = <1>;
 			gpios = <&gpio6 2 GPIO_ACTIVE_LOW>;
 			label = "GPIO Power";
-			linux,code = <KEY_POWER>;
+			linux,code = <116>;
 			pinctrl-names = "default";
 			pinctrl-0 = <&pwr_key>;
 		};
-	};
-
-	vdd_log: vdd-log {
-		compatible = "pwm-regulator";
-		pwms = <&pwm3 0 1000>;
-		regulator-name = "vdd_log";
-		regulator-min-microvolt = <1200000>;
-		regulator-max-microvolt = <1200000>;
-		regulator-always-on;
-		voltage-table = <1000000 100>,
-				<1200000 42>;
-		status = "okay";
 	};
 
 	vsys: vsys-regulator {
@@ -181,6 +169,7 @@
 };
 
 &emmc {
+	broken-cd;
 	bus-width = <8>;
 	cap-mmc-highspeed;
 	disable-wp;
@@ -340,12 +329,11 @@
 	pinctrl-names = "default";
 	pinctrl-0 = <&sd0_clk>, <&sd0_cmd>, <&sd0_cd>, <&sd0_bus4>;
 	vmmc-supply = <&vcc_sd>;
-	cap-mmc-highspeed;
-	cap-sd-highspeed;
 	status = "okay";
 };
 
 &mmc1 {
+	broken-cd;
 	bus-width = <4>;
 	disable-wp;
 	non-removable;
@@ -440,10 +428,6 @@
 	status = "okay";
 };
 
-&pwm3 {
-	status = "okay";
-};
-
 &saradc {
 	vref-supply = <&vcc_25>;
 	status = "okay";
@@ -472,10 +456,6 @@
 &usb_host {
 	pinctrl-names = "default";
 	pinctrl-0 = <&hub_rst>, <&sata_reset>;
-	status = "okay";
-};
-
-&usbphy {
 	status = "okay";
 };
 

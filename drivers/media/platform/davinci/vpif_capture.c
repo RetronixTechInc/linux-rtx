@@ -57,8 +57,7 @@ static u8 channel_first_int[VPIF_NUMBER_OF_OBJECTS][2] = { {1, 1} };
 /* Is set to 1 in case of SDTV formats, 2 in case of HDTV formats. */
 static int ycmux_mode;
 
-static inline
-struct vpif_cap_buffer *to_vpif_buffer(struct vb2_v4l2_buffer *vb)
+static inline struct vpif_cap_buffer *to_vpif_buffer(struct vb2_buffer *vb)
 {
 	return container_of(vb, struct vpif_cap_buffer, vb);
 }
@@ -73,7 +72,6 @@ struct vpif_cap_buffer *to_vpif_buffer(struct vb2_v4l2_buffer *vb)
  */
 static int vpif_buffer_prepare(struct vb2_buffer *vb)
 {
-	struct vb2_v4l2_buffer *vbuf = to_vb2_v4l2_buffer(vb);
 	struct vb2_queue *q = vb->vb2_queue;
 	struct channel_obj *ch = vb2_get_drv_priv(q);
 	struct common_obj *common;
@@ -87,7 +85,7 @@ static int vpif_buffer_prepare(struct vb2_buffer *vb)
 	if (vb2_get_plane_payload(vb, 0) > vb2_plane_size(vb, 0))
 		return -EINVAL;
 
-	vbuf->field = common->fmt.fmt.pix.field;
+	vb->v4l2_buf.field = common->fmt.fmt.pix.field;
 
 	addr = vb2_dma_contig_plane_dma_addr(vb, 0);
 	if (!IS_ALIGNED((addr + common->ytop_off), 8) ||
@@ -104,35 +102,36 @@ static int vpif_buffer_prepare(struct vb2_buffer *vb)
 /**
  * vpif_buffer_queue_setup : Callback function for buffer setup.
  * @vq: vb2_queue ptr
+ * @fmt: v4l2 format
  * @nbuffers: ptr to number of buffers requested by application
  * @nplanes:: contains number of distinct video planes needed to hold a frame
  * @sizes[]: contains the size (in bytes) of each plane.
- * @alloc_devs: ptr to allocation context
+ * @alloc_ctxs: ptr to allocation context
  *
  * This callback function is called when reqbuf() is called to adjust
  * the buffer count and buffer size
  */
 static int vpif_buffer_queue_setup(struct vb2_queue *vq,
+				const struct v4l2_format *fmt,
 				unsigned int *nbuffers, unsigned int *nplanes,
-				unsigned int sizes[], struct device *alloc_devs[])
+				unsigned int sizes[], void *alloc_ctxs[])
 {
 	struct channel_obj *ch = vb2_get_drv_priv(vq);
-	struct common_obj *common = &ch->common[VPIF_VIDEO_INDEX];
-	unsigned size = common->fmt.fmt.pix.sizeimage;
+	struct common_obj *common;
+
+	common = &ch->common[VPIF_VIDEO_INDEX];
 
 	vpif_dbg(2, debug, "vpif_buffer_setup\n");
 
-	if (*nplanes) {
-		if (sizes[0] < size)
-			return -EINVAL;
-		size = sizes[0];
-	}
+	if (fmt && fmt->fmt.pix.sizeimage < common->fmt.fmt.pix.sizeimage)
+		return -EINVAL;
 
 	if (vq->num_buffers + *nbuffers < 3)
 		*nbuffers = 3 - vq->num_buffers;
 
 	*nplanes = 1;
-	sizes[0] = size;
+	sizes[0] = fmt ? fmt->fmt.pix.sizeimage : common->fmt.fmt.pix.sizeimage;
+	alloc_ctxs[0] = common->alloc_ctx;
 
 	/* Calculate the offset for Y and C data in the buffer */
 	vpif_calculate_offsets(ch);
@@ -146,9 +145,8 @@ static int vpif_buffer_queue_setup(struct vb2_queue *vq,
  */
 static void vpif_buffer_queue(struct vb2_buffer *vb)
 {
-	struct vb2_v4l2_buffer *vbuf = to_vb2_v4l2_buffer(vb);
 	struct channel_obj *ch = vb2_get_drv_priv(vb->vb2_queue);
-	struct vpif_cap_buffer *buf = to_vpif_buffer(vbuf);
+	struct vpif_cap_buffer *buf = to_vpif_buffer(vb);
 	struct common_obj *common;
 	unsigned long flags;
 
@@ -216,7 +214,7 @@ static int vpif_start_streaming(struct vb2_queue *vq, unsigned int count)
 	list_del(&common->cur_frm->list);
 	spin_unlock_irqrestore(&common->irqlock, flags);
 
-	addr = vb2_dma_contig_plane_dma_addr(&common->cur_frm->vb.vb2_buf, 0);
+	addr = vb2_dma_contig_plane_dma_addr(&common->cur_frm->vb, 0);
 
 	common->set_addr(addr + common->ytop_off,
 			 addr + common->ybtm_off,
@@ -245,7 +243,7 @@ static int vpif_start_streaming(struct vb2_queue *vq, unsigned int count)
 err:
 	list_for_each_entry_safe(buf, tmp, &common->dma_queue, list) {
 		list_del(&buf->list);
-		vb2_buffer_done(&buf->vb.vb2_buf, VB2_BUF_STATE_QUEUED);
+		vb2_buffer_done(&buf->vb, VB2_BUF_STATE_QUEUED);
 	}
 	spin_unlock_irqrestore(&common->irqlock, flags);
 
@@ -288,14 +286,13 @@ static void vpif_stop_streaming(struct vb2_queue *vq)
 	/* release all active buffers */
 	spin_lock_irqsave(&common->irqlock, flags);
 	if (common->cur_frm == common->next_frm) {
-		vb2_buffer_done(&common->cur_frm->vb.vb2_buf,
-				VB2_BUF_STATE_ERROR);
+		vb2_buffer_done(&common->cur_frm->vb, VB2_BUF_STATE_ERROR);
 	} else {
 		if (common->cur_frm != NULL)
-			vb2_buffer_done(&common->cur_frm->vb.vb2_buf,
+			vb2_buffer_done(&common->cur_frm->vb,
 					VB2_BUF_STATE_ERROR);
 		if (common->next_frm != NULL)
-			vb2_buffer_done(&common->next_frm->vb.vb2_buf,
+			vb2_buffer_done(&common->next_frm->vb,
 					VB2_BUF_STATE_ERROR);
 	}
 
@@ -303,8 +300,7 @@ static void vpif_stop_streaming(struct vb2_queue *vq)
 		common->next_frm = list_entry(common->dma_queue.next,
 						struct vpif_cap_buffer, list);
 		list_del(&common->next_frm->list);
-		vb2_buffer_done(&common->next_frm->vb.vb2_buf,
-				VB2_BUF_STATE_ERROR);
+		vb2_buffer_done(&common->next_frm->vb, VB2_BUF_STATE_ERROR);
 	}
 	spin_unlock_irqrestore(&common->irqlock, flags);
 }
@@ -329,8 +325,9 @@ static struct vb2_ops video_qops = {
  */
 static void vpif_process_buffer_complete(struct common_obj *common)
 {
-	common->cur_frm->vb.vb2_buf.timestamp = ktime_get_ns();
-	vb2_buffer_done(&common->cur_frm->vb.vb2_buf, VB2_BUF_STATE_DONE);
+	v4l2_get_timestamp(&common->cur_frm->vb.v4l2_buf.timestamp);
+	vb2_buffer_done(&common->cur_frm->vb,
+					    VB2_BUF_STATE_DONE);
 	/* Make curFrm pointing to nextFrm */
 	common->cur_frm = common->next_frm;
 }
@@ -353,7 +350,7 @@ static void vpif_schedule_next_buffer(struct common_obj *common)
 	/* Remove that buffer from the buffer queue */
 	list_del(&common->next_frm->list);
 	spin_unlock(&common->irqlock);
-	addr = vb2_dma_contig_plane_dma_addr(&common->next_frm->vb.vb2_buf, 0);
+	addr = vb2_dma_contig_plane_dma_addr(&common->next_frm->vb, 0);
 
 	/* Set top and bottom field addresses in VPIF registers */
 	common->set_addr(addr + common->ytop_off,
@@ -1370,11 +1367,17 @@ static int vpif_probe_complete(void)
 		q->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_MONOTONIC;
 		q->min_buffers_needed = 1;
 		q->lock = &common->lock;
-		q->dev = vpif_dev;
 
 		err = vb2_queue_init(q);
 		if (err) {
 			vpif_err("vpif_capture: vb2_queue_init() failed\n");
+			goto probe_out;
+		}
+
+		common->alloc_ctx = vb2_dma_contig_init_ctx(vpif_dev);
+		if (IS_ERR(common->alloc_ctx)) {
+			vpif_err("Failed to get the context\n");
+			err = PTR_ERR(common->alloc_ctx);
 			goto probe_out;
 		}
 
@@ -1405,6 +1408,7 @@ probe_out:
 		/* Get the pointer to the channel object */
 		ch = vpif_obj.dev[k];
 		common = &ch->common[k];
+		vb2_dma_contig_cleanup_ctx(common->alloc_ctx);
 		/* Unregister video device */
 		video_unregister_device(&ch->video_dev);
 	}
@@ -1538,6 +1542,7 @@ static int vpif_remove(struct platform_device *device)
 		/* Get the pointer to the channel object */
 		ch = vpif_obj.dev[i];
 		common = &ch->common[VPIF_VIDEO_INDEX];
+		vb2_dma_contig_cleanup_ctx(common->alloc_ctx);
 		/* Unregister video device */
 		video_unregister_device(&ch->video_dev);
 		kfree(vpif_obj.dev[i]);

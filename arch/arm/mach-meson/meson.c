@@ -19,7 +19,6 @@
 static const char * const meson_common_board_compat[] = {
 	"amlogic,meson6",
 	"amlogic,meson8",
-	"amlogic,meson8b",
 	NULL,
 };
 

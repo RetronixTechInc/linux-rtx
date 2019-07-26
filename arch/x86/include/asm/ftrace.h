@@ -3,18 +3,15 @@
 
 #ifdef CONFIG_FUNCTION_TRACER
 #ifdef CC_USING_FENTRY
-# define MCOUNT_ADDR		((unsigned long)(__fentry__))
+# define MCOUNT_ADDR		((long)(__fentry__))
 #else
-# define MCOUNT_ADDR		((unsigned long)(mcount))
-# define HAVE_FUNCTION_GRAPH_FP_TEST
+# define MCOUNT_ADDR		((long)(mcount))
 #endif
 #define MCOUNT_INSN_SIZE	5 /* sizeof mcount call */
 
 #ifdef CONFIG_DYNAMIC_FTRACE
 #define ARCH_SUPPORTS_FTRACE_OPS 1
 #endif
-
-#define HAVE_FUNCTION_GRAPH_RET_ADDR_PTR
 
 #ifndef __ASSEMBLY__
 extern void mcount(void);
@@ -55,13 +52,13 @@ int ftrace_int3_handler(struct pt_regs *regs);
  * this screws up the trace output when tracing a ia32 task.
  * Instead of reporting bogus syscalls, just do not trace them.
  *
- * If the user really wants these, then they should use the
+ * If the user realy wants these, then they should use the
  * raw syscall tracepoints with filtering.
  */
 #define ARCH_TRACE_IGNORE_COMPAT_SYSCALLS 1
 static inline bool arch_trace_is_compat_syscall(struct pt_regs *regs)
 {
-	if (in_compat_syscall())
+	if (is_compat_task())
 		return true;
 	return false;
 }

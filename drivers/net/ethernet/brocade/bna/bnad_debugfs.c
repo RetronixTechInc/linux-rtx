@@ -76,7 +76,8 @@ bnad_debugfs_open_fwtrc(struct inode *inode, struct file *file)
 		fw_debug->debug_buffer = NULL;
 		kfree(fw_debug);
 		fw_debug = NULL;
-		netdev_warn(bnad->netdev, "failed to collect fwtrc\n");
+		pr_warn("bnad %s: Failed to collect fwtrc\n",
+			pci_name(bnad->pcidev));
 		return -ENOMEM;
 	}
 
@@ -116,7 +117,8 @@ bnad_debugfs_open_fwsave(struct inode *inode, struct file *file)
 		fw_debug->debug_buffer = NULL;
 		kfree(fw_debug);
 		fw_debug = NULL;
-		netdev_warn(bnad->netdev, "failed to collect fwsave\n");
+		pr_warn("bna %s: Failed to collect fwsave\n",
+			pci_name(bnad->pcidev));
 		return -ENOMEM;
 	}
 
@@ -215,7 +217,8 @@ bnad_debugfs_open_drvinfo(struct inode *inode, struct file *file)
 		drv_info->debug_buffer = NULL;
 		kfree(drv_info);
 		drv_info = NULL;
-		netdev_warn(bnad->netdev, "failed to collect drvinfo\n");
+		pr_warn("bna %s: Failed to collect drvinfo\n",
+			pci_name(bnad->pcidev));
 		return -ENOMEM;
 	}
 
@@ -268,15 +271,15 @@ bna_reg_offset_check(struct bfa_ioc *ioc, u32 offset, u32 len)
 	area = (offset >> 15) & 0x7;
 	if (area == 0) {
 		/* PCIe core register */
-		if (offset + (len << 2) > 0x8000)	/* 8k dwords or 32KB */
+		if ((offset + (len<<2)) > 0x8000)	/* 8k dwords or 32KB */
 			return BFA_STATUS_EINVAL;
 	} else if (area == 0x1) {
 		/* CB 32 KB memory page */
-		if (offset + (len << 2) > 0x10000)	/* 8k dwords or 32KB */
+		if ((offset + (len<<2)) > 0x10000)	/* 8k dwords or 32KB */
 			return BFA_STATUS_EINVAL;
 	} else {
 		/* CB register space 64KB */
-		if (offset + (len << 2) > BFA_REG_ADDRMSK(ioc))
+		if ((offset + (len<<2)) > BFA_REG_ADDRMSK(ioc))
 			return BFA_STATUS_EINVAL;
 	}
 	return BFA_STATUS_OK;
@@ -312,27 +315,33 @@ bnad_debugfs_write_regrd(struct file *file, const char __user *buf,
 	struct bnad_debug_info *regrd_debug = file->private_data;
 	struct bnad *bnad = (struct bnad *)regrd_debug->i_private;
 	struct bfa_ioc *ioc = &bnad->bna.ioceth.ioc;
-	int rc, i;
-	u32 addr, len;
+	int addr, len, rc, i;
 	u32 *regbuf;
 	void __iomem *rb, *reg_addr;
 	unsigned long flags;
 	void *kern_buf;
 
-	/* Copy the user space buf */
-	kern_buf = memdup_user(buf, nbytes);
-	if (IS_ERR(kern_buf))
-		return PTR_ERR(kern_buf);
+	/* Allocate memory to store the user space buf */
+	kern_buf = kzalloc(nbytes, GFP_KERNEL);
+	if (!kern_buf)
+		return -ENOMEM;
+
+	if (copy_from_user(kern_buf, (void  __user *)buf, nbytes)) {
+		kfree(kern_buf);
+		return -ENOMEM;
+	}
 
 	rc = sscanf(kern_buf, "%x:%x", &addr, &len);
-	if (rc < 2 || len > UINT_MAX >> 2) {
-		netdev_warn(bnad->netdev, "failed to read user buffer\n");
+	if (rc < 2) {
+		pr_warn("bna %s: Failed to read user buffer\n",
+			pci_name(bnad->pcidev));
 		kfree(kern_buf);
 		return -EINVAL;
 	}
 
 	kfree(kern_buf);
 	kfree(bnad->regdata);
+	bnad->regdata = NULL;
 	bnad->reglen = 0;
 
 	bnad->regdata = kzalloc(len << 2, GFP_KERNEL);
@@ -346,7 +355,8 @@ bnad_debugfs_write_regrd(struct file *file, const char __user *buf,
 	/* offset and len sanity check */
 	rc = bna_reg_offset_check(ioc, addr, len);
 	if (rc) {
-		netdev_warn(bnad->netdev, "failed reg offset check\n");
+		pr_warn("bna %s: Failed reg offset check\n",
+			pci_name(bnad->pcidev));
 		kfree(bnad->regdata);
 		bnad->regdata = NULL;
 		bnad->reglen = 0;
@@ -373,20 +383,25 @@ bnad_debugfs_write_regwr(struct file *file, const char __user *buf,
 	struct bnad_debug_info *debug = file->private_data;
 	struct bnad *bnad = (struct bnad *)debug->i_private;
 	struct bfa_ioc *ioc = &bnad->bna.ioceth.ioc;
-	int rc;
-	u32 addr, val;
+	int addr, val, rc;
 	void __iomem *reg_addr;
 	unsigned long flags;
 	void *kern_buf;
 
-	/* Copy the user space buf */
-	kern_buf = memdup_user(buf, nbytes);
-	if (IS_ERR(kern_buf))
-		return PTR_ERR(kern_buf);
+	/* Allocate memory to store the user space buf */
+	kern_buf = kzalloc(nbytes, GFP_KERNEL);
+	if (!kern_buf)
+		return -ENOMEM;
+
+	if (copy_from_user(kern_buf, (void  __user *)buf, nbytes)) {
+		kfree(kern_buf);
+		return -ENOMEM;
+	}
 
 	rc = sscanf(kern_buf, "%x:%x", &addr, &val);
 	if (rc < 2) {
-		netdev_warn(bnad->netdev, "failed to read user buffer\n");
+		pr_warn("bna %s: Failed to read user buffer\n",
+			pci_name(bnad->pcidev));
 		kfree(kern_buf);
 		return -EINVAL;
 	}
@@ -397,7 +412,8 @@ bnad_debugfs_write_regwr(struct file *file, const char __user *buf,
 	/* offset and len sanity check */
 	rc = bna_reg_offset_check(ioc, addr, 1);
 	if (rc) {
-		netdev_warn(bnad->netdev, "failed reg offset check\n");
+		pr_warn("bna %s: Failed reg offset check\n",
+			pci_name(bnad->pcidev));
 		return -EINVAL;
 	}
 
@@ -509,8 +525,7 @@ bnad_debugfs_init(struct bnad *bnad)
 		bna_debugfs_root = debugfs_create_dir("bna", NULL);
 		atomic_set(&bna_debugfs_port_count, 0);
 		if (!bna_debugfs_root) {
-			netdev_warn(bnad->netdev,
-				    "debugfs root dir creation failed\n");
+			pr_warn("BNA: debugfs root dir creation failed\n");
 			return;
 		}
 	}
@@ -521,8 +536,8 @@ bnad_debugfs_init(struct bnad *bnad)
 		bnad->port_debugfs_root =
 			debugfs_create_dir(name, bna_debugfs_root);
 		if (!bnad->port_debugfs_root) {
-			netdev_warn(bnad->netdev,
-				    "debugfs root dir creation failed\n");
+			pr_warn("bna pci_dev %s: root dir creation failed\n",
+				pci_name(bnad->pcidev));
 			return;
 		}
 
@@ -537,9 +552,9 @@ bnad_debugfs_init(struct bnad *bnad)
 							bnad,
 							file->fops);
 			if (!bnad->bnad_dentry_files[i]) {
-				netdev_warn(bnad->netdev,
-					    "create %s entry failed\n",
-					    file->name);
+				pr_warn(
+				     "BNA pci_dev:%s: create %s entry failed\n",
+				     pci_name(bnad->pcidev), file->name);
 				return;
 			}
 		}

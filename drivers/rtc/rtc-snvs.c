@@ -1,6 +1,5 @@
 /*
- * Copyright (C) 2011-2016 Freescale Semiconductor, Inc.
- * Copyright 2017 NXP
+ * Copyright (C) 2011-2012 Freescale Semiconductor, Inc.
  *
  * The code contained herein is licensed under the GNU General Public
  * License. You may obtain a copy of the GNU General Public License
@@ -19,7 +18,6 @@
 #include <linux/platform_device.h>
 #include <linux/rtc.h>
 #include <linux/clk.h>
-#include <linux/delay.h>
 #include <linux/mfd/syscon.h>
 #include <linux/regmap.h>
 
@@ -66,12 +64,7 @@ static u32 rtc_read_lp_counter(struct snvs_rtc_data *data)
 		read2 <<= 32;
 		regmap_read(data->regmap, data->offset + SNVS_LPSRTCLR, &val);
 		read2 |= val;
-	/*
-	 * when CPU/BUS are running at low speed, there is chance that
-	 * we never get same value during two consecutive read, so here
-	 * we only compare the second value.
-	 */
-	} while ((read1 >> CNTR_TO_SECS_SH) != (read2 >> CNTR_TO_SECS_SH));
+	} while (read1 != read2);
 
 	/* Convert 47-bit counter to 32-bit raw second count */
 	return (u32) (read1 >> CNTR_TO_SECS_SH);
@@ -145,8 +138,6 @@ static int snvs_rtc_set_time(struct device *dev, struct rtc_time *tm)
 	/* Disable RTC first */
 	snvs_rtc_enable(data, false);
 
-	udelay(50);
-
 	/* Write 32-bit time to 47-bit timer, leaving 15 LSBs blank */
 	regmap_write(data->regmap, data->offset + SNVS_LPSRTCLR, time << CNTR_TO_SECS_SH);
 	regmap_write(data->regmap, data->offset + SNVS_LPSRTCMR, time >> (32 - CNTR_TO_SECS_SH));
@@ -193,7 +184,6 @@ static int snvs_rtc_set_alarm(struct device *dev, struct rtc_wkalrm *alrm)
 	rtc_tm_to_time(alrm_tm, &time);
 
 	regmap_update_bits(data->regmap, data->offset + SNVS_LPCR, SNVS_LPCR_LPTA_EN, 0);
-	rtc_write_sync_lp(data);
 	regmap_write(data->regmap, data->offset + SNVS_LPTAR, time);
 
 	/* Clear alarm interrupt status bit */
@@ -332,7 +322,7 @@ static int snvs_rtc_suspend(struct device *dev)
 	struct snvs_rtc_data *data = dev_get_drvdata(dev);
 
 	if (device_may_wakeup(dev))
-		return enable_irq_wake(data->irq);
+		enable_irq_wake(data->irq);
 
 	return 0;
 }

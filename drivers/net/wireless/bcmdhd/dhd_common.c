@@ -21,7 +21,7 @@
  * software in any way with any other Broadcom software provided under a license
  * other than the GPL, without Broadcom's express prior written consent.
  *
- * $Id: dhd_common.c 662961 2016-11-24 01:22:35Z $
+ * $Id: dhd_common.c 557502 2015-05-19 06:32:03Z $
  */
 #include <typedefs.h>
 #include <osl.h>
@@ -107,16 +107,7 @@ bool ap_fw_loaded = FALSE;
 #define DHD_COMPILED "\nCompiled in " SRCBASE
 #endif /* DHD_DEBUG */
 
-#if defined(DHD_VERSION_NO_DATE_TIME)
-const char dhd_version[] = "Dongle Host Driver, version " EPI_VERSION_STR	DHD_COMPILED;
-#else
-#if defined(DHD_DEBUG)
-const char dhd_version[] = "Dongle Host Driver, version " EPI_VERSION_STR
-	DHD_COMPILED " on " __DATE__ " at " __TIME__;
-#else
 const char dhd_version[] = "\nDongle Host Driver, version " EPI_VERSION_STR "\nCompiled from ";
-#endif 
-#endif /* DHD_VERSION_NO_DATE_TIME */
 
 void dhd_set_timer(void *bus, uint wdtick);
 
@@ -220,8 +211,6 @@ dhd_dump(dhd_pub_t *dhdp, char *buf, int buflen)
 
 	struct bcmstrbuf b;
 	struct bcmstrbuf *strbuf = &b;
-	if (!dhdp || !dhdp->prot || !buf)
-		return BCME_ERROR;
 
 	bcm_binit(strbuf, buf, buflen);
 
@@ -542,7 +531,9 @@ dhd_doiovar(dhd_pub_t *dhd_pub, const bcm_iovar_t *vi, uint32 actionid, const ch
 #ifdef BCMDHDUSB
 		int_val = BUS_TYPE_USB;
 #endif
+#ifdef BCMSDIO
 		int_val = BUS_TYPE_SDIO;
+#endif
 #ifdef PCIE_FULL_DONGLE
 		int_val = BUS_TYPE_PCIE;
 #endif
@@ -1411,6 +1402,7 @@ wl_show_host_event(dhd_pub_t *dhd_pub, wl_event_msg_t *event, void *event_data,
 		DHD_EVENT(("MACEVENT: %s, MAC %s\n", event_name, eabuf));
 		break;
 
+
 	case WLC_E_CCA_CHAN_QUAL:
 		if (datalen) {
 			buf = (uchar *) event_data;
@@ -1419,12 +1411,7 @@ wl_show_host_event(dhd_pub_t *dhd_pub, wl_event_msg_t *event, void *event_data,
 				(int)reason, (int)auth_type, *(buf + 4)));
 		}
 		break;
-	case WLC_E_PKT_FILTER:
-		if (status == WLC_E_PKT_FILTER_TIMEOUT)
-			DHD_EVENT(("MACEVENT: %s, Timeout(Pkt Filter Id=%d)\n", event_name, reason));
-		else
-			DHD_EVENT(("MACEVENT: %s, status %d reason %d\n", event_name, status, reason));
-		break;
+
 
 	default:
 		DHD_EVENT(("MACEVENT: %s %d, MAC %s, status %d, reason %d, auth %d\n",
@@ -1444,23 +1431,8 @@ wl_show_host_event(dhd_pub_t *dhd_pub, wl_event_msg_t *event, void *event_data,
 }
 #endif /* SHOW_EVENTS */
 
-/* Check whether packet is a BRCM event pkt. If it is, record event data. */
 int
-wl_host_event_get_data(void *pktdata, uint pktlen, wl_event_msg_t *evt)
-{
-	int ret;
-
-	ret = is_wlc_event_frame(pktdata, pktlen, 0, evt);
-	if (ret != BCME_OK) {
-		DHD_ERROR(("%s: Invalid event frame, err = %d\n",
-			__FUNCTION__, ret));
-	}
-
-	return ret;
-}
-
-int
-wl_host_event(dhd_pub_t *dhd_pub, int *ifidx, void *pktdata, uint16 pktlen,
+wl_host_event(dhd_pub_t *dhd_pub, int *ifidx, void *pktdata,
               wl_event_msg_t *event, void **data_ptr, void *raw_event)
 {
 	/* check whether packet is a BRCM event pkt */
@@ -1468,12 +1440,17 @@ wl_host_event(dhd_pub_t *dhd_pub, int *ifidx, void *pktdata, uint16 pktlen,
 	uint8 *event_data;
 	uint32 type, status, datalen;
 	uint16 flags;
-	uint evlen;
-	int ret;
+	int evlen;
 
-	ret = wl_host_event_get_data(pktdata, pktlen, event);
-	if (ret != BCME_OK) {
-		return ret;
+	if (bcmp(BRCM_OUI, &pvt_data->bcm_hdr.oui[0], DOT11_OUI_LEN)) {
+		DHD_ERROR(("%s: mismatched OUI, bailing\n", __FUNCTION__));
+		return (BCME_ERROR);
+	}
+
+	/* BRCM event pkt may be unaligned - use xxx_ua to load user_subtype. */
+	if (ntoh16_ua((void *)&pvt_data->bcm_hdr.usr_subtype) != BCMILCP_BCM_SUBTYPE_EVENT) {
+		DHD_ERROR(("%s: mismatched subtype, bailing\n", __FUNCTION__));
+		return (BCME_ERROR);
 	}
 
 	*data_ptr = &pvt_data[1];
@@ -1486,14 +1463,7 @@ wl_host_event(dhd_pub_t *dhd_pub, int *ifidx, void *pktdata, uint16 pktlen,
 	flags = ntoh16_ua((void *)&event->flags);
 	status = ntoh32_ua((void *)&event->status);
 	datalen = ntoh32_ua((void *)&event->datalen);
-
-	if (datalen > pktlen)
-		return (BCME_ERROR);
-
 	evlen = datalen + sizeof(bcm_event_t);
-
-	if (evlen > pktlen)
-		return (BCME_ERROR);
 
 	switch (type) {
 #ifdef DHD_DEBUG
@@ -2240,7 +2210,7 @@ dhd_sendup_event_common(dhd_pub_t *dhdp, wl_event_msg_t *event, void *data)
 /*
  * returns = TRUE if associated, FALSE if not associated
  */
-bool dhd_is_associated(dhd_pub_t *dhd, uint8 ifidx, int *retval)
+bool dhd_is_associated(dhd_pub_t *dhd, void *bss_buf, int *retval)
 {
 	char bssid[6], zbuf[6];
 	int ret = -1;
@@ -2248,8 +2218,7 @@ bool dhd_is_associated(dhd_pub_t *dhd, uint8 ifidx, int *retval)
 	bzero(bssid, 6);
 	bzero(zbuf, 6);
 
-	ret  = dhd_wl_ioctl_cmd(dhd, WLC_GET_BSSID, (char *)&bssid,
-		ETHER_ADDR_LEN, FALSE, ifidx);
+	ret  = dhd_wl_ioctl_cmd(dhd, WLC_GET_BSSID, (char *)&bssid, ETHER_ADDR_LEN, FALSE, 0);
 	DHD_TRACE((" %s WLC_GET_BSSID ioctl res = %d\n", __FUNCTION__, ret));
 
 	if (ret == BCME_NOTASSOCIATED) {
@@ -2262,11 +2231,18 @@ bool dhd_is_associated(dhd_pub_t *dhd, uint8 ifidx, int *retval)
 	if (ret < 0)
 		return FALSE;
 
-	if ((memcmp(bssid, zbuf, ETHER_ADDR_LEN) == 0)) {
+	if ((memcmp(bssid, zbuf, ETHER_ADDR_LEN) != 0)) {
+		/*  STA is assocoated BSSID is non zero */
+
+		if (bss_buf) {
+			/* return bss if caller provided buf */
+			memcpy(bss_buf, bssid, ETHER_ADDR_LEN);
+		}
+		return TRUE;
+	} else {
 		DHD_TRACE(("%s: WLC_GET_BSSID ioctl returned zero bssid\n", __FUNCTION__));
 		return FALSE;
 	}
-	return TRUE;
 }
 
 
@@ -2280,7 +2256,7 @@ dhd_get_suspend_bcn_li_dtim(dhd_pub_t *dhd)
 	int ap_beacon = 0;
 	int allowed_skip_dtim_cnt = 0;
 	/* Check if associated */
-	if (dhd_is_associated(dhd, 0, NULL) == FALSE) {
+	if (dhd_is_associated(dhd, NULL, NULL) == FALSE) {
 		DHD_TRACE(("%s NOT assoc ret %d\n", __FUNCTION__, ret));
 		goto exit;
 	}

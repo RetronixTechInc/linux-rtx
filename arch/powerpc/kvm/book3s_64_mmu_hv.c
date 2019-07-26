@@ -32,7 +32,7 @@
 #include <asm/tlbflush.h>
 #include <asm/kvm_ppc.h>
 #include <asm/kvm_book3s.h>
-#include <asm/book3s/64/mmu-hash.h>
+#include <asm/mmu-hash64.h>
 #include <asm/hvcall.h>
 #include <asm/synch.h>
 #include <asm/ppc-opcode.h>
@@ -70,8 +70,7 @@ long kvmppc_alloc_hpt(struct kvm *kvm, u32 *htab_orderp)
 	}
 
 	/* Lastly try successively smaller sizes from the page allocator */
-	/* Only do this if userspace didn't specify a size via ioctl */
-	while (!hpt && order > PPC_MIN_HPT_ORDER && !htab_orderp) {
+	while (!hpt && order > PPC_MIN_HPT_ORDER) {
 		hpt = __get_free_pages(GFP_KERNEL|__GFP_ZERO|__GFP_REPEAT|
 				       __GFP_NOWARN, order - PAGE_SHIFT);
 		if (!hpt)
@@ -447,7 +446,7 @@ int kvmppc_book3s_hv_page_fault(struct kvm_run *run, struct kvm_vcpu *vcpu,
 	struct revmap_entry *rev;
 	struct page *page, *pages[1];
 	long index, ret, npages;
-	bool is_ci;
+	unsigned long is_io;
 	unsigned int writing, write_ok;
 	struct vm_area_struct *vma;
 	unsigned long rcbits;
@@ -503,7 +502,7 @@ int kvmppc_book3s_hv_page_fault(struct kvm_run *run, struct kvm_vcpu *vcpu,
 	smp_rmb();
 
 	ret = -EFAULT;
-	is_ci = false;
+	is_io = 0;
 	pfn = 0;
 	page = NULL;
 	pte_size = PAGE_SIZE;
@@ -521,7 +520,7 @@ int kvmppc_book3s_hv_page_fault(struct kvm_run *run, struct kvm_vcpu *vcpu,
 			pfn = vma->vm_pgoff +
 				((hva - vma->vm_start) >> PAGE_SHIFT);
 			pte_size = psize;
-			is_ci = pte_ci(__pte((pgprot_val(vma->vm_page_prot))));
+			is_io = hpte_cache_bits(pgprot_val(vma->vm_page_prot));
 			write_ok = vma->vm_flags & VM_WRITE;
 		}
 		up_read(&current->mm->mmap_sem);
@@ -544,7 +543,7 @@ int kvmppc_book3s_hv_page_fault(struct kvm_run *run, struct kvm_vcpu *vcpu,
 			 */
 			local_irq_save(flags);
 			ptep = find_linux_pte_or_hugepte(current->mm->pgd,
-							 hva, NULL, NULL);
+							 hva, NULL);
 			if (ptep) {
 				pte = kvmppc_read_update_linux_pte(ptep, 1);
 				if (pte_write(pte))
@@ -558,9 +557,10 @@ int kvmppc_book3s_hv_page_fault(struct kvm_run *run, struct kvm_vcpu *vcpu,
 		goto out_put;
 
 	/* Check WIMG vs. the actual page we're accessing */
-	if (!hpte_cache_flags_ok(r, is_ci)) {
-		if (is_ci)
+	if (!hpte_cache_flags_ok(r, is_io)) {
+		if (is_io)
 			goto out_put;
+
 		/*
 		 * Allow guest to map emulated device memory as
 		 * uncacheable, but actually make it cacheable.
@@ -650,7 +650,7 @@ static void kvmppc_rmap_reset(struct kvm *kvm)
 	int srcu_idx;
 
 	srcu_idx = srcu_read_lock(&kvm->srcu);
-	slots = kvm_memslots(kvm);
+	slots = kvm->memslots;
 	kvm_for_each_memslot(memslot, slots) {
 		/*
 		 * This assumes it is acceptable to lose reference and
@@ -761,8 +761,6 @@ static int kvm_unmap_rmapp(struct kvm *kvm, unsigned long *rmapp,
 			/* Harvest R and C */
 			rcbits = be64_to_cpu(hptep[1]) & (HPTE_R_R | HPTE_R_C);
 			*rmapp |= rcbits << KVMPPC_RMAP_RC_SHIFT;
-			if (rcbits & HPTE_R_C)
-				kvmppc_update_rmap_change(rmapp, psize);
 			if (rcbits & ~rev[i].guest_rpte) {
 				rev[i].guest_rpte = ptel | rcbits;
 				note_hpte_modification(kvm, &rev[i]);
@@ -929,12 +927,8 @@ static int kvm_test_clear_dirty_npages(struct kvm *kvm, unsigned long *rmapp)
  retry:
 	lock_rmap(rmapp);
 	if (*rmapp & KVMPPC_RMAP_CHANGED) {
-		long change_order = (*rmapp & KVMPPC_RMAP_CHG_ORDER)
-			>> KVMPPC_RMAP_CHG_SHIFT;
-		*rmapp &= ~(KVMPPC_RMAP_CHANGED | KVMPPC_RMAP_CHG_ORDER);
+		*rmapp &= ~KVMPPC_RMAP_CHANGED;
 		npages_dirty = 1;
-		if (change_order > PAGE_SHIFT)
-			npages_dirty = 1ul << (change_order - PAGE_SHIFT);
 	}
 	if (!(*rmapp & KVMPPC_RMAP_PRESENT)) {
 		unlock_rmap(rmapp);

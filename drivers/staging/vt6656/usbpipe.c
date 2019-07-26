@@ -12,6 +12,10 @@
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
  *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ *
  *
  * File: usbpipe.c
  *
@@ -28,9 +32,8 @@
  *	vnt_control_in_u8 - Read one byte from MEM/BB/MAC/EEPROM
  *
  * Revision History:
- *      04-05-2004 Jerry Chen: Initial release
- *      11-24-2004 Warren Hsu: Add ControlvWriteByte,ControlvReadByte,
- *                             ControlvMaskByte
+ *      04-05-2004 Jerry Chen:  Initial release
+ *      11-24-2004 Warren Hsu: Add ControlvWriteByte,ControlvReadByte,ControlvMaskByte
  *
  */
 
@@ -47,25 +50,15 @@ int vnt_control_out(struct vnt_private *priv, u8 request, u16 value,
 		u16 index, u16 length, u8 *buffer)
 {
 	int status = 0;
-	u8 *usb_buffer;
 
 	if (test_bit(DEVICE_FLAGS_DISCONNECTED, &priv->flags))
 		return STATUS_FAILURE;
 
 	mutex_lock(&priv->usb_lock);
 
-	usb_buffer = kmemdup(buffer, length, GFP_KERNEL);
-	if (!usb_buffer) {
-		mutex_unlock(&priv->usb_lock);
-		return -ENOMEM;
-	}
-
 	status = usb_control_msg(priv->usb,
-				 usb_sndctrlpipe(priv->usb, 0),
-				 request, 0x40, value,
-				 index, usb_buffer, length, USB_CTL_WAIT);
-
-	kfree(usb_buffer);
+		usb_sndctrlpipe(priv->usb, 0), request, 0x40, value,
+			index, buffer, length, USB_CTL_WAIT);
 
 	mutex_unlock(&priv->usb_lock);
 
@@ -85,28 +78,15 @@ int vnt_control_in(struct vnt_private *priv, u8 request, u16 value,
 		u16 index, u16 length, u8 *buffer)
 {
 	int status;
-	u8 *usb_buffer;
 
 	if (test_bit(DEVICE_FLAGS_DISCONNECTED, &priv->flags))
 		return STATUS_FAILURE;
 
 	mutex_lock(&priv->usb_lock);
 
-	usb_buffer = kmalloc(length, GFP_KERNEL);
-	if (!usb_buffer) {
-		mutex_unlock(&priv->usb_lock);
-		return -ENOMEM;
-	}
-
 	status = usb_control_msg(priv->usb,
-				 usb_rcvctrlpipe(priv->usb, 0),
-				 request, 0xc0, value,
-				 index, usb_buffer, length, USB_CTL_WAIT);
-
-	if (status == length)
-		memcpy(buffer, usb_buffer, length);
-
-	kfree(usb_buffer);
+		usb_rcvctrlpipe(priv->usb, 0), request, 0xc0, value,
+			index, buffer, length, USB_CTL_WAIT);
 
 	mutex_unlock(&priv->usb_lock);
 
@@ -125,9 +105,9 @@ void vnt_control_in_u8(struct vnt_private *priv, u8 reg, u8 reg_off, u8 *data)
 static void vnt_start_interrupt_urb_complete(struct urb *urb)
 {
 	struct vnt_private *priv = urb->context;
-	int status = urb->status;
+	int status;
 
-	switch (status) {
+	switch (urb->status) {
 	case 0:
 	case -ETIMEDOUT:
 		break;
@@ -140,7 +120,9 @@ static void vnt_start_interrupt_urb_complete(struct urb *urb)
 		break;
 	}
 
-	if (status) {
+	status = urb->status;
+
+	if (status != STATUS_SUCCESS) {
 		priv->int_buf.in_use = false;
 
 		dev_dbg(&priv->usb->dev, "%s status = %d\n", __func__, status);
@@ -159,7 +141,7 @@ int vnt_start_interrupt_urb(struct vnt_private *priv)
 {
 	int status = STATUS_FAILURE;
 
-	if (priv->int_buf.in_use)
+	if (priv->int_buf.in_use == true)
 		return STATUS_FAILURE;
 
 	priv->int_buf.in_use = true;
@@ -186,6 +168,7 @@ static void vnt_submit_rx_urb_complete(struct urb *urb)
 {
 	struct vnt_rcb *rcb = urb->context;
 	struct vnt_private *priv = rcb->priv;
+	unsigned long flags;
 
 	switch (urb->status) {
 	case 0:
@@ -201,6 +184,8 @@ static void vnt_submit_rx_urb_complete(struct urb *urb)
 	}
 
 	if (urb->actual_length) {
+		spin_lock_irqsave(&priv->lock, flags);
+
 		if (vnt_rx_data(priv, rcb, urb->actual_length)) {
 			rcb->skb = dev_alloc_skb(priv->rx_buf_sz);
 			if (!rcb->skb) {
@@ -208,6 +193,7 @@ static void vnt_submit_rx_urb_complete(struct urb *urb)
 					"Failed to re-alloc rx skb\n");
 
 				rcb->in_use = false;
+				spin_unlock_irqrestore(&priv->lock, flags);
 				return;
 			}
 		} else {
@@ -217,6 +203,8 @@ static void vnt_submit_rx_urb_complete(struct urb *urb)
 
 		urb->transfer_buffer = skb_put(rcb->skb,
 						skb_tailroom(rcb->skb));
+
+		spin_unlock_irqrestore(&priv->lock, flags);
 	}
 
 	if (usb_submit_urb(urb, GFP_ATOMIC)) {
@@ -229,9 +217,10 @@ static void vnt_submit_rx_urb_complete(struct urb *urb)
 int vnt_submit_rx_urb(struct vnt_private *priv, struct vnt_rcb *rcb)
 {
 	int status = 0;
-	struct urb *urb = rcb->urb;
+	struct urb *urb;
 
-	if (!rcb->skb) {
+	urb = rcb->urb;
+	if (rcb->skb == NULL) {
 		dev_dbg(&priv->usb->dev, "rcb->skb is null\n");
 		return status;
 	}
@@ -245,7 +234,7 @@ int vnt_submit_rx_urb(struct vnt_private *priv, struct vnt_rcb *rcb)
 			  rcb);
 
 	status = usb_submit_urb(urb, GFP_ATOMIC);
-	if (status) {
+	if (status != 0) {
 		dev_dbg(&priv->usb->dev, "Submit Rx URB failed %d\n", status);
 		return STATUS_FAILURE;
 	}
@@ -290,12 +279,14 @@ int vnt_tx_context(struct vnt_private *priv,
 		   struct vnt_usb_send_context *context)
 {
 	int status;
-	struct urb *urb = context->urb;
+	struct urb *urb;
 
 	if (test_bit(DEVICE_FLAGS_DISCONNECTED, &priv->flags)) {
 		context->in_use = false;
 		return STATUS_RESOURCES;
 	}
+
+	urb = context->urb;
 
 	usb_fill_bulk_urb(urb,
 			  priv->usb,
@@ -306,7 +297,7 @@ int vnt_tx_context(struct vnt_private *priv,
 			  context);
 
 	status = usb_submit_urb(urb, GFP_ATOMIC);
-	if (status) {
+	if (status != 0) {
 		dev_dbg(&priv->usb->dev, "Submit Tx URB failed %d\n", status);
 
 		context->in_use = false;

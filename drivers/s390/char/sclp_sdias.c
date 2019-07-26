@@ -21,6 +21,7 @@
 #define TRACE(x...) debug_sprintf_event(sdias_dbf, 1, x)
 
 #define SDIAS_RETRIES 300
+#define SDIAS_SLEEP_TICKS 50
 
 static struct debug_info *sdias_dbf;
 
@@ -67,7 +68,7 @@ static int sdias_sclp_send(struct sclp_req *req)
 			/* not initiated, wait some time and retry */
 			set_current_state(TASK_INTERRUPTIBLE);
 			TRACE("add request failed: rc = %i\n",rc);
-			schedule_timeout(msecs_to_jiffies(500));
+			schedule_timeout(SDIAS_SLEEP_TICKS);
 			continue;
 		}
 		/* initiated, wait for completion of service call */

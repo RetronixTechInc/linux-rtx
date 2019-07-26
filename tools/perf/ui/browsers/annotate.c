@@ -1,6 +1,7 @@
 #include "../../util/util.h"
 #include "../browser.h"
 #include "../helpline.h"
+#include "../libslang.h"
 #include "../ui.h"
 #include "../util.h"
 #include "../../util/annotate.h"
@@ -8,27 +9,18 @@
 #include "../../util/sort.h"
 #include "../../util/symbol.h"
 #include "../../util/evsel.h"
-#include "../../util/config.h"
 #include <pthread.h>
 
-struct disasm_line_samples {
-	double		percent;
-	u64		nr;
-};
-
-#define IPC_WIDTH 6
-#define CYCLES_WIDTH 6
-
 struct browser_disasm_line {
-	struct rb_node			rb_node;
-	u32				idx;
-	int				idx_asm;
-	int				jump_sources;
+	struct rb_node	rb_node;
+	u32		idx;
+	int		idx_asm;
+	int		jump_sources;
 	/*
 	 * actual length of this array is saved on the nr_events field
 	 * of the struct annotate_browser
 	 */
-	struct disasm_line_samples	samples[1];
+	double		percent[1];
 };
 
 static struct annotate_browser_opt {
@@ -36,8 +28,7 @@ static struct annotate_browser_opt {
 	     use_offset,
 	     jump_arrows,
 	     show_linenr,
-	     show_nr_jumps,
-	     show_total_period;
+	     show_nr_jumps;
 } annotate_browser__opts = {
 	.use_offset	= true,
 	.jump_arrows	= true,
@@ -56,7 +47,6 @@ struct annotate_browser {
 	int		    max_jump_sources;
 	int		    nr_jumps;
 	bool		    searching_backwards;
-	bool		    have_cycles;
 	u8		    addr_width;
 	u8		    jumps_width;
 	u8		    target_width;
@@ -100,15 +90,6 @@ static int annotate_browser__set_jumps_percent_color(struct annotate_browser *br
 	 return ui_browser__set_color(&browser->b, color);
 }
 
-static int annotate_browser__pcnt_width(struct annotate_browser *ab)
-{
-	int w = 7 * ab->nr_events;
-
-	if (ab->have_cycles)
-		w += IPC_WIDTH + CYCLES_WIDTH;
-	return w;
-}
-
 static void annotate_browser__write(struct ui_browser *browser, void *entry, int row)
 {
 	struct annotate_browser *ab = container_of(browser, struct annotate_browser, b);
@@ -119,46 +100,24 @@ static void annotate_browser__write(struct ui_browser *browser, void *entry, int
 			     (!current_entry || (browser->use_navkeypressed &&
 					         !browser->navkeypressed)));
 	int width = browser->width, printed;
-	int i, pcnt_width = annotate_browser__pcnt_width(ab);
+	int i, pcnt_width = 7 * ab->nr_events;
 	double percent_max = 0.0;
 	char bf[256];
 
 	for (i = 0; i < ab->nr_events; i++) {
-		if (bdl->samples[i].percent > percent_max)
-			percent_max = bdl->samples[i].percent;
+		if (bdl->percent[i] > percent_max)
+			percent_max = bdl->percent[i];
 	}
 
 	if (dl->offset != -1 && percent_max != 0.0) {
-		if (percent_max != 0.0) {
-			for (i = 0; i < ab->nr_events; i++) {
-				ui_browser__set_percent_color(browser,
-							bdl->samples[i].percent,
-							current_entry);
-				if (annotate_browser__opts.show_total_period) {
-					ui_browser__printf(browser, "%6" PRIu64 " ",
-							   bdl->samples[i].nr);
-				} else {
-					ui_browser__printf(browser, "%6.2f ",
-							   bdl->samples[i].percent);
-				}
-			}
-		} else {
-			ui_browser__write_nstring(browser, " ", 7 * ab->nr_events);
+		for (i = 0; i < ab->nr_events; i++) {
+			ui_browser__set_percent_color(browser, bdl->percent[i],
+						      current_entry);
+			slsmg_printf("%6.2f ", bdl->percent[i]);
 		}
 	} else {
 		ui_browser__set_percent_color(browser, 0, current_entry);
-		ui_browser__write_nstring(browser, " ", 7 * ab->nr_events);
-	}
-	if (ab->have_cycles) {
-		if (dl->ipc)
-			ui_browser__printf(browser, "%*.2f ", IPC_WIDTH - 1, dl->ipc);
-		else
-			ui_browser__write_nstring(browser, " ", IPC_WIDTH);
-		if (dl->cycles)
-			ui_browser__printf(browser, "%*" PRIu64 " ",
-					   CYCLES_WIDTH - 1, dl->cycles);
-		else
-			ui_browser__write_nstring(browser, " ", CYCLES_WIDTH);
+		slsmg_write_nstring(" ", pcnt_width);
 	}
 
 	SLsmg_write_char(' ');
@@ -168,7 +127,7 @@ static void annotate_browser__write(struct ui_browser *browser, void *entry, int
 		width += 1;
 
 	if (!*dl->line)
-		ui_browser__write_nstring(browser, " ", width - pcnt_width);
+		slsmg_write_nstring(" ", width - pcnt_width);
 	else if (dl->offset == -1) {
 		if (dl->line_nr && annotate_browser__opts.show_linenr)
 			printed = scnprintf(bf, sizeof(bf), "%-*d ",
@@ -176,8 +135,8 @@ static void annotate_browser__write(struct ui_browser *browser, void *entry, int
 		else
 			printed = scnprintf(bf, sizeof(bf), "%*s  ",
 				    ab->addr_width, " ");
-		ui_browser__write_nstring(browser, bf, printed);
-		ui_browser__write_nstring(browser, dl->line, width - printed - pcnt_width + 1);
+		slsmg_write_nstring(bf, printed);
+		slsmg_write_nstring(dl->line, width - printed - pcnt_width + 1);
 	} else {
 		u64 addr = dl->offset;
 		int color = -1;
@@ -196,7 +155,7 @@ static void annotate_browser__write(struct ui_browser *browser, void *entry, int
 							    bdl->jump_sources);
 					prev = annotate_browser__set_jumps_percent_color(ab, bdl->jump_sources,
 											 current_entry);
-					ui_browser__write_nstring(browser, bf, printed);
+					slsmg_write_nstring(bf, printed);
 					ui_browser__set_color(browser, prev);
 				}
 
@@ -210,7 +169,7 @@ static void annotate_browser__write(struct ui_browser *browser, void *entry, int
 
 		if (change_color)
 			color = ui_browser__set_color(browser, HE_COLORSET_ADDR);
-		ui_browser__write_nstring(browser, bf, printed);
+		slsmg_write_nstring(bf, printed);
 		if (change_color)
 			ui_browser__set_color(browser, color);
 		if (dl->ins && dl->ins->ops->scnprintf) {
@@ -223,18 +182,20 @@ static void annotate_browser__write(struct ui_browser *browser, void *entry, int
 			} else if (ins__is_call(dl->ins)) {
 				ui_browser__write_graph(browser, SLSMG_RARROW_CHAR);
 				SLsmg_write_char(' ');
-			} else if (ins__is_ret(dl->ins)) {
-				ui_browser__write_graph(browser, SLSMG_LARROW_CHAR);
-				SLsmg_write_char(' ');
 			} else {
-				ui_browser__write_nstring(browser, " ", 2);
+				slsmg_write_nstring(" ", 2);
 			}
 		} else {
-			ui_browser__write_nstring(browser, " ", 2);
+			if (strcmp(dl->name, "retq")) {
+				slsmg_write_nstring(" ", 2);
+			} else {
+				ui_browser__write_graph(browser, SLSMG_LARROW_CHAR);
+				SLsmg_write_char(' ');
+			}
 		}
 
 		disasm_line__scnprintf(dl, bf, sizeof(bf), !annotate_browser__opts.use_offset);
-		ui_browser__write_nstring(browser, bf, width - pcnt_width - 3 - printed);
+		slsmg_write_nstring(bf, width - pcnt_width - 3 - printed);
 	}
 
 	if (current_entry)
@@ -259,7 +220,7 @@ static void annotate_browser__draw_current_jump(struct ui_browser *browser)
 	unsigned int from, to;
 	struct map_symbol *ms = ab->b.priv;
 	struct symbol *sym = ms->sym;
-	u8 pcnt_width = annotate_browser__pcnt_width(ab);
+	u8 pcnt_width = 7;
 
 	/* PLT symbols contain external offsets */
 	if (strstr(sym->name, "@plt"))
@@ -283,7 +244,9 @@ static void annotate_browser__draw_current_jump(struct ui_browser *browser)
 		to = (u64)btarget->idx;
 	}
 
-	ui_browser__set_color(browser, HE_COLORSET_JUMP_ARROWS);
+	pcnt_width *= ab->nr_events;
+
+	ui_browser__set_color(browser, HE_COLORSET_CODE);
 	__ui_browser__line_arrow(browser, pcnt_width + 2 + ab->addr_width,
 				 from, to);
 }
@@ -292,7 +255,9 @@ static unsigned int annotate_browser__refresh(struct ui_browser *browser)
 {
 	struct annotate_browser *ab = container_of(browser, struct annotate_browser, b);
 	int ret = ui_browser__list_head_refresh(browser);
-	int pcnt_width = annotate_browser__pcnt_width(ab);
+	int pcnt_width;
+
+	pcnt_width = 7 * ab->nr_events;
 
 	if (annotate_browser__opts.jump_arrows)
 		annotate_browser__draw_current_jump(browser);
@@ -308,9 +273,9 @@ static int disasm__cmp(struct browser_disasm_line *a,
 	int i;
 
 	for (i = 0; i < nr_pcnt; i++) {
-		if (a->samples[i].percent == b->samples[i].percent)
+		if (a->percent[i] == b->percent[i])
 			continue;
-		return a->samples[i].percent < b->samples[i].percent;
+		return a->percent[i] < b->percent[i];
 	}
 	return 0;
 }
@@ -401,20 +366,17 @@ static void annotate_browser__calc_percent(struct annotate_browser *browser,
 		next = disasm__get_next_ip_line(&notes->src->source, pos);
 
 		for (i = 0; i < browser->nr_events; i++) {
-			u64 nr_samples;
-
-			bpos->samples[i].percent = disasm__calc_percent(notes,
+			bpos->percent[i] = disasm__calc_percent(notes,
 						evsel->idx + i,
 						pos->offset,
 						next ? next->offset : len,
-						&path, &nr_samples);
-			bpos->samples[i].nr = nr_samples;
+					        &path);
 
-			if (max_percent < bpos->samples[i].percent)
-				max_percent = bpos->samples[i].percent;
+			if (max_percent < bpos->percent[i])
+				max_percent = bpos->percent[i];
 		}
 
-		if (max_percent < 0.01 && pos->ipc == 0) {
+		if (max_percent < 0.01) {
 			RB_CLEAR_NODE(&bpos->rb_node);
 			continue;
 		}
@@ -495,7 +457,7 @@ static bool annotate_browser__callq(struct annotate_browser *browser,
 	if (!ins__is_call(dl->ins))
 		return false;
 
-	if (map_groups__find_ams(&target) ||
+	if (map_groups__find_ams(&target, NULL) ||
 	    map__rip_2objdump(target.map, target.map->map_ip(target.map,
 							     target.addr)) !=
 	    dl->ops.target.addr) {
@@ -754,11 +716,11 @@ static int annotate_browser__run(struct annotate_browser *browser,
 				nd = browser->curr_hot;
 			break;
 		case K_UNTAB:
-			if (nd != NULL) {
+			if (nd != NULL)
 				nd = rb_next(nd);
 				if (nd == NULL)
 					nd = rb_first(&browser->entries);
-			} else
+			else
 				nd = browser->curr_hot;
 			break;
 		case K_F1:
@@ -767,15 +729,14 @@ static int annotate_browser__run(struct annotate_browser *browser,
 		"UP/DOWN/PGUP\n"
 		"PGDN/SPACE    Navigate\n"
 		"q/ESC/CTRL+C  Exit\n\n"
-		"ENTER         Go to target\n"
-		"ESC           Exit\n"
+		"->            Go to target\n"
+		"<-            Exit\n"
 		"H             Cycle thru hottest instructions\n"
 		"j             Toggle showing jump to target arrows\n"
 		"J             Toggle showing number of jump sources on targets\n"
 		"n             Search next string\n"
 		"o             Toggle disassembler output/simplified view\n"
 		"s             Toggle source code view\n"
-		"t             Toggle total period view\n"
 		"/             Search string\n"
 		"k             Toggle line numbers\n"
 		"r             Run available scripts\n"
@@ -841,20 +802,15 @@ show_help:
 				ui_helpline__puts("Huh? No selection. Report to linux-kernel@vger.kernel.org");
 			else if (browser->selection->offset == -1)
 				ui_helpline__puts("Actions are only available for assembly lines.");
-			else if (!browser->selection->ins)
-				goto show_sup_ins;
-			else if (ins__is_ret(browser->selection->ins))
+			else if (!browser->selection->ins) {
+				if (strcmp(browser->selection->name, "retq"))
+					goto show_sup_ins;
 				goto out;
-			else if (!(annotate_browser__jump(browser) ||
+			} else if (!(annotate_browser__jump(browser) ||
 				     annotate_browser__callq(browser, evsel, hbt))) {
 show_sup_ins:
-				ui_helpline__puts("Actions are only available for function call/return & jump/branch instructions.");
+				ui_helpline__puts("Actions are only available for 'callq', 'retq' & jump instructions.");
 			}
-			continue;
-		case 't':
-			annotate_browser__opts.show_total_period =
-			  !annotate_browser__opts.show_total_period;
-			annotate_browser__update_addr_width(browser);
 			continue;
 		case K_LEFT:
 		case K_ESC:
@@ -876,90 +832,13 @@ out:
 int map_symbol__tui_annotate(struct map_symbol *ms, struct perf_evsel *evsel,
 			     struct hist_browser_timer *hbt)
 {
-	/* Set default value for show_total_period.  */
-	annotate_browser__opts.show_total_period =
-	  symbol_conf.show_total_period;
-
 	return symbol__tui_annotate(ms->sym, ms->map, evsel, hbt);
 }
 
 int hist_entry__tui_annotate(struct hist_entry *he, struct perf_evsel *evsel,
 			     struct hist_browser_timer *hbt)
 {
-	/* reset abort key so that it can get Ctrl-C as a key */
-	SLang_reset_tty();
-	SLang_init_tty(0, 0, 0);
-
 	return map_symbol__tui_annotate(&he->ms, evsel, hbt);
-}
-
-
-static unsigned count_insn(struct annotate_browser *browser, u64 start, u64 end)
-{
-	unsigned n_insn = 0;
-	u64 offset;
-
-	for (offset = start; offset <= end; offset++) {
-		if (browser->offsets[offset])
-			n_insn++;
-	}
-	return n_insn;
-}
-
-static void count_and_fill(struct annotate_browser *browser, u64 start, u64 end,
-			   struct cyc_hist *ch)
-{
-	unsigned n_insn;
-	u64 offset;
-
-	n_insn = count_insn(browser, start, end);
-	if (n_insn && ch->num && ch->cycles) {
-		float ipc = n_insn / ((double)ch->cycles / (double)ch->num);
-
-		/* Hide data when there are too many overlaps. */
-		if (ch->reset >= 0x7fff || ch->reset >= ch->num / 2)
-			return;
-
-		for (offset = start; offset <= end; offset++) {
-			struct disasm_line *dl = browser->offsets[offset];
-
-			if (dl)
-				dl->ipc = ipc;
-		}
-	}
-}
-
-/*
- * This should probably be in util/annotate.c to share with the tty
- * annotate, but right now we need the per byte offsets arrays,
- * which are only here.
- */
-static void annotate__compute_ipc(struct annotate_browser *browser, size_t size,
-			   struct symbol *sym)
-{
-	u64 offset;
-	struct annotation *notes = symbol__annotation(sym);
-
-	if (!notes->src || !notes->src->cycles_hist)
-		return;
-
-	pthread_mutex_lock(&notes->lock);
-	for (offset = 0; offset < size; ++offset) {
-		struct cyc_hist *ch;
-
-		ch = &notes->src->cycles_hist[offset];
-		if (ch && ch->cycles) {
-			struct disasm_line *dl;
-
-			if (ch->have_start)
-				count_and_fill(browser, ch->start, offset, ch);
-			dl = browser->offsets[offset];
-			if (dl && ch->num_aggr)
-				dl->cycles = ch->cycles_aggr / ch->num_aggr;
-			browser->have_cycles = true;
-		}
-	}
-	pthread_mutex_unlock(&notes->lock);
 }
 
 static void annotate_browser__mark_jump_targets(struct annotate_browser *browser,
@@ -1026,7 +905,7 @@ int symbol__tui_annotate(struct symbol *sym, struct map *map,
 			.use_navkeypressed = true,
 		},
 	};
-	int ret = -1, err;
+	int ret = -1;
 	int nr_pcnt = 1;
 	size_t sizeof_bdl = sizeof(struct browser_disasm_line);
 
@@ -1046,19 +925,15 @@ int symbol__tui_annotate(struct symbol *sym, struct map *map,
 
 	if (perf_evsel__is_group_event(evsel)) {
 		nr_pcnt = evsel->nr_members;
-		sizeof_bdl += sizeof(struct disasm_line_samples) *
-		  (nr_pcnt - 1);
+		sizeof_bdl += sizeof(double) * (nr_pcnt - 1);
 	}
 
-	err = symbol__disassemble(sym, map, sizeof_bdl);
-	if (err) {
-		char msg[BUFSIZ];
-		symbol__strerror_disassemble(sym, map, err, msg, sizeof(msg));
-		ui__error("Couldn't annotate %s:\n%s", sym->name, msg);
+	if (symbol__annotate(sym, map, sizeof_bdl) < 0) {
+		ui__error("%s", ui_helpline__last_msg);
 		goto out_free_offsets;
 	}
 
-	ui_helpline__push("Press ESC to exit");
+	ui_helpline__push("Press <- or ESC to exit");
 
 	notes = symbol__annotation(sym);
 	browser.start = map__rip_2objdump(map, sym->start);
@@ -1087,7 +962,6 @@ int symbol__tui_annotate(struct symbol *sym, struct map *map,
 	}
 
 	annotate_browser__mark_jump_targets(&browser, size);
-	annotate__compute_ipc(&browser, size, sym);
 
 	browser.addr_width = browser.target_width = browser.min_addr_width = hex_width(size);
 	browser.max_addr_width = hex_width(sym->end);
@@ -1127,7 +1001,6 @@ static struct annotate_config {
 	ANNOTATE_CFG(jump_arrows),
 	ANNOTATE_CFG(show_linenr),
 	ANNOTATE_CFG(show_nr_jumps),
-	ANNOTATE_CFG(show_total_period),
 	ANNOTATE_CFG(use_offset),
 };
 
@@ -1154,9 +1027,9 @@ static int annotate__config(const char *var, const char *value,
 		      sizeof(struct annotate_config), annotate_config__cmp);
 
 	if (cfg == NULL)
-		ui__warning("%s variable unknown, ignoring...", var);
-	else
-		*cfg->value = perf_config_bool(name, value);
+		return -1;
+
+	*cfg->value = perf_config_bool(name, value);
 	return 0;
 }
 

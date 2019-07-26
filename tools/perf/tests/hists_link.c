@@ -64,7 +64,7 @@ static int add_hist_entries(struct perf_evlist *evlist, struct machine *machine)
 	struct perf_evsel *evsel;
 	struct addr_location al;
 	struct hist_entry *he;
-	struct perf_sample sample = { .period = 1, .weight = 1, };
+	struct perf_sample sample = { .period = 1, };
 	size_t i = 0, k;
 
 	/*
@@ -72,24 +72,27 @@ static int add_hist_entries(struct perf_evlist *evlist, struct machine *machine)
 	 * However the second evsel also has a collapsed entry for
 	 * "bash [libc] malloc" so total 9 entries will be in the tree.
 	 */
-	evlist__for_each_entry(evlist, evsel) {
+	evlist__for_each(evlist, evsel) {
 		struct hists *hists = evsel__hists(evsel);
 
 		for (k = 0; k < ARRAY_SIZE(fake_common_samples); k++) {
-			sample.cpumode = PERF_RECORD_MISC_USER;
+			const union perf_event event = {
+				.header = {
+					.misc = PERF_RECORD_MISC_USER,
+				},
+			};
+
 			sample.pid = fake_common_samples[k].pid;
 			sample.tid = fake_common_samples[k].pid;
 			sample.ip = fake_common_samples[k].ip;
-
-			if (machine__resolve(machine, &al, &sample) < 0)
+			if (perf_event__preprocess_sample(&event, machine, &al,
+							  &sample) < 0)
 				goto out;
 
-			he = hists__add_entry(hists, &al, NULL,
-						NULL, NULL, &sample, true);
-			if (he == NULL) {
-				addr_location__put(&al);
+			he = __hists__add_entry(hists, &al, NULL,
+						NULL, NULL, 1, 1, 0, true);
+			if (he == NULL)
 				goto out;
-			}
 
 			fake_common_samples[k].thread = al.thread;
 			fake_common_samples[k].map = al.map;
@@ -97,18 +100,23 @@ static int add_hist_entries(struct perf_evlist *evlist, struct machine *machine)
 		}
 
 		for (k = 0; k < ARRAY_SIZE(fake_samples[i]); k++) {
+			const union perf_event event = {
+				.header = {
+					.misc = PERF_RECORD_MISC_USER,
+				},
+			};
+
 			sample.pid = fake_samples[i][k].pid;
 			sample.tid = fake_samples[i][k].pid;
 			sample.ip = fake_samples[i][k].ip;
-			if (machine__resolve(machine, &al, &sample) < 0)
+			if (perf_event__preprocess_sample(&event, machine, &al,
+							  &sample) < 0)
 				goto out;
 
-			he = hists__add_entry(hists, &al, NULL,
-						NULL, NULL, &sample, true);
-			if (he == NULL) {
-				addr_location__put(&al);
+			he = __hists__add_entry(hists, &al, NULL,
+						NULL, NULL, 1, 1, 0, true);
+			if (he == NULL)
 				goto out;
-			}
 
 			fake_samples[i][k].thread = al.thread;
 			fake_samples[i][k].map = al.map;
@@ -145,7 +153,7 @@ static int __validate_match(struct hists *hists)
 	/*
 	 * Only entries from fake_common_samples should have a pair.
 	 */
-	if (hists__has(hists, need_collapse))
+	if (sort__need_collapse)
 		root = &hists->entries_collapsed;
 	else
 		root = hists->entries_in;
@@ -197,7 +205,7 @@ static int __validate_link(struct hists *hists, int idx)
 	 * and some entries will have no pair.  However every entry
 	 * in other hists should have (dummy) pair.
 	 */
-	if (hists__has(hists, need_collapse))
+	if (sort__need_collapse)
 		root = &hists->entries_collapsed;
 	else
 		root = hists->entries_in;
@@ -262,7 +270,7 @@ static int validate_link(struct hists *leader, struct hists *other)
 	return __validate_link(leader, 0) || __validate_link(other, 1);
 }
 
-int test__hists_link(int subtest __maybe_unused)
+int test__hists_link(void)
 {
 	int err = -1;
 	struct hists *hists, *first_hists;
@@ -274,16 +282,15 @@ int test__hists_link(int subtest __maybe_unused)
 	if (evlist == NULL)
                 return -ENOMEM;
 
-	err = parse_events(evlist, "cpu-clock", NULL);
+	err = parse_events(evlist, "cpu-clock");
 	if (err)
 		goto out;
-	err = parse_events(evlist, "task-clock", NULL);
+	err = parse_events(evlist, "task-clock");
 	if (err)
 		goto out;
 
-	err = TEST_FAIL;
 	/* default sort order (comm,dso,sym) will be used */
-	if (setup_sorting(NULL) < 0)
+	if (setup_sorting() < 0)
 		goto out;
 
 	machines__init(&machines);
@@ -301,7 +308,7 @@ int test__hists_link(int subtest __maybe_unused)
 	if (err < 0)
 		goto out;
 
-	evlist__for_each_entry(evlist, evsel) {
+	evlist__for_each(evlist, evsel) {
 		hists = evsel__hists(evsel);
 		hists__collapse_resort(hists, NULL);
 

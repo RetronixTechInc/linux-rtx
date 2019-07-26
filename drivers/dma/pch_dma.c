@@ -11,6 +11,10 @@
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
 #include <linux/dmaengine.h>
@@ -357,13 +361,14 @@ static void pdc_chain_complete(struct pch_dma_chan *pd_chan,
 			       struct pch_dma_desc *desc)
 {
 	struct dma_async_tx_descriptor *txd = &desc->txd;
-	struct dmaengine_desc_callback cb;
+	dma_async_tx_callback callback = txd->callback;
+	void *param = txd->callback_param;
 
-	dmaengine_desc_get_callback(txd, &cb);
 	list_splice_init(&desc->tx_list, &pd_chan->free_list);
 	list_move(&desc->desc_node, &pd_chan->free_list);
 
-	dmaengine_desc_callback_invoke(&cb, NULL);
+	if (callback)
+		callback(param);
 }
 
 static void pdc_complete_all(struct pch_dma_chan *pd_chan)

@@ -9,7 +9,7 @@
  */
 
 #include <linux/clk-provider.h>
-#include <linux/init.h>
+#include <linux/module.h>
 #include <linux/of.h>
 #include <linux/platform_device.h>
 
@@ -69,4 +69,8 @@ static struct platform_driver sun6i_a31_apb0_clk_driver = {
 	},
 	.probe = sun6i_a31_apb0_clk_probe,
 };
-builtin_platform_driver(sun6i_a31_apb0_clk_driver);
+module_platform_driver(sun6i_a31_apb0_clk_driver);
+
+MODULE_AUTHOR("Boris BREZILLON <boris.brezillon@free-electrons.com>");
+MODULE_DESCRIPTION("Allwinner A31 APB0 clock Driver");
+MODULE_LICENSE("GPL v2");

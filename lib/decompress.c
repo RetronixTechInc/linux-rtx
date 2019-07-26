@@ -59,11 +59,8 @@ decompress_fn __init decompress_method(const unsigned char *inbuf, long len,
 {
 	const struct compress_format *cf;
 
-	if (len < 2) {
-		if (name)
-			*name = NULL;
+	if (len < 2)
 		return NULL;	/* Need at least this much... */
-	}
 
 	pr_debug("Compressed data magic: %#.2x %#.2x\n", inbuf[0], inbuf[1]);
 

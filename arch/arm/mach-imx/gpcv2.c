@@ -672,7 +672,7 @@ static int imx_gpcv2_domain_xlate(struct irq_domain *domain,
 				unsigned long *out_hwirq,
 				unsigned int *out_type)
 {
-	if (irq_domain_get_of_node(domain) != controller)
+	if (domain->of_node != controller)
 		return -EINVAL;	/* Shouldn't happen, really... */
 	if (intsize != 3)
 		return -EINVAL;	/* Not GIC compliant */
@@ -688,17 +688,17 @@ static int imx_gpcv2_domain_alloc(struct irq_domain *domain,
 				  unsigned int irq,
 				  unsigned int nr_irqs, void *data)
 {
-	struct irq_fwspec *fwspec = data;
-	struct irq_fwspec parent_fwspec;
+	struct of_phandle_args *args = data;
+	struct of_phandle_args parent_args;
 	irq_hw_number_t hwirq;
 	int i;
 
-	if (fwspec->param_count != 3)
+	if (args->args_count != 3)
 		return -EINVAL;	/* Not GIC compliant */
-	if (fwspec->param[0] != 0)
+	if (args->args[0] != 0)
 		return -EINVAL;	/* No PPI should point to this domain */
 
-	hwirq = fwspec->param[1];
+	hwirq = args->args[1];
 	if (hwirq >= GPC_MAX_IRQS)
 		return -EINVAL;	/* Can't deal with this */
 
@@ -706,14 +706,9 @@ static int imx_gpcv2_domain_alloc(struct irq_domain *domain,
 		irq_domain_set_hwirq_and_chip(domain, irq + i, hwirq + i,
 					      &imx_gpcv2_chip, NULL);
 
-	parent_fwspec.fwnode = domain->parent->fwnode;
-	parent_fwspec.param_count = 3;
-	parent_fwspec.param[0] = 0;
-	parent_fwspec.param[1] = hwirq;
-	parent_fwspec.param[2] = fwspec->param[2];
-
-	return irq_domain_alloc_irqs_parent(domain, irq, nr_irqs,
-					    &parent_fwspec);
+	parent_args = *args;
+	parent_args.np = domain->parent->of_node;
+	return irq_domain_alloc_irqs_parent(domain, irq, nr_irqs, &parent_args);
 }
 
 static struct irq_domain_ops imx_gpcv2_domain_ops = {
@@ -767,12 +762,7 @@ static int imx_mipi_regulator_notify(struct notifier_block *nb,
 	writel_relaxed(val | BIT(2), gpc_base + GPC_PGC_CPU_MAPPING);
 
 	switch (event) {
-	case REGULATOR_EVENT_AFT_DO_ENABLE:
-		/*
-		 * For imx7d pcie phy, VDD18 turn on time has to wait
-		 * at least 0.1 .s after VDD10 turns on.
-		 */
-		udelay(1);
+	case REGULATOR_EVENT_PRE_DO_ENABLE:
 		val = readl_relaxed(gpc_base + GPC_PU_PGC_SW_PUP_REQ);
 		writel_relaxed(val | BIT(0), gpc_base + GPC_PU_PGC_SW_PUP_REQ);
 		while (readl_relaxed(gpc_base + GPC_PU_PGC_SW_PUP_REQ) & BIT(0))
@@ -786,11 +776,6 @@ static int imx_mipi_regulator_notify(struct notifier_block *nb,
 		while (readl_relaxed(gpc_base + GPC_PU_PGC_SW_PDN_REQ) & BIT(0))
 			;
 		imx_gpcv2_set_m_core_pgc(false, GPC_PGC_MIPI_PHY);
-		/*
-		 * For imx7d pcie phy, VDD18 turn off time has to advance
-		 * at least 0.1 .s before VDD10 turns off.
-		 */
-		udelay(1);
 		break;
 	default:
 		break;
@@ -812,12 +797,7 @@ static int imx_pcie_regulator_notify(struct notifier_block *nb,
 	writel_relaxed(val | BIT(3), gpc_base + GPC_PGC_CPU_MAPPING);
 
 	switch (event) {
-	case REGULATOR_EVENT_AFT_DO_ENABLE:
-		/*
-		 * For imx7d pcie phy, VDD18 turn on time has to wait
-		 * at least 0.1 .s after VDD10 turns on.
-		 */
-		udelay(1);
+	case REGULATOR_EVENT_PRE_DO_ENABLE:
 		val = readl_relaxed(gpc_base + GPC_PU_PGC_SW_PUP_REQ);
 		writel_relaxed(val | BIT(1), gpc_base + GPC_PU_PGC_SW_PUP_REQ);
 		while (readl_relaxed(gpc_base + GPC_PU_PGC_SW_PUP_REQ) & BIT(1))
@@ -831,11 +811,6 @@ static int imx_pcie_regulator_notify(struct notifier_block *nb,
 		while (readl_relaxed(gpc_base + GPC_PU_PGC_SW_PDN_REQ) & BIT(1))
 			;
 		imx_gpcv2_set_m_core_pgc(false, GPC_PGC_PCIE_PHY);
-		/*
-		 * For imx7d pcie phy, VDD18 turn off time has to advance
-		 * at least 0.1 .s before VDD10 turns off.
-		 */
-		udelay(1);
 		break;
 	default:
 		break;
@@ -1032,7 +1007,7 @@ static int imx_gpcv2_probe(struct platform_device *pdev)
 }
 
 static struct of_device_id imx_gpcv2_dt_ids[] = {
-	{ .compatible = "fsl,imx7d-pgc" },
+	{ .compatible = "fsl,imx7d-gpc" },
 	{ }
 };
 

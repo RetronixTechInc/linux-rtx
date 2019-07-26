@@ -12,6 +12,9 @@
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
  *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  *
  * File: device.h
  *
@@ -259,8 +262,8 @@ enum {
 };
 
 /* flags for options */
-#define DEVICE_FLAGS_UNPLUG		0
-#define DEVICE_FLAGS_DISCONNECTED	1
+#define DEVICE_FLAGS_UNPLUG		BIT(0)
+#define DEVICE_FLAGS_DISCONNECTED	BIT(1)
 
 struct vnt_private {
 	/* mac80211 */
@@ -361,7 +364,7 @@ struct vnt_private {
 	/* Power save */
 	u16 current_aid;
 
-	/* Beacon related */
+	/* Beacon releated */
 	u16 seq_counter;
 
 	enum vnt_cmd_state command_state;
@@ -385,8 +388,6 @@ struct vnt_private {
 
 	u8 bb_pre_ed_rssi;
 	u8 bb_pre_ed_index;
-
-	u16 wake_up_count;
 
 	/* command timer */
 	struct delayed_work run_command_work;

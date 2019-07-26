@@ -1,10 +1,7 @@
 ex-y += ex.o
 ex-y += a.o
 ex-y += b.o
-ex-y += b.o
 ex-y += empty/
-ex-y += empty2/
-ex-y += inc.o
 
 libex-y += c.o
 libex-y += d.o

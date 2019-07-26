@@ -88,11 +88,11 @@
 
 
 struct vip_buffer {
-	struct vb2_v4l2_buffer vb;
+	struct vb2_buffer	vb;
 	struct list_head	list;
 	dma_addr_t		dma;
 };
-static inline struct vip_buffer *to_vip_buffer(struct vb2_v4l2_buffer *vb2)
+static inline struct vip_buffer *to_vip_buffer(struct vb2_buffer *vb2)
 {
 	return container_of(vb2, struct vip_buffer, vb);
 }
@@ -111,6 +111,7 @@ static inline struct vip_buffer *to_vip_buffer(struct vb2_v4l2_buffer *vb2)
  * @input: input line for video signal ( 0 or 1 )
  * @disabled: Device is in power down state
  * @slock: for excluse acces of registers
+ * @alloc_ctx: context for videobuf2
  * @vb_vidq: queue maintained by videobuf2 layer
  * @buffer_list: list of buffer in use
  * @sequence: sequence number of acquired buffer
@@ -140,6 +141,7 @@ struct sta2x11_vip {
 	int disabled;
 	spinlock_t slock;
 
+	struct vb2_alloc_ctx *alloc_ctx;
 	struct vb2_queue vb_vidq;
 	struct list_head buffer_list;
 	unsigned int sequence;
@@ -263,9 +265,9 @@ static void vip_active_buf_next(struct sta2x11_vip *vip)
 
 
 /* Videobuf2 Operations */
-static int queue_setup(struct vb2_queue *vq,
+static int queue_setup(struct vb2_queue *vq, const struct v4l2_format *fmt,
 		       unsigned int *nbuffers, unsigned int *nplanes,
-		       unsigned int sizes[], struct device *alloc_devs[])
+		       unsigned int sizes[], void *alloc_ctxs[])
 {
 	struct sta2x11_vip *vip = vb2_get_drv_priv(vq);
 
@@ -274,6 +276,7 @@ static int queue_setup(struct vb2_queue *vq,
 
 	*nplanes = 1;
 	sizes[0] = vip->format.sizeimage;
+	alloc_ctxs[0] = vip->alloc_ctx;
 
 	vip->sequence = 0;
 	vip->active = NULL;
@@ -284,8 +287,7 @@ static int queue_setup(struct vb2_queue *vq,
 };
 static int buffer_init(struct vb2_buffer *vb)
 {
-	struct vb2_v4l2_buffer *vbuf = to_vb2_v4l2_buffer(vb);
-	struct vip_buffer *vip_buf = to_vip_buffer(vbuf);
+	struct vip_buffer *vip_buf = to_vip_buffer(vb);
 
 	vip_buf->dma = vb2_dma_contig_plane_dma_addr(vb, 0);
 	INIT_LIST_HEAD(&vip_buf->list);
@@ -294,9 +296,8 @@ static int buffer_init(struct vb2_buffer *vb)
 
 static int buffer_prepare(struct vb2_buffer *vb)
 {
-	struct vb2_v4l2_buffer *vbuf = to_vb2_v4l2_buffer(vb);
 	struct sta2x11_vip *vip = vb2_get_drv_priv(vb->vb2_queue);
-	struct vip_buffer *vip_buf = to_vip_buffer(vbuf);
+	struct vip_buffer *vip_buf = to_vip_buffer(vb);
 	unsigned long size;
 
 	size = vip->format.sizeimage;
@@ -306,15 +307,14 @@ static int buffer_prepare(struct vb2_buffer *vb)
 		return -EINVAL;
 	}
 
-	vb2_set_plane_payload(&vip_buf->vb.vb2_buf, 0, size);
+	vb2_set_plane_payload(&vip_buf->vb, 0, size);
 
 	return 0;
 }
 static void buffer_queue(struct vb2_buffer *vb)
 {
-	struct vb2_v4l2_buffer *vbuf = to_vb2_v4l2_buffer(vb);
 	struct sta2x11_vip *vip = vb2_get_drv_priv(vb->vb2_queue);
-	struct vip_buffer *vip_buf = to_vip_buffer(vbuf);
+	struct vip_buffer *vip_buf = to_vip_buffer(vb);
 
 	spin_lock(&vip->lock);
 	list_add_tail(&vip_buf->list, &vip->buffer_list);
@@ -329,9 +329,8 @@ static void buffer_queue(struct vb2_buffer *vb)
 }
 static void buffer_finish(struct vb2_buffer *vb)
 {
-	struct vb2_v4l2_buffer *vbuf = to_vb2_v4l2_buffer(vb);
 	struct sta2x11_vip *vip = vb2_get_drv_priv(vb->vb2_queue);
-	struct vip_buffer *vip_buf = to_vip_buffer(vbuf);
+	struct vip_buffer *vip_buf = to_vip_buffer(vb);
 
 	/* Buffer handled, remove it from the list */
 	spin_lock(&vip->lock);
@@ -371,7 +370,7 @@ static void stop_streaming(struct vb2_queue *vq)
 	/* Release all active buffers */
 	spin_lock(&vip->lock);
 	list_for_each_entry_safe(vip_buf, node, &vip->buffer_list, list) {
-		vb2_buffer_done(&vip_buf->vb.vb2_buf, VB2_BUF_STATE_ERROR);
+		vb2_buffer_done(&vip_buf->vb, VB2_BUF_STATE_ERROR);
 		list_del(&vip_buf->list);
 	}
 	spin_unlock(&vip->lock);
@@ -441,19 +440,27 @@ static int vidioc_querycap(struct file *file, void *priv,
 static int vidioc_s_std(struct file *file, void *priv, v4l2_std_id std)
 {
 	struct sta2x11_vip *vip = video_drvdata(file);
+	v4l2_std_id oldstd = vip->std, newstd;
+	int status;
 
-	/*
-	 * This is here for backwards compatibility only.
-	 * The use of V4L2_STD_ALL to trigger a querystd is non-standard.
-	 */
-	if (std == V4L2_STD_ALL) {
-		v4l2_subdev_call(vip->decoder, video, querystd, &std);
-		if (std == V4L2_STD_UNKNOWN)
+	if (V4L2_STD_ALL == std) {
+		v4l2_subdev_call(vip->decoder, video, s_std, std);
+		ssleep(2);
+		v4l2_subdev_call(vip->decoder, video, querystd, &newstd);
+		v4l2_subdev_call(vip->decoder, video, g_input_status, &status);
+		if (status & V4L2_IN_ST_NO_SIGNAL)
 			return -EIO;
+		std = vip->std = newstd;
+		if (oldstd != std) {
+			if (V4L2_STD_525_60 & std)
+				vip->format = formats_60[0];
+			else
+				vip->format = formats_50[0];
+		}
+		return 0;
 	}
 
-	if (vip->std != std) {
-		vip->std = std;
+	if (oldstd != std) {
 		if (V4L2_STD_525_60 & std)
 			vip->format = formats_60[0];
 		else
@@ -806,9 +813,9 @@ static irqreturn_t vip_irq(int irq, struct sta2x11_vip *vip)
 		/* Disable acquisition */
 		reg_write(vip, DVP_CTL, reg_read(vip, DVP_CTL) & ~DVP_CTL_ENA);
 		/* Remove the active buffer from the list */
-		vip->active->vb.vb2_buf.timestamp = ktime_get_ns();
-		vip->active->vb.sequence = vip->sequence++;
-		vb2_buffer_done(&vip->active->vb.vb2_buf, VB2_BUF_STATE_DONE);
+		do_gettimeofday(&vip->active->vb.v4l2_buf.timestamp);
+		vip->active->vb.v4l2_buf.sequence = vip->sequence++;
+		vb2_buffer_done(&vip->active->vb, VB2_BUF_STATE_DONE);
 	}
 
 	return IRQ_HANDLED;
@@ -857,16 +864,25 @@ static int sta2x11_vip_init_buffer(struct sta2x11_vip *vip)
 	vip->vb_vidq.buf_struct_size = sizeof(struct vip_buffer);
 	vip->vb_vidq.ops = &vip_video_qops;
 	vip->vb_vidq.mem_ops = &vb2_dma_contig_memops;
-	vip->vb_vidq.timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_MONOTONIC;
-	vip->vb_vidq.dev = &vip->pdev->dev;
 	err = vb2_queue_init(&vip->vb_vidq);
 	if (err)
 		return err;
 	INIT_LIST_HEAD(&vip->buffer_list);
 	spin_lock_init(&vip->lock);
+
+
+	vip->alloc_ctx = vb2_dma_contig_init_ctx(&vip->pdev->dev);
+	if (IS_ERR(vip->alloc_ctx)) {
+		v4l2_err(&vip->v4l2_dev, "Can't allocate buffer context");
+		return PTR_ERR(vip->alloc_ctx);
+	}
+
 	return 0;
 }
-
+static void sta2x11_vip_release_buffer(struct sta2x11_vip *vip)
+{
+	vb2_dma_contig_cleanup_ctx(vip->alloc_ctx);
+}
 static int sta2x11_vip_init_controls(struct sta2x11_vip *vip)
 {
 	/*
@@ -1107,6 +1123,7 @@ vrelease:
 	video_unregister_device(&vip->video_dev);
 	free_irq(pdev->irq, vip);
 release_buf:
+	sta2x11_vip_release_buffer(vip);
 	pci_disable_msi(pdev);
 unmap:
 	vb2_queue_release(&vip->vb_vidq);

@@ -340,12 +340,9 @@ end:
 }
 
 /* Clock source control for special firmware */
-static enum snd_bebob_clock_type special_clk_types[] = {
-	SND_BEBOB_CLOCK_TYPE_INTERNAL,	/* With digital mute */
-	SND_BEBOB_CLOCK_TYPE_EXTERNAL,	/* SPDIF/ADAT */
-	SND_BEBOB_CLOCK_TYPE_EXTERNAL,	/* Word Clock */
-	SND_BEBOB_CLOCK_TYPE_INTERNAL,
-};
+static const char *const special_clk_labels[] = {
+	SND_BEBOB_CLOCK_INTERNAL " with Digital Mute", "Digital",
+	"Word Clock", SND_BEBOB_CLOCK_INTERNAL};
 static int special_clk_get(struct snd_bebob *bebob, unsigned int *id)
 {
 	struct special_params *params = bebob->maudio_special_quirk;
@@ -355,13 +352,7 @@ static int special_clk_get(struct snd_bebob *bebob, unsigned int *id)
 static int special_clk_ctl_info(struct snd_kcontrol *kctl,
 				struct snd_ctl_elem_info *einf)
 {
-	static const char *const special_clk_labels[] = {
-		"Internal with Digital Mute",
-		"Digital",
-		"Word Clock",
-		"Internal"
-	};
-	return snd_ctl_enum_info(einf, 1, ARRAY_SIZE(special_clk_types),
+	return snd_ctl_enum_info(einf, 1, ARRAY_SIZE(special_clk_labels),
 				 special_clk_labels);
 }
 static int special_clk_ctl_get(struct snd_kcontrol *kctl,
@@ -380,7 +371,7 @@ static int special_clk_ctl_put(struct snd_kcontrol *kctl,
 	int err, id;
 
 	id = uval->value.enumerated.item[0];
-	if (id >= ARRAY_SIZE(special_clk_types))
+	if (id >= ARRAY_SIZE(special_clk_labels))
 		return -EINVAL;
 
 	mutex_lock(&bebob->mutex);
@@ -628,7 +619,7 @@ static const char *const special_meter_labels[] = {
 static int
 special_meter_get(struct snd_bebob *bebob, u32 *target, unsigned int size)
 {
-	__be16 *buf;
+	u16 *buf;
 	unsigned int i, c, channels;
 	int err;
 
@@ -687,7 +678,7 @@ static const char *const nrv10_meter_labels[] = {
 static int
 normal_meter_get(struct snd_bebob *bebob, u32 *buf, unsigned int size)
 {
-	const struct snd_bebob_meter_spec *spec = bebob->spec->meter;
+	struct snd_bebob_meter_spec *spec = bebob->spec->meter;
 	unsigned int c, channels;
 	int err;
 
@@ -712,85 +703,85 @@ end:
 }
 
 /* for special customized devices */
-static const struct snd_bebob_rate_spec special_rate_spec = {
+static struct snd_bebob_rate_spec special_rate_spec = {
 	.get	= &special_get_rate,
 	.set	= &special_set_rate,
 };
-static const struct snd_bebob_clock_spec special_clk_spec = {
-	.num	= ARRAY_SIZE(special_clk_types),
-	.types	= special_clk_types,
+static struct snd_bebob_clock_spec special_clk_spec = {
+	.num	= ARRAY_SIZE(special_clk_labels),
+	.labels	= special_clk_labels,
 	.get	= &special_clk_get,
 };
-static const struct snd_bebob_meter_spec special_meter_spec = {
+static struct snd_bebob_meter_spec special_meter_spec = {
 	.num	= ARRAY_SIZE(special_meter_labels),
 	.labels	= special_meter_labels,
 	.get	= &special_meter_get
 };
-const struct snd_bebob_spec maudio_special_spec = {
+struct snd_bebob_spec maudio_special_spec = {
 	.clock	= &special_clk_spec,
 	.rate	= &special_rate_spec,
 	.meter	= &special_meter_spec
 };
 
 /* Firewire 410 specification */
-static const struct snd_bebob_rate_spec usual_rate_spec = {
+static struct snd_bebob_rate_spec usual_rate_spec = {
 	.get	= &snd_bebob_stream_get_rate,
 	.set	= &snd_bebob_stream_set_rate,
 };
-static const struct snd_bebob_meter_spec fw410_meter_spec = {
+static struct snd_bebob_meter_spec fw410_meter_spec = {
 	.num	= ARRAY_SIZE(fw410_meter_labels),
 	.labels	= fw410_meter_labels,
 	.get	= &normal_meter_get
 };
-const struct snd_bebob_spec maudio_fw410_spec = {
+struct snd_bebob_spec maudio_fw410_spec = {
 	.clock	= NULL,
 	.rate	= &usual_rate_spec,
 	.meter	= &fw410_meter_spec
 };
 
 /* Firewire Audiophile specification */
-static const struct snd_bebob_meter_spec audiophile_meter_spec = {
+static struct snd_bebob_meter_spec audiophile_meter_spec = {
 	.num	= ARRAY_SIZE(audiophile_meter_labels),
 	.labels	= audiophile_meter_labels,
 	.get	= &normal_meter_get
 };
-const struct snd_bebob_spec maudio_audiophile_spec = {
+struct snd_bebob_spec maudio_audiophile_spec = {
 	.clock	= NULL,
 	.rate	= &usual_rate_spec,
 	.meter	= &audiophile_meter_spec
 };
 
 /* Firewire Solo specification */
-static const struct snd_bebob_meter_spec solo_meter_spec = {
+static struct snd_bebob_meter_spec solo_meter_spec = {
 	.num	= ARRAY_SIZE(solo_meter_labels),
 	.labels	= solo_meter_labels,
 	.get	= &normal_meter_get
 };
-const struct snd_bebob_spec maudio_solo_spec = {
+struct snd_bebob_spec maudio_solo_spec = {
 	.clock	= NULL,
 	.rate	= &usual_rate_spec,
 	.meter	= &solo_meter_spec
 };
 
 /* Ozonic specification */
-static const struct snd_bebob_meter_spec ozonic_meter_spec = {
+static struct snd_bebob_meter_spec ozonic_meter_spec = {
 	.num	= ARRAY_SIZE(ozonic_meter_labels),
 	.labels	= ozonic_meter_labels,
 	.get	= &normal_meter_get
 };
-const struct snd_bebob_spec maudio_ozonic_spec = {
+struct snd_bebob_spec maudio_ozonic_spec = {
 	.clock	= NULL,
 	.rate	= &usual_rate_spec,
 	.meter	= &ozonic_meter_spec
 };
 
 /* NRV10 specification */
-static const struct snd_bebob_meter_spec nrv10_meter_spec = {
+static struct snd_bebob_meter_spec nrv10_meter_spec = {
 	.num	= ARRAY_SIZE(nrv10_meter_labels),
 	.labels	= nrv10_meter_labels,
 	.get	= &normal_meter_get
 };
-const struct snd_bebob_spec maudio_nrv10_spec = {
+struct snd_bebob_spec maudio_nrv10_spec = {
 	.clock	= NULL,
 	.rate	= &usual_rate_spec,
 	.meter	= &nrv10_meter_spec

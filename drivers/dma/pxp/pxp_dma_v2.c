@@ -1,6 +1,5 @@
 /*
- * Copyright (C) 2010-2016 Freescale Semiconductor, Inc.
- * Copyright 2017 NXP
+ * Copyright (C) 2010-2015 Freescale Semiconductor, Inc.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -215,29 +214,28 @@ static void dump_pxp_reg(struct pxps *pxp)
 
 static bool is_yuv(u32 pix_fmt)
 {
-	switch (pix_fmt) {
-		case PXP_PIX_FMT_YUYV:
-		case PXP_PIX_FMT_UYVY:
-		case PXP_PIX_FMT_YVYU:
-		case PXP_PIX_FMT_VYUY:
-		case PXP_PIX_FMT_Y41P:
-		case PXP_PIX_FMT_VUY444:
-		case PXP_PIX_FMT_NV12:
-		case PXP_PIX_FMT_NV21:
-		case PXP_PIX_FMT_NV16:
-		case PXP_PIX_FMT_NV61:
-		case PXP_PIX_FMT_GREY:
-		case PXP_PIX_FMT_GY04:
-		case PXP_PIX_FMT_YVU410P:
-		case PXP_PIX_FMT_YUV410P:
-		case PXP_PIX_FMT_YVU420P:
-		case PXP_PIX_FMT_YUV420P:
-		case PXP_PIX_FMT_YUV420P2:
-		case PXP_PIX_FMT_YVU422P:
-		case PXP_PIX_FMT_YUV422P:
-			return true;
-		default:
-			return false;
+	if ((pix_fmt == PXP_PIX_FMT_YUYV) |
+	    (pix_fmt == PXP_PIX_FMT_UYVY) |
+	    (pix_fmt == PXP_PIX_FMT_YVYU) |
+	    (pix_fmt == PXP_PIX_FMT_VYUY) |
+	    (pix_fmt == PXP_PIX_FMT_Y41P) |
+	    (pix_fmt == PXP_PIX_FMT_VUY444) |
+	    (pix_fmt == PXP_PIX_FMT_NV12) |
+	    (pix_fmt == PXP_PIX_FMT_NV21) |
+	    (pix_fmt == PXP_PIX_FMT_NV16) |
+	    (pix_fmt == PXP_PIX_FMT_NV61) |
+	    (pix_fmt == PXP_PIX_FMT_GREY) |
+	    (pix_fmt == PXP_PIX_FMT_GY04) |
+	    (pix_fmt == PXP_PIX_FMT_YVU410P) |
+	    (pix_fmt == PXP_PIX_FMT_YUV410P) |
+	    (pix_fmt == PXP_PIX_FMT_YVU420P) |
+	    (pix_fmt == PXP_PIX_FMT_YUV420P) |
+	    (pix_fmt == PXP_PIX_FMT_YUV420P2) |
+	    (pix_fmt == PXP_PIX_FMT_YVU422P) |
+	    (pix_fmt == PXP_PIX_FMT_YUV422P)) {
+		return true;
+	} else {
+		return false;
 	}
 }
 
@@ -264,7 +262,7 @@ static void pxp_set_ctrl(struct pxps *pxp)
 
 	/* Configure S0 input format */
 	switch (pxp_conf->s0_param.pixel_fmt) {
-	case PXP_PIX_FMT_XRGB32:
+	case PXP_PIX_FMT_RGB32:
 		fmt_ctrl = BV_PXP_PS_CTRL_FORMAT__RGB888;
 		break;
 	case PXP_PIX_FMT_RGB565:
@@ -326,7 +324,7 @@ static void pxp_set_ctrl(struct pxps *pxp)
 
 	/* Configure output format based on out_channel format */
 	switch (pxp_conf->out_param.pixel_fmt) {
-	case PXP_PIX_FMT_XRGB32:
+	case PXP_PIX_FMT_RGB32:
 		fmt_ctrl = BV_PXP_OUT_CTRL_FORMAT__RGB888;
 		break;
 	case PXP_PIX_FMT_BGRA32:
@@ -433,7 +431,7 @@ static void pxp_set_outbuf(struct pxps *pxp)
 		__raw_writel(out_params->stride * 3,
 				pxp->base + HW_PXP_OUT_PITCH);
 	} else if (out_params->pixel_fmt == PXP_PIX_FMT_BGRA32 ||
-		out_params->pixel_fmt == PXP_PIX_FMT_XRGB32) {
+		out_params->pixel_fmt == PXP_PIX_FMT_RGB32) {
 		__raw_writel(out_params->stride << 2,
 				pxp->base + HW_PXP_OUT_PITCH);
 	} else if ((out_params->pixel_fmt == PXP_PIX_FMT_RGB565) ||
@@ -525,7 +523,7 @@ static void pxp_set_oln(int layer_no, struct pxps *pxp)
 	}
 
 	if ((olparams_data->pixel_fmt == PXP_PIX_FMT_BGRA32) ||
-		 (olparams_data->pixel_fmt == PXP_PIX_FMT_XRGB32)) {
+		 (olparams_data->pixel_fmt == PXP_PIX_FMT_RGB32)) {
 		__raw_writel(pitch << 2,
 				pxp->base + HW_PXP_AS_PITCH);
 	} else if ((olparams_data->pixel_fmt == PXP_PIX_FMT_RGB565) ||
@@ -544,7 +542,7 @@ static void pxp_set_olparam(int layer_no, struct pxps *pxp)
 	u32 olparam;
 
 	olparam = BF_PXP_AS_CTRL_ALPHA(olparams_data->global_alpha);
-	if (olparams_data->pixel_fmt == PXP_PIX_FMT_XRGB32) {
+	if (olparams_data->pixel_fmt == PXP_PIX_FMT_RGB32) {
 		olparam |=
 		    BF_PXP_AS_CTRL_FORMAT(BV_PXP_AS_CTRL_FORMAT__RGB888);
 	} else if (olparams_data->pixel_fmt == PXP_PIX_FMT_BGRA32) {
@@ -661,12 +659,6 @@ static int pxp_set_scaling(struct pxps *pxp)
 	struct pxp_layer_param *out_params = &pxp_conf->out_param;
 
 	proc_data->scaling = 1;
-
-	if (!proc_data->drect.width || !proc_data->drect.height) {
-		pr_err("Invalid drect width and height passed in\n");
-		return -EINVAL;
-	}
-
 	decx = proc_data->srect.width / proc_data->drect.width;
 	decy = proc_data->srect.height / proc_data->drect.height;
 	if (decx > 1) {
@@ -981,7 +973,7 @@ static void pxp_set_s0buf(struct pxps *pxp)
 	if ((s0_params->pixel_fmt == PXP_PIX_FMT_RGB565) ||
 		(s0_params->pixel_fmt == PXP_PIX_FMT_RGB555))
 		bpp = 2;
-	else if (s0_params->pixel_fmt == PXP_PIX_FMT_XRGB32)
+	else if (s0_params->pixel_fmt == PXP_PIX_FMT_RGB32)
 		bpp = 4;
 	offset = (proc_data->srect.top * s0_params->width +
 		 proc_data->srect.left) * bpp;
@@ -1041,7 +1033,7 @@ static void pxp_set_s0buf(struct pxps *pxp)
 	else if (s0_params->pixel_fmt == PXP_PIX_FMT_GY04)
 		__raw_writel(pitch >> 1,
 				pxp->base + HW_PXP_PS_PITCH);
-	else if (s0_params->pixel_fmt == PXP_PIX_FMT_XRGB32 ||
+	else if (s0_params->pixel_fmt == PXP_PIX_FMT_RGB32 ||
 			 s0_params->pixel_fmt == PXP_PIX_FMT_VUY444)
 		__raw_writel(pitch << 2,
 				pxp->base + HW_PXP_PS_PITCH);
@@ -1067,17 +1059,25 @@ static void pxp_set_s0buf(struct pxps *pxp)
  */
 static int pxp_config(struct pxps *pxp, struct pxp_channel *pxp_chan)
 {
+	struct pxp_config_data *pxp_conf_data = &pxp->pxp_conf_state;
+	int ol_nr;
+	int i;
+
 	/* Configure PxP regs */
 	pxp_set_ctrl(pxp);
 	pxp_set_s0param(pxp);
 	pxp_set_s0crop(pxp);
 	pxp_set_scaling(pxp);
+	ol_nr = pxp_conf_data->layer_nr - 2;
+	while (ol_nr > 0) {
+		i = pxp_conf_data->layer_nr - 2 - ol_nr;
+		pxp_set_oln(i, pxp);
+		pxp_set_olparam(i, pxp);
+		/* only the color key in higher overlay will take effect. */
+		pxp_set_olcolorkey(i, pxp);
+		ol_nr--;
+	}
 	pxp_set_s0colorkey(pxp);
-
-	pxp_set_oln(0, pxp);
-	pxp_set_olparam(0, pxp);
-	pxp_set_olcolorkey(0, pxp);
-
 	pxp_set_csc(pxp);
 	pxp_set_bg(pxp);
 	pxp_set_lut(pxp);
@@ -1708,6 +1708,9 @@ static int pxp_probe(struct platform_device *pdev)
 
 	platform_set_drvdata(pdev, pxp);
 	pxp->irq = irq;
+
+	pxp->pxp_ongoing = 0;
+	pxp->lut_state = 0;
 
 	spin_lock_init(&pxp->lock);
 	mutex_init(&pxp->clk_mutex);

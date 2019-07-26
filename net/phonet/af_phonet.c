@@ -97,7 +97,7 @@ static int pn_socket_create(struct net *net, struct socket *sock, int protocol,
 		goto out;
 	}
 
-	sk = sk_alloc(net, PF_PHONET, GFP_KERNEL, pnp->prot, kern);
+	sk = sk_alloc(net, PF_PHONET, GFP_KERNEL, pnp->prot);
 	if (sk == NULL) {
 		err = -ENOMEM;
 		goto out;
@@ -376,10 +376,6 @@ static int phonet_rcv(struct sk_buff *skb, struct net_device *dev,
 	struct phonethdr *ph;
 	struct sockaddr_pn sa;
 	u16 len;
-
-	skb = skb_share_check(skb, GFP_ATOMIC);
-	if (!skb)
-		return NET_RX_DROP;
 
 	/* check we have at least a full Phonet header */
 	if (!pskb_pull(skb, sizeof(struct phonethdr)))

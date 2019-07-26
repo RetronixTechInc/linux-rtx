@@ -1,6 +1,5 @@
 /*
- * Copyright (C) 2011-2016 Freescale Semiconductor, Inc. All Rights Reserved.
- * Copyright 2017 NXP.
+ * Copyright (C) 2011-2015 Freescale Semiconductor, Inc. All Rights Reserved.
  */
 
 /*
@@ -23,11 +22,7 @@
 #define mipi_dbg(fmt, ...)
 #endif
 
-#define	DSI_CMD_BUF_MAXSIZE         (128)
-
-#define DSI_NON_BURST_WITH_SYNC_PULSE  0
-#define DSI_NON_BURST_WITH_SYNC_EVENT  1
-#define DSI_BURST_MODE                 2
+#define	DSI_CMD_BUF_MAXSIZE         (32)
 
 /* DPI interface pixel color coding map */
 enum mipi_dsi_dpi_fmt {
@@ -75,8 +70,6 @@ struct mipi_dsi_info {
 	const struct mipi_dsi_bus_mux	*bus_mux;
 	int				dsi_power_on;
 	int				lcd_inited;
-	int				encoder;
-	int				traffic_mode;
 	u32				dphy_pll_config;
 	int				dev_id;
 	int				disp_id;
@@ -84,7 +77,6 @@ struct mipi_dsi_info {
 	int				irq;
 	struct clk			*dphy_clk;
 	struct clk			*cfg_clk;
-	struct clk			*esc_clk;
 	struct mxc_dispdrv_handle	*disp_mipi;
 	struct  fb_videomode		*mode;
 	struct regulator		*disp_power_on;
@@ -111,11 +103,6 @@ int mipid_hx8369_lcd_setup(struct mipi_dsi_info *);
 void mipid_otm8018b_get_lcd_videomode(struct fb_videomode **mode, int *size,
 		struct mipi_lcd_config **data);
 int mipid_otm8018b_lcd_setup(struct mipi_dsi_info *);
-#endif
-#ifdef CONFIG_FB_MXC_TRULY_PANEL_TFT3P5581E
-void mipid_hx8363_get_lcd_videomode(struct fb_videomode **mode, int *size,
-		struct mipi_lcd_config **data);
-int mipid_hx8363_lcd_setup(struct mipi_dsi_info *);
 #endif
 
 #ifndef CONFIG_FB_MXC_TRULY_WVGA_SYNC_PANEL

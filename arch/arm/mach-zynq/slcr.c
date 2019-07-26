@@ -15,7 +15,6 @@
  */
 
 #include <linux/io.h>
-#include <linux/reboot.h>
 #include <linux/mfd/syscon.h>
 #include <linux/of_address.h>
 #include <linux/regmap.h>
@@ -28,7 +27,6 @@
 #define SLCR_A9_CPU_RST_CTRL_OFFSET	0x244 /* CPU Software Reset Control */
 #define SLCR_REBOOT_STATUS_OFFSET	0x258 /* PS Reboot Status */
 #define SLCR_PSS_IDCODE			0x530 /* PS IDCODE */
-#define SLCR_L2C_RAM			0xA1C /* L2C_RAM in AR#54190 */
 
 #define SLCR_UNLOCK_MAGIC		0xDF0D
 #define SLCR_A9_CPU_CLKSTOP		0x10
@@ -94,19 +92,18 @@ u32 zynq_slcr_get_device_id(void)
 }
 
 /**
- * zynq_slcr_system_restart - Restart the entire system.
- *
- * @nb:		Pointer to restart notifier block (unused)
- * @action:	Reboot mode (unused)
- * @data:	Restart handler private data (unused)
- *
- * Return:	0 always
+ * zynq_slcr_system_reset - Reset the entire system.
  */
-static
-int zynq_slcr_system_restart(struct notifier_block *nb,
-			     unsigned long action, void *data)
+void zynq_slcr_system_reset(void)
 {
 	u32 reboot;
+
+	/*
+	 * Unlock the SLCR then reset the system.
+	 * Note that this seems to require raw i/o
+	 * functions or there's a lockup?
+	 */
+	zynq_slcr_unlock();
 
 	/*
 	 * Clear 0x0F000000 bits of reboot status register to workaround
@@ -116,13 +113,7 @@ int zynq_slcr_system_restart(struct notifier_block *nb,
 	zynq_slcr_read(&reboot, SLCR_REBOOT_STATUS_OFFSET);
 	zynq_slcr_write(reboot & 0xF0FFFFFF, SLCR_REBOOT_STATUS_OFFSET);
 	zynq_slcr_write(1, SLCR_PS_RST_CTRL_OFFSET);
-	return 0;
 }
-
-static struct notifier_block zynq_slcr_restart_nb = {
-	.notifier_call	= zynq_slcr_system_restart,
-	.priority	= 192,
-};
 
 /**
  * zynq_slcr_cpu_start - Start cpu
@@ -227,11 +218,6 @@ int __init zynq_early_slcr_init(void)
 
 	/* unlock the SLCR so that registers can be changed */
 	zynq_slcr_unlock();
-
-	/* See AR#54190 design advisory */
-	regmap_update_bits(zynq_slcr_regmap, SLCR_L2C_RAM, 0x70707, 0x20202);
-
-	register_restart_handler(&zynq_slcr_restart_nb);
 
 	pr_info("%s mapped to %p\n", np->name, zynq_slcr_base);
 

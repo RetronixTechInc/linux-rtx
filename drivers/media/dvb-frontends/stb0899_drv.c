@@ -552,8 +552,7 @@ int stb0899_write_regs(struct stb0899_state *state, unsigned int reg, u8 *data, 
 
 int stb0899_write_reg(struct stb0899_state *state, unsigned int reg, u8 data)
 {
-	u8 tmp = data;
-	return stb0899_write_regs(state, reg, &tmp, 1);
+	return stb0899_write_regs(state, reg, &data, 1);
 }
 
 /*
@@ -793,8 +792,7 @@ static int stb0899_wait_diseqc_txidle(struct stb0899_state *state, int timeout)
 	return 0;
 }
 
-static int stb0899_send_diseqc_burst(struct dvb_frontend *fe,
-				     enum fe_sec_mini_cmd burst)
+static int stb0899_send_diseqc_burst(struct dvb_frontend *fe, fe_sec_mini_cmd_t burst)
 {
 	struct stb0899_state *state = fe->demodulator_priv;
 	u8 reg, old_state;
@@ -1180,8 +1178,7 @@ static int stb0899_read_ber(struct dvb_frontend *fe, u32 *ber)
 	return 0;
 }
 
-static int stb0899_set_voltage(struct dvb_frontend *fe,
-			       enum fe_sec_voltage voltage)
+static int stb0899_set_voltage(struct dvb_frontend *fe, fe_sec_voltage_t voltage)
 {
 	struct stb0899_state *state = fe->demodulator_priv;
 
@@ -1208,7 +1205,7 @@ static int stb0899_set_voltage(struct dvb_frontend *fe,
 	return 0;
 }
 
-static int stb0899_set_tone(struct dvb_frontend *fe, enum fe_sec_tone_mode tone)
+static int stb0899_set_tone(struct dvb_frontend *fe, fe_sec_tone_mode_t tone)
 {
 	struct stb0899_state *state = fe->demodulator_priv;
 	struct stb0899_internal *internal = &state->internal;
@@ -1569,9 +1566,9 @@ static enum dvbfe_search stb0899_search(struct dvb_frontend *fe)
 	return DVBFE_ALGO_SEARCH_ERROR;
 }
 
-static int stb0899_get_frontend(struct dvb_frontend *fe,
-				struct dtv_frontend_properties *p)
+static int stb0899_get_frontend(struct dvb_frontend *fe)
 {
+	struct dtv_frontend_properties *p = &fe->dtv_property_cache;
 	struct stb0899_state *state		= fe->demodulator_priv;
 	struct stb0899_internal *internal	= &state->internal;
 

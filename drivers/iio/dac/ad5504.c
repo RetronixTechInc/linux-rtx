@@ -214,6 +214,7 @@ static struct attribute *ad5504_ev_attributes[] = {
 
 static struct attribute_group ad5504_ev_attribute_group = {
 	.attrs = ad5504_ev_attributes,
+	.name = "events",
 };
 
 static irqreturn_t ad5504_event_handler(int irq, void *private)
@@ -223,7 +224,7 @@ static irqreturn_t ad5504_event_handler(int irq, void *private)
 					    0,
 					    IIO_EV_TYPE_THRESH,
 					    IIO_EV_DIR_RISING),
-		       iio_get_time_ns((struct iio_dev *)private));
+		       iio_get_time_ns());
 
 	return IRQ_HANDLED;
 }
@@ -363,6 +364,7 @@ MODULE_DEVICE_TABLE(spi, ad5504_id);
 static struct spi_driver ad5504_driver = {
 	.driver = {
 		   .name = "ad5504",
+		   .owner = THIS_MODULE,
 		   },
 	.probe = ad5504_probe,
 	.remove = ad5504_remove,

@@ -32,13 +32,11 @@
 
 struct tiadc_device {
 	struct ti_tscadc_dev *mfd_tscadc;
-	struct mutex fifo1_lock; /* to protect fifo access */
 	int channels;
 	u8 channel_line[8];
 	u8 channel_step[8];
 	int buffer_en_ch_steps;
 	u16 data[8];
-	u32 open_delay[8], sample_delay[8], step_avg[8];
 };
 
 static unsigned int tiadc_readl(struct tiadc_device *adc, unsigned int reg)
@@ -87,7 +85,6 @@ static u32 get_adc_step_bit(struct tiadc_device *adc_dev, int chan)
 static void tiadc_step_config(struct iio_dev *indio_dev)
 {
 	struct tiadc_device *adc_dev = iio_priv(indio_dev);
-	struct device *dev = adc_dev->mfd_tscadc->dev;
 	unsigned int stepconfig;
 	int i, steps = 0;
 
@@ -101,47 +98,20 @@ static void tiadc_step_config(struct iio_dev *indio_dev)
 	 * needs to be given to ADC to digitalize data.
 	 */
 
+	if (iio_buffer_enabled(indio_dev))
+		stepconfig = STEPCONFIG_AVG_16 | STEPCONFIG_FIFO1
+					| STEPCONFIG_MODE_SWCNT;
+	else
+		stepconfig = STEPCONFIG_AVG_16 | STEPCONFIG_FIFO1;
 
 	for (i = 0; i < adc_dev->channels; i++) {
 		int chan;
 
 		chan = adc_dev->channel_line[i];
-
-		if (adc_dev->step_avg[i] > STEPCONFIG_AVG_16) {
-			dev_warn(dev, "chan %d step_avg truncating to %d\n",
-				 chan, STEPCONFIG_AVG_16);
-			adc_dev->step_avg[i] = STEPCONFIG_AVG_16;
-		}
-
-		if (adc_dev->step_avg[i])
-			stepconfig =
-			STEPCONFIG_AVG(ffs(adc_dev->step_avg[i]) - 1) |
-			STEPCONFIG_FIFO1;
-		else
-			stepconfig = STEPCONFIG_FIFO1;
-
-		if (iio_buffer_enabled(indio_dev))
-			stepconfig |= STEPCONFIG_MODE_SWCNT;
-
 		tiadc_writel(adc_dev, REG_STEPCONFIG(steps),
 				stepconfig | STEPCONFIG_INP(chan));
-
-		if (adc_dev->open_delay[i] > STEPDELAY_OPEN_MASK) {
-			dev_warn(dev, "chan %d open delay truncating to 0x3FFFF\n",
-				 chan);
-			adc_dev->open_delay[i] = STEPDELAY_OPEN_MASK;
-		}
-
-		if (adc_dev->sample_delay[i] > 0xFF) {
-			dev_warn(dev, "chan %d sample delay truncating to 0xFF\n",
-				 chan);
-			adc_dev->sample_delay[i] = 0xFF;
-		}
-
 		tiadc_writel(adc_dev, REG_STEPDELAY(steps),
-				STEPDELAY_OPEN(adc_dev->open_delay[i]) |
-				STEPDELAY_SAMPLE(adc_dev->sample_delay[i]));
-
+				STEPCONFIG_OPENDLY);
 		adc_dev->channel_step[i] = steps;
 		steps++;
 	}
@@ -151,9 +121,7 @@ static irqreturn_t tiadc_irq_h(int irq, void *private)
 {
 	struct iio_dev *indio_dev = private;
 	struct tiadc_device *adc_dev = iio_priv(indio_dev);
-	unsigned int status, config, adc_fsm;
-	unsigned short count = 0;
-
+	unsigned int status, config;
 	status = tiadc_readl(adc_dev, REG_IRQSTATUS);
 
 	/*
@@ -167,15 +135,6 @@ static irqreturn_t tiadc_irq_h(int irq, void *private)
 		tiadc_writel(adc_dev, REG_CTRL, config);
 		tiadc_writel(adc_dev, REG_IRQSTATUS, IRQENB_FIFO1OVRRUN
 				| IRQENB_FIFO1UNDRFLW | IRQENB_FIFO1THRES);
-
-		/* wait for idle state.
-		 * ADC needs to finish the current conversion
-		 * before disabling the module
-		 */
-		do {
-			adc_fsm = tiadc_readl(adc_dev, REG_ADCFSM);
-		} while (adc_fsm != 0x10 && count++ < 100);
-
 		tiadc_writel(adc_dev, REG_CTRL, (config | CNTRLREG_TSCSSENB));
 		return IRQ_HANDLED;
 	} else if (status & IRQENB_FIFO1THRES) {
@@ -301,7 +260,7 @@ static int tiadc_iio_buffered_hardware_setup(struct iio_dev *indio_dev,
 		goto error_kfifo_free;
 
 	indio_dev->setup_ops = setup_ops;
-	indio_dev->modes |= INDIO_BUFFER_SOFTWARE;
+	indio_dev->modes |= INDIO_BUFFER_HARDWARE;
 
 	return 0;
 
@@ -338,7 +297,8 @@ static int tiadc_channel_init(struct iio_dev *indio_dev, int channels)
 	int i;
 
 	indio_dev->num_channels = channels;
-	chan_array = kcalloc(channels, sizeof(*chan_array), GFP_KERNEL);
+	chan_array = kcalloc(channels,
+			sizeof(struct iio_chan_spec), GFP_KERNEL);
 	if (chan_array == NULL)
 		return -ENOMEM;
 
@@ -371,7 +331,6 @@ static int tiadc_read_raw(struct iio_dev *indio_dev,
 		int *val, int *val2, long mask)
 {
 	struct tiadc_device *adc_dev = iio_priv(indio_dev);
-	int ret = IIO_VAL_INT;
 	int i, map_val;
 	unsigned int fifo1count, read, stepid;
 	bool found = false;
@@ -385,14 +344,13 @@ static int tiadc_read_raw(struct iio_dev *indio_dev,
 	if (!step_en)
 		return -EINVAL;
 
-	mutex_lock(&adc_dev->fifo1_lock);
 	fifo1count = tiadc_readl(adc_dev, REG_FIFO1CNT);
 	while (fifo1count--)
 		tiadc_readl(adc_dev, REG_FIFO1);
 
 	am335x_tsc_se_set_once(adc_dev->mfd_tscadc, step_en);
 
-	timeout = jiffies + msecs_to_jiffies
+	timeout = jiffies + usecs_to_jiffies
 				(IDLE_TIMEOUT * adc_dev->channels);
 	/* Wait for Fifo threshold interrupt */
 	while (1) {
@@ -402,8 +360,7 @@ static int tiadc_read_raw(struct iio_dev *indio_dev,
 
 		if (time_after(jiffies, timeout)) {
 			am335x_tsc_se_adc_done(adc_dev->mfd_tscadc);
-			ret = -EAGAIN;
-			goto err_unlock;
+			return -EAGAIN;
 		}
 	}
 	map_val = adc_dev->channel_step[chan->scan_index];
@@ -429,11 +386,8 @@ static int tiadc_read_raw(struct iio_dev *indio_dev,
 	am335x_tsc_se_adc_done(adc_dev->mfd_tscadc);
 
 	if (found == false)
-		ret =  -EBUSY;
-
-err_unlock:
-	mutex_unlock(&adc_dev->fifo1_lock);
-	return ret;
+		return -EBUSY;
+	return IIO_VAL_INT;
 }
 
 static const struct iio_info tiadc_info = {
@@ -441,50 +395,24 @@ static const struct iio_info tiadc_info = {
 	.driver_module = THIS_MODULE,
 };
 
-static int tiadc_parse_dt(struct platform_device *pdev,
-			  struct tiadc_device *adc_dev)
-{
-	struct device_node *node = pdev->dev.of_node;
-	struct property *prop;
-	const __be32 *cur;
-	int channels = 0;
-	u32 val;
-
-	of_property_for_each_u32(node, "ti,adc-channels", prop, cur, val) {
-		adc_dev->channel_line[channels] = val;
-
-		/* Set Default values for optional DT parameters */
-		adc_dev->open_delay[channels] = STEPCONFIG_OPENDLY;
-		adc_dev->sample_delay[channels] = STEPCONFIG_SAMPLEDLY;
-		adc_dev->step_avg[channels] = 16;
-
-		channels++;
-	}
-
-	of_property_read_u32_array(node, "ti,chan-step-avg",
-				   adc_dev->step_avg, channels);
-	of_property_read_u32_array(node, "ti,chan-step-opendelay",
-				   adc_dev->open_delay, channels);
-	of_property_read_u32_array(node, "ti,chan-step-sampledelay",
-				   adc_dev->sample_delay, channels);
-
-	adc_dev->channels = channels;
-	return 0;
-}
-
 static int tiadc_probe(struct platform_device *pdev)
 {
 	struct iio_dev		*indio_dev;
 	struct tiadc_device	*adc_dev;
 	struct device_node	*node = pdev->dev.of_node;
+	struct property		*prop;
+	const __be32		*cur;
 	int			err;
+	u32			val;
+	int			channels = 0;
 
 	if (!node) {
 		dev_err(&pdev->dev, "Could not find valid DT data.\n");
 		return -EINVAL;
 	}
 
-	indio_dev = devm_iio_device_alloc(&pdev->dev, sizeof(*adc_dev));
+	indio_dev = devm_iio_device_alloc(&pdev->dev,
+					  sizeof(struct tiadc_device));
 	if (indio_dev == NULL) {
 		dev_err(&pdev->dev, "failed to allocate iio device\n");
 		return -ENOMEM;
@@ -492,7 +420,12 @@ static int tiadc_probe(struct platform_device *pdev)
 	adc_dev = iio_priv(indio_dev);
 
 	adc_dev->mfd_tscadc = ti_tscadc_dev_get(pdev);
-	tiadc_parse_dt(pdev, adc_dev);
+
+	of_property_for_each_u32(node, "ti,adc-channels", prop, cur, val) {
+		adc_dev->channel_line[channels] = val;
+		channels++;
+	}
+	adc_dev->channels = channels;
 
 	indio_dev->dev.parent = &pdev->dev;
 	indio_dev->name = dev_name(&pdev->dev);
@@ -501,7 +434,6 @@ static int tiadc_probe(struct platform_device *pdev)
 
 	tiadc_step_config(indio_dev);
 	tiadc_writel(adc_dev, REG_FIFO1THR, FIFO1_THRESHOLD);
-	mutex_init(&adc_dev->fifo1_lock);
 
 	err = tiadc_channel_init(indio_dev, adc_dev->channels);
 	if (err < 0)
@@ -548,7 +480,8 @@ static int tiadc_remove(struct platform_device *pdev)
 	return 0;
 }
 
-static int __maybe_unused tiadc_suspend(struct device *dev)
+#ifdef CONFIG_PM
+static int tiadc_suspend(struct device *dev)
 {
 	struct iio_dev *indio_dev = dev_get_drvdata(dev);
 	struct tiadc_device *adc_dev = iio_priv(indio_dev);
@@ -566,7 +499,7 @@ static int __maybe_unused tiadc_suspend(struct device *dev)
 	return 0;
 }
 
-static int __maybe_unused tiadc_resume(struct device *dev)
+static int tiadc_resume(struct device *dev)
 {
 	struct iio_dev *indio_dev = dev_get_drvdata(dev);
 	struct tiadc_device *adc_dev = iio_priv(indio_dev);
@@ -583,7 +516,14 @@ static int __maybe_unused tiadc_resume(struct device *dev)
 	return 0;
 }
 
-static SIMPLE_DEV_PM_OPS(tiadc_pm_ops, tiadc_suspend, tiadc_resume);
+static const struct dev_pm_ops tiadc_pm_ops = {
+	.suspend = tiadc_suspend,
+	.resume = tiadc_resume,
+};
+#define TIADC_PM_OPS (&tiadc_pm_ops)
+#else
+#define TIADC_PM_OPS NULL
+#endif
 
 static const struct of_device_id ti_adc_dt_ids[] = {
 	{ .compatible = "ti,am3359-adc", },
@@ -594,7 +534,7 @@ MODULE_DEVICE_TABLE(of, ti_adc_dt_ids);
 static struct platform_driver tiadc_driver = {
 	.driver = {
 		.name   = "TI-am335x-adc",
-		.pm	= &tiadc_pm_ops,
+		.pm	= TIADC_PM_OPS,
 		.of_match_table = ti_adc_dt_ids,
 	},
 	.probe	= tiadc_probe,

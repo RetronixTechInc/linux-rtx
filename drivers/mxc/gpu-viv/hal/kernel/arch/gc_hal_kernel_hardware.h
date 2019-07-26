@@ -2,7 +2,7 @@
 *
 *    The MIT License (MIT)
 *
-*    Copyright (c) 2014 - 2017 Vivante Corporation
+*    Copyright (c) 2014 - 2016 Vivante Corporation
 *
 *    Permission is hereby granted, free of charge, to any person obtaining a
 *    copy of this software and associated documentation files (the "Software"),
@@ -26,7 +26,7 @@
 *
 *    The GPL License (GPL)
 *
-*    Copyright (C) 2014 - 2017 Vivante Corporation
+*    Copyright (C) 2014 - 2016 Vivante Corporation
 *
 *    This program is free software; you can redistribute it and/or
 *    modify it under the terms of the GNU General Public License
@@ -68,8 +68,6 @@ typedef enum {
     gcvHARDWARE_FUNCTION_MMU,
     gcvHARDWARE_FUNCTION_FLUSH,
 
-    /* BLT engine command sequence. */
-    gcvHARDWARE_FUNCTION_BLT_EVENT,
     gcvHARDWARE_FUNCTION_DUMMY_DRAW,
     gcvHARDWARE_FUNCTION_NUM,
 }
@@ -80,9 +78,6 @@ typedef struct _gcsHARWARE_FUNCTION
 {
     /* Entry of the function. */
     gctUINT32                   address;
-
-    /* CPU address of the function. */
-    gctUINT8_PTR                logical;
 
     /* Bytes of the function. */
     gctUINT32                   bytes;
@@ -104,54 +99,6 @@ typedef struct _gcsSTATETIMER
     gctUINT64                   elapse[4];
 }
 gcsSTATETIMER;
-
-typedef struct _gcsHARDWARE_SIGNATURE
-{
-    /* Chip model. */
-    gceCHIPMODEL                chipModel;
-
-    /* Revision value.*/
-    gctUINT32                   chipRevision;
-
-    /* Supported feature fields. */
-    gctUINT32                   chipFeatures;
-
-    /* Supported minor feature fields. */
-    gctUINT32                   chipMinorFeatures;
-
-    /* Supported minor feature 1 fields. */
-    gctUINT32                   chipMinorFeatures1;
-
-    /* Supported minor feature 2 fields. */
-    gctUINT32                   chipMinorFeatures2;
-}
-gcsHARDWARE_SIGNATURE;
-
-typedef struct _gcsMMU_TABLE_ARRAY_ENTRY
-{
-    gctUINT32                   low;
-    gctUINT32                   high;
-}
-gcsMMU_TABLE_ARRAY_ENTRY;
-
-typedef struct _gcsHARDWARE_PAGETABLE_ARRAY
-{
-    /* Number of entries in page table array. */
-    gctUINT                     num;
-
-    /* Size in bytes of array. */
-    gctSIZE_T                   size;
-
-    /* Physical address of array. */
-    gctPHYS_ADDR_T              address;
-
-    /* Memory descriptor. */
-    gctPHYS_ADDR                physical;
-
-    /* Logical address of array. */
-    gctPOINTER                  logical;
-}
-gcsHARDWARE_PAGETABLE_ARRAY;
 
 /* gckHARDWARE object. */
 struct _gckHARDWARE
@@ -177,9 +124,6 @@ struct _gckHARDWARE
 
     /* Big endian */
     gctBOOL                     bigEndian;
-
-    /* Base address. */
-    gctUINT32                   baseAddress;
 
     /* Chip status */
     gctPOINTER                  powerMutex;
@@ -218,93 +162,31 @@ struct _gckHARDWARE
     gctPOINTER                  pageTableDirty;
 
 #if gcdLINK_QUEUE_SIZE
-    struct _gckQUEUE            linkQueue;
+    struct _gckLINKQUEUE        linkQueue;
 #endif
 
     gctBOOL                     powerManagement;
+    gctBOOL                     powerManagementLock;
     gctBOOL                     gpuProfiler;
 
-    gctBOOL                     stallFEPrefetch;
+    gctBOOL                     endAfterFlushMmuCache;
 
     gctUINT32                   minFscaleValue;
-    gctUINT                     waitCount;
 
     gctPOINTER                  pendingEvent;
 
     /* Function used by gckHARDWARE. */
-    gctPHYS_ADDR                mmuFuncPhysical;
-    gctPOINTER                  mmuFuncLogical;
-    gctSIZE_T                   mmuFuncBytes;
-
-    gctPHYS_ADDR                auxFuncPhysical;
-    gctPOINTER                  auxFuncLogical;
-    gctUINT32                   auxFuncAddress;
-    gctSIZE_T                   auxFuncBytes;
+    gctPHYS_ADDR                functionPhysical;
+    gctPOINTER                  functionLogical;
+    gctUINT32                   functionAddress;
+    gctSIZE_T                   functionBytes;
 
     gcsHARDWARE_FUNCTION        functions[gcvHARDWARE_FUNCTION_NUM];
 
     gcsSTATETIMER               powerStateTimer;
     gctUINT32                   executeCount;
     gctUINT32                   lastExecuteAddress;
-
-    /* Head for hardware list in gckMMU. */
-    gcsLISTHEAD                 mmuHead;
-
-    gctPOINTER                  featureDatabase;
-
-    gcsHARDWARE_SIGNATURE       signature;
-
-    gctUINT32                   maxOutstandingReads;
-
-    gcsHARDWARE_PAGETABLE_ARRAY pagetableArray;
-
-    gceSECURE_MODE              secureMode;
-
-    gctUINT64                   contextID;
 };
-
-typedef struct _gcsFEDescriptor
-{
-    gctUINT32                   start;
-    gctUINT32                   end;
-}
-gcsFEDescriptor;
-
-typedef struct _gcsFE *         gckFE;
-typedef struct _gcsFE
-{
-    gckOS                       os;
-
-    /* Number of free descriptors. */
-    gctPOINTER                  freeDscriptors;
-}
-gcsFE;
-
-gceSTATUS
-gckFE_Initialize(
-    IN gckHARDWARE Hardware,
-    OUT gckFE FE
-    );
-
-gceSTATUS
-gckFE_ReserveSlot(
-    IN gckHARDWARE Hardware,
-    IN gckFE FE,
-    OUT gctBOOL * Available
-    );
-
-void
-gckFE_UpdateAvaiable(
-    IN gckHARDWARE Hardware,
-    OUT gckFE FE
-    );
-
-void
-gckFE_Execute(
-    IN gckHARDWARE Hardware,
-    IN gckFE FE,
-    IN gcsFEDescriptor * Desc
-    );
 
 gceSTATUS
 gckHARDWARE_GetBaseAddress(
@@ -326,36 +208,12 @@ gckHARDWARE_GetFrameInfo(
     );
 
 gceSTATUS
-gckHARDWARE_DumpGpuProfile(
-    IN gckHARDWARE Hardware
-    );
-
-gceSTATUS
-gckHARDWARE_HandleFault(
-    IN gckHARDWARE Hardware
-    );
-
-gceSTATUS
-gckHARDWARE_ExecuteFunctions(
-    IN gckHARDWARE Hardware,
-    IN gceHARDWARE_FUNCTION Function
-    );
-
-gceSTATUS
 gckHARDWARE_DummyDraw(
     IN gckHARDWARE Hardware,
     IN gctPOINTER Logical,
     IN gctUINT32 Address,
-    IN gceDUMMY_DRAW_TYPE DummyDrawType,
     IN OUT gctUINT32 * Bytes
     );
-
-#define gcmkWRITE_MEMORY(logical, data) \
-    do { \
-    gcmkVERIFY_OK(gckOS_WriteMemory(os, logical, data)); \
-    logical++; \
-    }\
-    while (0) ; \
 
 #ifdef __cplusplus
 }

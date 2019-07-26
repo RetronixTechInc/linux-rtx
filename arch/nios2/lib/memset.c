@@ -10,6 +10,7 @@
 #include <linux/types.h>
 #include <linux/string.h>
 
+#ifdef __HAVE_ARCH_MEMSET
 void *memset(void *s, int c, size_t count)
 {
 	int destptr, charcnt, dwordcnt, fill8reg, wrkrega;
@@ -68,7 +69,7 @@ void *memset(void *s, int c, size_t count)
 		  "=r" (charcnt),	/* %1  Output */
 		  "=r" (dwordcnt),	/* %2  Output */
 		  "=r" (fill8reg),	/* %3  Output */
-		  "=&r" (wrkrega)	/* %4  Output only */
+		  "=r" (wrkrega)	/* %4  Output */
 		: "r" (c),		/* %5  Input */
 		  "0" (s),		/* %0  Input/Output */
 		  "1" (count)		/* %1  Input/Output */
@@ -77,3 +78,4 @@ void *memset(void *s, int c, size_t count)
 
 	return s;
 }
+#endif /* __HAVE_ARCH_MEMSET */

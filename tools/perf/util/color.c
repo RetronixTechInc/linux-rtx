@@ -1,11 +1,7 @@
 #include <linux/kernel.h>
 #include "cache.h"
-#include "config.h"
-#include <stdlib.h>
-#include <stdio.h>
 #include "color.h"
 #include <math.h>
-#include <unistd.h>
 
 int perf_use_color_default = -1;
 
@@ -28,7 +24,7 @@ int perf_config_colorbool(const char *var, const char *value, int stdout_is_tty)
  auto_color:
 	if (stdout_is_tty < 0)
 		stdout_is_tty = isatty(1);
-	if (stdout_is_tty || pager_in_use()) {
+	if (stdout_is_tty || (pager_in_use() && pager_use_color)) {
 		char *term = getenv("TERM");
 		if (term && strcmp(term, "dumb"))
 			return 1;
@@ -36,15 +32,14 @@ int perf_config_colorbool(const char *var, const char *value, int stdout_is_tty)
 	return 0;
 }
 
-int perf_color_default_config(const char *var, const char *value,
-			      void *cb __maybe_unused)
+int perf_color_default_config(const char *var, const char *value, void *cb)
 {
 	if (!strcmp(var, "color.ui")) {
 		perf_use_color_default = perf_config_colorbool(var, value, -1);
 		return 0;
 	}
 
-	return 0;
+	return perf_default_config(var, value, cb);
 }
 
 static int __color_vsnprintf(char *bf, size_t size, const char *color,
@@ -72,9 +67,8 @@ static int __color_vsnprintf(char *bf, size_t size, const char *color,
 	return r;
 }
 
-/* Colors are not included in return value */
 static int __color_vfprintf(FILE *fp, const char *color, const char *fmt,
-		va_list args)
+		va_list args, const char *trail)
 {
 	int r = 0;
 
@@ -89,10 +83,12 @@ static int __color_vfprintf(FILE *fp, const char *color, const char *fmt,
 	}
 
 	if (perf_use_color_default && *color)
-		fprintf(fp, "%s", color);
+		r += fprintf(fp, "%s", color);
 	r += vfprintf(fp, fmt, args);
 	if (perf_use_color_default && *color)
-		fprintf(fp, "%s", PERF_COLOR_RESET);
+		r += fprintf(fp, "%s", PERF_COLOR_RESET);
+	if (trail)
+		r += fprintf(fp, "%s", trail);
 	return r;
 }
 
@@ -104,7 +100,7 @@ int color_vsnprintf(char *bf, size_t size, const char *color,
 
 int color_vfprintf(FILE *fp, const char *color, const char *fmt, va_list args)
 {
-	return __color_vfprintf(fp, color, fmt, args);
+	return __color_vfprintf(fp, color, fmt, args, NULL);
 }
 
 int color_snprintf(char *bf, size_t size, const char *color,
@@ -126,6 +122,16 @@ int color_fprintf(FILE *fp, const char *color, const char *fmt, ...)
 
 	va_start(args, fmt);
 	r = color_vfprintf(fp, color, fmt, args);
+	va_end(args);
+	return r;
+}
+
+int color_fprintf_ln(FILE *fp, const char *color, const char *fmt, ...)
+{
+	va_list args;
+	int r;
+	va_start(args, fmt);
+	r = __color_vfprintf(fp, color, fmt, args, "\n");
 	va_end(args);
 	return r;
 }

@@ -1,7 +1,7 @@
 /*
  * fsl_asrc.h - Freescale ASRC ALSA SoC header file
  *
- * Copyright (C) 2014-2016 Freescale Semiconductor, Inc.
+ * Copyright (C) 2014-2015 Freescale Semiconductor, Inc.
  *
  * Author: Nicolin Chen <nicoleotsuka@gmail.com>
  *
@@ -28,7 +28,7 @@
 #define ASRC_OUTPUT_LAST_SAMPLE_MAX	32
 #define ASRC_OUTPUT_LAST_SAMPLE		16
 
-#define IDEAL_RATIO_RATE		1000000
+#define IDEAL_RATIO_RATE		200000
 
 #define REG_ASRCTR			0x00
 #define REG_ASRIER			0x04
@@ -135,13 +135,10 @@
 #define ASRCFG_INIRQi			(1 << ASRCFG_INIRQi_SHIFT(i))
 #define ASRCFG_NDPRi_SHIFT(i)		(18 + i)
 #define ASRCFG_NDPRi_MASK(i)		(1 << ASRCFG_NDPRi_SHIFT(i))
-#define ASRCFG_NDPRi_ALL_SHIFT		18
-#define ASRCFG_NDPRi_ALL_MASK		(7 << ASRCFG_NDPRi_ALL_SHIFT)
 #define ASRCFG_NDPRi			(1 << ASRCFG_NDPRi_SHIFT(i))
 #define ASRCFG_POSTMODi_SHIFT(i)	(8 + (i << 2))
 #define ASRCFG_POSTMODi_WIDTH		2
 #define ASRCFG_POSTMODi_MASK(i)		(((1 << ASRCFG_POSTMODi_WIDTH) - 1) << ASRCFG_POSTMODi_SHIFT(i))
-#define ASRCFG_POSTMODi_ALL_MASK	(ASRCFG_POSTMODi_MASK(0) | ASRCFG_POSTMODi_MASK(1) | ASRCFG_POSTMODi_MASK(2))
 #define ASRCFG_POSTMOD(i, v)		((v) << ASRCFG_POSTMODi_SHIFT(i))
 #define ASRCFG_POSTMODi_UP(i)		(0 << ASRCFG_POSTMODi_SHIFT(i))
 #define ASRCFG_POSTMODi_DCON(i)		(1 << ASRCFG_POSTMODi_SHIFT(i))
@@ -149,7 +146,6 @@
 #define ASRCFG_PREMODi_SHIFT(i)		(6 + (i << 2))
 #define ASRCFG_PREMODi_WIDTH		2
 #define ASRCFG_PREMODi_MASK(i)		(((1 << ASRCFG_PREMODi_WIDTH) - 1) << ASRCFG_PREMODi_SHIFT(i))
-#define ASRCFG_PREMODi_ALL_MASK		(ASRCFG_PREMODi_MASK(0) | ASRCFG_PREMODi_MASK(1) | ASRCFG_PREMODi_MASK(2))
 #define ASRCFG_PREMOD(i, v)		((v) << ASRCFG_PREMODi_SHIFT(i))
 #define ASRCFG_PREMODi_UP(i)		(0 << ASRCFG_PREMODi_SHIFT(i))
 #define ASRCFG_PREMODi_DCON(i)		(1 << ASRCFG_PREMODi_SHIFT(i))
@@ -338,16 +334,13 @@ struct fsl_asrc_pair {
  * @paddr: physical address to the base address of registers
  * @mem_clk: clock source to access register
  * @ipg_clk: clock source to drive peripheral
- * @spba_clk: SPBA clock (optional, depending on SoC design)
  * @asrck_clk: clock sources to driver ASRC internal logic
  * @lock: spin lock for resource protection
  * @pair: pair pointers
  * @channel_bits: width of ASRCNCR register for each pair
  * @channel_avail: non-occupied channel numbers
- * @pair_streams:indicat which substream is running
  * @asrc_rate: default sample rate for ASoC Back-Ends
  * @asrc_width: default sample width for ASoC Back-Ends
- * @regcache_cfg: store register value of REG_ASRCFG
  */
 struct fsl_asrc {
 	struct snd_dmaengine_dai_dma_data dma_params_rx;
@@ -357,7 +350,7 @@ struct fsl_asrc {
 	unsigned long paddr;
 	struct clk *mem_clk;
 	struct clk *ipg_clk;
-	struct clk *spba_clk;
+	struct clk *dma_clk;
 	struct clk *asrck_clk[ASRC_CLK_MAX_NUM];
 	spinlock_t lock;
 
@@ -365,7 +358,6 @@ struct fsl_asrc {
 	struct fsl_asrc_pair *pair[ASRC_PAIR_MAX_NUM];
 	unsigned int channel_bits;
 	unsigned int channel_avail;
-	unsigned int pair_streams;
 
 	int asrc_rate;
 	int asrc_width;

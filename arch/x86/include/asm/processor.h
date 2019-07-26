@@ -6,14 +6,14 @@
 /* Forward declaration, a strange C thing */
 struct task_struct;
 struct mm_struct;
-struct vm86;
 
+#include <asm/vm86.h>
 #include <asm/math_emu.h>
 #include <asm/segment.h>
 #include <asm/types.h>
-#include <uapi/asm/sigcontext.h>
+#include <asm/sigcontext.h>
 #include <asm/current.h>
-#include <asm/cpufeatures.h>
+#include <asm/cpufeature.h>
 #include <asm/page.h>
 #include <asm/pgtable_types.h>
 #include <asm/percpu.h>
@@ -21,9 +21,9 @@ struct vm86;
 #include <asm/desc_defs.h>
 #include <asm/nops.h>
 #include <asm/special_insns.h>
-#include <asm/fpu/types.h>
 
 #include <linux/personality.h>
+#include <linux/cpumask.h>
 #include <linux/cache.h>
 #include <linux/threads.h>
 #include <linux/math64.h>
@@ -52,16 +52,11 @@ static inline void *current_text_addr(void)
 	return pc;
 }
 
-/*
- * These alignment constraints are for performance in the vSMP case,
- * but in the task_struct case we must also meet hardware imposed
- * alignment requirements of the FPU state:
- */
 #ifdef CONFIG_X86_VSMP
 # define ARCH_MIN_TASKALIGN		(1 << INTERNODE_CACHE_SHIFT)
 # define ARCH_MIN_MMSTRUCT_ALIGN	(1 << INTERNODE_CACHE_SHIFT)
 #else
-# define ARCH_MIN_TASKALIGN		__alignof__(union fpregs_state)
+# define ARCH_MIN_TASKALIGN		16
 # define ARCH_MIN_MMSTRUCT_ALIGN	0
 #endif
 
@@ -88,7 +83,7 @@ struct cpuinfo_x86 {
 	__u8			x86;		/* CPU family */
 	__u8			x86_vendor;	/* CPU vendor */
 	__u8			x86_model;
-	__u8			x86_stepping;
+	__u8			x86_mask;
 #ifdef CONFIG_X86_32
 	char			wp_works_ok;	/* It doesn't on 386's */
 
@@ -104,7 +99,6 @@ struct cpuinfo_x86 {
 	__u8			x86_phys_bits;
 	/* CPUID returned core id bits: */
 	__u8			x86_coreid_bits;
-	__u8			cu_id;
 	/* Max extended CPUID function supported: */
 	__u32			extended_cpuid_level;
 	/* Maximum supported CPUID level, -1=no CPUID: */
@@ -113,7 +107,7 @@ struct cpuinfo_x86 {
 	char			x86_vendor_id[16];
 	char			x86_model_id[64];
 	/* in KB - valid for CPUS which support this call: */
-	unsigned int		x86_cache_size;
+	int			x86_cache_size;
 	int			x86_cache_alignment;	/* In bytes */
 	/* Cache QoS architectural values: */
 	int			x86_cache_max_rmid;	/* max index */
@@ -129,10 +123,10 @@ struct cpuinfo_x86 {
 	u16			booted_cores;
 	/* Physical processor id: */
 	u16			phys_proc_id;
-	/* Logical processor id: */
-	u16			logical_proc_id;
 	/* Core id: */
 	u16			cpu_core_id;
+	/* Compute unit id */
+	u8			compute_unit_id;
 	/* Index into per_cpu list: */
 	u16			cpu_index;
 	u32			microcode;
@@ -156,8 +150,8 @@ extern struct cpuinfo_x86	boot_cpu_data;
 extern struct cpuinfo_x86	new_cpu_data;
 
 extern struct tss_struct	doublefault_tss;
-extern __u32			cpu_caps_cleared[NCAPINTS + NBUGINTS];
-extern __u32			cpu_caps_set[NCAPINTS + NBUGINTS];
+extern __u32			cpu_caps_cleared[NCAPINTS];
+extern __u32			cpu_caps_set[NCAPINTS];
 
 #ifdef CONFIG_SMP
 DECLARE_PER_CPU_READ_MOSTLY(struct cpuinfo_x86, cpu_info);
@@ -172,6 +166,7 @@ extern const struct seq_operations cpuinfo_op;
 #define cache_line_size()	(boot_cpu_data.x86_cache_alignment)
 
 extern void cpu_detect(struct cpuinfo_x86 *c);
+extern void fpu_detect(struct cpuinfo_x86 *c);
 
 extern void early_cpu_init(void);
 extern void identify_boot_cpu(void);
@@ -298,17 +293,14 @@ struct tss_struct {
 	 */
 	unsigned long		io_bitmap[IO_BITMAP_LONGS + 1];
 
-#ifdef CONFIG_X86_32
 	/*
-	 * Space for the temporary SYSENTER stack.
+	 * Space for the temporary SYSENTER stack:
 	 */
-	unsigned long		SYSENTER_stack_canary;
 	unsigned long		SYSENTER_stack[64];
-#endif
 
 } ____cacheline_aligned;
 
-DECLARE_PER_CPU_SHARED_ALIGNED_USER_MAPPED(struct tss_struct, cpu_tss);
+DECLARE_PER_CPU_SHARED_ALIGNED(struct tss_struct, cpu_tss);
 
 #ifdef CONFIG_X86_32
 DECLARE_PER_CPU(unsigned long, cpu_current_top_of_stack);
@@ -319,6 +311,128 @@ DECLARE_PER_CPU(unsigned long, cpu_current_top_of_stack);
  */
 struct orig_ist {
 	unsigned long		ist[7];
+};
+
+#define	MXCSR_DEFAULT		0x1f80
+
+struct i387_fsave_struct {
+	u32			cwd;	/* FPU Control Word		*/
+	u32			swd;	/* FPU Status Word		*/
+	u32			twd;	/* FPU Tag Word			*/
+	u32			fip;	/* FPU IP Offset		*/
+	u32			fcs;	/* FPU IP Selector		*/
+	u32			foo;	/* FPU Operand Pointer Offset	*/
+	u32			fos;	/* FPU Operand Pointer Selector	*/
+
+	/* 8*10 bytes for each FP-reg = 80 bytes:			*/
+	u32			st_space[20];
+
+	/* Software status information [not touched by FSAVE ]:		*/
+	u32			status;
+};
+
+struct i387_fxsave_struct {
+	u16			cwd; /* Control Word			*/
+	u16			swd; /* Status Word			*/
+	u16			twd; /* Tag Word			*/
+	u16			fop; /* Last Instruction Opcode		*/
+	union {
+		struct {
+			u64	rip; /* Instruction Pointer		*/
+			u64	rdp; /* Data Pointer			*/
+		};
+		struct {
+			u32	fip; /* FPU IP Offset			*/
+			u32	fcs; /* FPU IP Selector			*/
+			u32	foo; /* FPU Operand Offset		*/
+			u32	fos; /* FPU Operand Selector		*/
+		};
+	};
+	u32			mxcsr;		/* MXCSR Register State */
+	u32			mxcsr_mask;	/* MXCSR Mask		*/
+
+	/* 8*16 bytes for each FP-reg = 128 bytes:			*/
+	u32			st_space[32];
+
+	/* 16*16 bytes for each XMM-reg = 256 bytes:			*/
+	u32			xmm_space[64];
+
+	u32			padding[12];
+
+	union {
+		u32		padding1[12];
+		u32		sw_reserved[12];
+	};
+
+} __attribute__((aligned(16)));
+
+struct i387_soft_struct {
+	u32			cwd;
+	u32			swd;
+	u32			twd;
+	u32			fip;
+	u32			fcs;
+	u32			foo;
+	u32			fos;
+	/* 8*10 bytes for each FP-reg = 80 bytes: */
+	u32			st_space[20];
+	u8			ftop;
+	u8			changed;
+	u8			lookahead;
+	u8			no_update;
+	u8			rm;
+	u8			alimit;
+	struct math_emu_info	*info;
+	u32			entry_eip;
+};
+
+struct ymmh_struct {
+	/* 16 * 16 bytes for each YMMH-reg = 256 bytes */
+	u32 ymmh_space[64];
+};
+
+/* We don't support LWP yet: */
+struct lwp_struct {
+	u8 reserved[128];
+};
+
+struct bndreg {
+	u64 lower_bound;
+	u64 upper_bound;
+} __packed;
+
+struct bndcsr {
+	u64 bndcfgu;
+	u64 bndstatus;
+} __packed;
+
+struct xsave_hdr_struct {
+	u64 xstate_bv;
+	u64 xcomp_bv;
+	u64 reserved[6];
+} __attribute__((packed));
+
+struct xsave_struct {
+	struct i387_fxsave_struct i387;
+	struct xsave_hdr_struct xsave_hdr;
+	struct ymmh_struct ymmh;
+	struct lwp_struct lwp;
+	struct bndreg bndreg[4];
+	struct bndcsr bndcsr;
+	/* new processor state extensions will go here */
+} __attribute__ ((packed, aligned (64)));
+
+union thread_xstate {
+	struct i387_fsave_struct	fsave;
+	struct i387_fxsave_struct	fxsave;
+	struct i387_soft_struct		soft;
+	struct xsave_struct		xsave;
+};
+
+struct fpu {
+	unsigned int last_cpu;
+	unsigned int has_fpu;
+	union thread_xstate *state;
 };
 
 #ifdef CONFIG_X86_64
@@ -368,14 +482,11 @@ DECLARE_PER_CPU(struct irq_stack *, hardirq_stack);
 DECLARE_PER_CPU(struct irq_stack *, softirq_stack);
 #endif	/* X86_64 */
 
-extern unsigned int fpu_kernel_xstate_size;
-extern unsigned int fpu_user_xstate_size;
+extern unsigned int xstate_size;
+extern void free_thread_xstate(struct task_struct *);
+extern struct kmem_cache *task_xstate_cachep;
 
 struct perf_event;
-
-typedef struct {
-	unsigned long		seg;
-} mm_segment_t;
 
 struct thread_struct {
 	/* Cached TLS descriptors: */
@@ -390,19 +501,13 @@ struct thread_struct {
 	unsigned short		fsindex;
 	unsigned short		gsindex;
 #endif
-
-#ifdef CONFIG_X86_64
-	unsigned long		fsbase;
-	unsigned long		gsbase;
-#else
-	/*
-	 * XXX: this could presumably be unsigned short.  Alternatively,
-	 * 32-bit kernels could be taught to use fsindex instead.
-	 */
-	unsigned long fs;
-	unsigned long gs;
+#ifdef CONFIG_X86_32
+	unsigned long		ip;
 #endif
-
+#ifdef CONFIG_X86_64
+	unsigned long		fs;
+#endif
+	unsigned long		gs;
 	/* Save middle states of ptrace breakpoints */
 	struct perf_event	*ptrace_bps[HBP_NUM];
 	/* Debug status used for traps, single steps, etc... */
@@ -413,37 +518,33 @@ struct thread_struct {
 	unsigned long		cr2;
 	unsigned long		trap_nr;
 	unsigned long		error_code;
-#ifdef CONFIG_VM86
+	/* floating point and extended processor state */
+	struct fpu		fpu;
+#ifdef CONFIG_X86_32
 	/* Virtual 86 mode info */
-	struct vm86		*vm86;
+	struct vm86_struct __user *vm86_info;
+	unsigned long		screen_bitmap;
+	unsigned long		v86flags;
+	unsigned long		v86mask;
+	unsigned long		saved_sp0;
+	unsigned int		saved_fs;
+	unsigned int		saved_gs;
 #endif
 	/* IO permissions: */
 	unsigned long		*io_bitmap_ptr;
 	unsigned long		iopl;
 	/* Max allowed port in the bitmap, in bytes: */
 	unsigned		io_bitmap_max;
-
-	mm_segment_t		addr_limit;
-
-	unsigned int		sig_on_uaccess_err:1;
-	unsigned int		uaccess_err:1;	/* uaccess failed */
-
-	/* Floating point and extended processor state */
-	struct fpu		fpu;
 	/*
-	 * WARNING: 'fpu' is dynamically-sized.  It *MUST* be at
-	 * the end.
+	 * fpu_counter contains the number of consecutive context switches
+	 * that the FPU is used. If this is over a threshold, the lazy fpu
+	 * saving becomes unlazy to save the trap. This is an unsigned char
+	 * so that after 256 times the counter wraps and the behavior turns
+	 * lazy again; this to deal with bursty apps that only use FPU for
+	 * a short time
 	 */
+	unsigned char fpu_counter;
 };
-
-/*
- * Thread-synchronous status.
- *
- * This is different from the flags in that nobody else
- * ever touches our thread-synchronous status, so we don't
- * have to worry about atomic accesses.
- */
-#define TS_COMPAT		0x0002	/* 32bit syscall active (64BIT)*/
 
 /*
  * Set IOPL bits in EFLAGS from given mask
@@ -498,6 +599,7 @@ static inline unsigned long current_top_of_stack(void)
 #include <asm/paravirt.h>
 #else
 #define __cpuid			native_cpuid
+#define paravirt_enabled()	0
 
 static inline void load_sp0(struct tss_struct *tss,
 			    struct thread_struct *thread)
@@ -507,6 +609,11 @@ static inline void load_sp0(struct tss_struct *tss,
 
 #define set_iopl_mask native_set_iopl_mask
 #endif /* CONFIG_PARAVIRT */
+
+typedef struct {
+	unsigned long		seg;
+} mm_segment_t;
+
 
 /* Free all resources held by a thread. */
 extern void release_thread(struct task_struct *);
@@ -577,12 +684,12 @@ static inline unsigned int cpuid_edx(unsigned int op)
 }
 
 /* REP NOP (PAUSE) is a good thing to insert into busy-wait loops. */
-static __always_inline void rep_nop(void)
+static inline void rep_nop(void)
 {
 	asm volatile("rep; nop" ::: "memory");
 }
 
-static __always_inline void cpu_relax(void)
+static inline void cpu_relax(void)
 {
 	rep_nop();
 }
@@ -594,7 +701,7 @@ static inline void sync_core(void)
 {
 	int tmp;
 
-#ifdef CONFIG_X86_32
+#ifdef CONFIG_M486
 	/*
 	 * Do a CPUID if available, otherwise do a jump.  The jump
 	 * can conveniently enough be the jump around CPUID.
@@ -666,6 +773,14 @@ static inline void update_debugctlmsr(unsigned long debugctlmsr)
 
 extern void set_task_blockstep(struct task_struct *task, bool on);
 
+/*
+ * from system description table in BIOS. Mostly for MCA use, but
+ * others may find it useful:
+ */
+extern unsigned int		machine_id;
+extern unsigned int		machine_submodel_id;
+extern unsigned int		BIOS_revision;
+
 /* Boot loader type from the setup header: */
 extern int			bootloader_type;
 extern int			bootloader_version;
@@ -727,10 +842,12 @@ static inline void spin_lock_prefetch(const void *x)
 
 #define INIT_THREAD  {							  \
 	.sp0			= TOP_OF_INIT_STACK,			  \
+	.vm86_info		= NULL,					  \
 	.sysenter_cs		= __KERNEL_CS,				  \
 	.io_bitmap_ptr		= NULL,					  \
-	.addr_limit		= KERNEL_DS,				  \
 }
+
+extern unsigned long thread_saved_pc(struct task_struct *tsk);
 
 /*
  * TOP_OF_KERNEL_STACK_PADDING reserves 8 bytes on top of the ring0 stack.
@@ -777,17 +894,20 @@ static inline void spin_lock_prefetch(const void *x)
 #define STACK_TOP		TASK_SIZE
 #define STACK_TOP_MAX		TASK_SIZE_MAX
 
-#define INIT_THREAD  {						\
-	.sp0			= TOP_OF_INIT_STACK,		\
-	.addr_limit		= KERNEL_DS,			\
+#define INIT_THREAD  { \
+	.sp0 = TOP_OF_INIT_STACK \
 }
+
+/*
+ * Return saved PC of a blocked thread.
+ * What is this good for? it will be always the scheduler or ret_from_fork.
+ */
+#define thread_saved_pc(t)	(*(unsigned long *)((t)->thread.sp - 8))
 
 #define task_pt_regs(tsk)	((struct pt_regs *)(tsk)->thread.sp0 - 1)
 extern unsigned long KSTK_ESP(struct task_struct *task);
 
 #endif /* CONFIG_X86_64 */
-
-extern unsigned long thread_saved_pc(struct task_struct *tsk);
 
 extern void start_thread(struct pt_regs *regs, unsigned long new_ip,
 					       unsigned long new_sp);
@@ -808,25 +928,24 @@ extern int get_tsc_mode(unsigned long adr);
 extern int set_tsc_mode(unsigned int val);
 
 /* Register/unregister a process' MPX related resource */
-#define MPX_ENABLE_MANAGEMENT()	mpx_enable_management()
-#define MPX_DISABLE_MANAGEMENT()	mpx_disable_management()
+#define MPX_ENABLE_MANAGEMENT(tsk)	mpx_enable_management((tsk))
+#define MPX_DISABLE_MANAGEMENT(tsk)	mpx_disable_management((tsk))
 
 #ifdef CONFIG_X86_INTEL_MPX
-extern int mpx_enable_management(void);
-extern int mpx_disable_management(void);
+extern int mpx_enable_management(struct task_struct *tsk);
+extern int mpx_disable_management(struct task_struct *tsk);
 #else
-static inline int mpx_enable_management(void)
+static inline int mpx_enable_management(struct task_struct *tsk)
 {
 	return -EINVAL;
 }
-static inline int mpx_disable_management(void)
+static inline int mpx_disable_management(struct task_struct *tsk)
 {
 	return -EINVAL;
 }
 #endif /* CONFIG_X86_INTEL_MPX */
 
 extern u16 amd_get_nb_id(int cpu);
-extern u32 amd_get_nodes_per_socket(void);
 
 static inline uint32_t hypervisor_cpuid_base(const char *sig, uint32_t leaves)
 {

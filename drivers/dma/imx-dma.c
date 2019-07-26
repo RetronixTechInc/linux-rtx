@@ -167,7 +167,6 @@ struct imxdma_channel {
 	u32				ccr_to_device;
 	bool				enabled_2d;
 	int				slot_2d;
-	unsigned int			irq;
 };
 
 enum imx_dma_type {
@@ -187,9 +186,6 @@ struct imxdma_engine {
 	struct imx_dma_2d_config	slots_2d[IMX_DMA_2D_SLOTS];
 	struct imxdma_channel		channel[IMX_DMA_CHANNELS];
 	enum imx_dma_type		devtype;
-	unsigned int			irq;
-	unsigned int			irq_err;
-
 };
 
 struct imxdma_filter_data {
@@ -663,7 +659,9 @@ static void imxdma_tasklet(unsigned long data)
 out:
 	spin_unlock_irqrestore(&imxdma->lock, flags);
 
-	dmaengine_desc_get_callback_invoke(&desc->desc, NULL);
+	if (desc->desc.callback)
+		desc->desc.callback(desc->desc.callback_param);
+
 }
 
 static int imxdma_terminate_all(struct dma_chan *chan)
@@ -1050,7 +1048,7 @@ static struct dma_chan *imxdma_xlate(struct of_phandle_args *dma_spec,
 }
 
 static int __init imxdma_probe(struct platform_device *pdev)
-{
+	{
 	struct imxdma_engine *imxdma;
 	struct resource *res;
 	const struct of_device_id *of_id;
@@ -1085,12 +1083,8 @@ static int __init imxdma_probe(struct platform_device *pdev)
 	if (IS_ERR(imxdma->dma_ahb))
 		return PTR_ERR(imxdma->dma_ahb);
 
-	ret = clk_prepare_enable(imxdma->dma_ipg);
-	if (ret)
-		return ret;
-	ret = clk_prepare_enable(imxdma->dma_ahb);
-	if (ret)
-		goto disable_dma_ipg_clk;
+	clk_prepare_enable(imxdma->dma_ipg);
+	clk_prepare_enable(imxdma->dma_ahb);
 
 	/* reset DMA module */
 	imx_dmav1_writel(imxdma, DCR_DRST, DMA_DCR);
@@ -1100,23 +1094,21 @@ static int __init imxdma_probe(struct platform_device *pdev)
 				       dma_irq_handler, 0, "DMA", imxdma);
 		if (ret) {
 			dev_warn(imxdma->dev, "Can't register IRQ for DMA\n");
-			goto disable_dma_ahb_clk;
+			goto err;
 		}
-		imxdma->irq = irq;
 
 		irq_err = platform_get_irq(pdev, 1);
 		if (irq_err < 0) {
 			ret = irq_err;
-			goto disable_dma_ahb_clk;
+			goto err;
 		}
 
 		ret = devm_request_irq(&pdev->dev, irq_err,
 				       imxdma_err_handler, 0, "DMA", imxdma);
 		if (ret) {
 			dev_warn(imxdma->dev, "Can't register ERRIRQ for DMA\n");
-			goto disable_dma_ahb_clk;
+			goto err;
 		}
-		imxdma->irq_err = irq_err;
 	}
 
 	/* enable DMA module */
@@ -1152,10 +1144,8 @@ static int __init imxdma_probe(struct platform_device *pdev)
 				dev_warn(imxdma->dev, "Can't register IRQ %d "
 					 "for DMA channel %d\n",
 					 irq + i, i);
-				goto disable_dma_ahb_clk;
+				goto err;
 			}
-
-			imxdmac->irq = irq + i;
 			init_timer(&imxdmac->watchdog);
 			imxdmac->watchdog.function = &imxdma_watchdog;
 			imxdmac->watchdog.data = (unsigned long)imxdmac;
@@ -1193,14 +1183,14 @@ static int __init imxdma_probe(struct platform_device *pdev)
 
 	platform_set_drvdata(pdev, imxdma);
 
-	imxdma->dma_device.copy_align = DMAENGINE_ALIGN_4_BYTES;
+	imxdma->dma_device.copy_align = 2; /* 2^2 = 4 bytes alignment */
 	imxdma->dma_device.dev->dma_parms = &imxdma->dma_parms;
 	dma_set_max_seg_size(imxdma->dma_device.dev, 0xffffff);
 
 	ret = dma_async_device_register(&imxdma->dma_device);
 	if (ret) {
 		dev_err(&pdev->dev, "unable to register\n");
-		goto disable_dma_ahb_clk;
+		goto err;
 	}
 
 	if (pdev->dev.of_node) {
@@ -1216,37 +1206,15 @@ static int __init imxdma_probe(struct platform_device *pdev)
 
 err_of_dma_controller:
 	dma_async_device_unregister(&imxdma->dma_device);
-disable_dma_ahb_clk:
-	clk_disable_unprepare(imxdma->dma_ahb);
-disable_dma_ipg_clk:
+err:
 	clk_disable_unprepare(imxdma->dma_ipg);
+	clk_disable_unprepare(imxdma->dma_ahb);
 	return ret;
-}
-
-static void imxdma_free_irq(struct platform_device *pdev, struct imxdma_engine *imxdma)
-{
-	int i;
-
-	if (is_imx1_dma(imxdma)) {
-		disable_irq(imxdma->irq);
-		disable_irq(imxdma->irq_err);
-	}
-
-	for (i = 0; i < IMX_DMA_CHANNELS; i++) {
-		struct imxdma_channel *imxdmac = &imxdma->channel[i];
-
-		if (!is_imx1_dma(imxdma))
-			disable_irq(imxdmac->irq);
-
-		tasklet_kill(&imxdmac->dma_tasklet);
-	}
 }
 
 static int imxdma_remove(struct platform_device *pdev)
 {
 	struct imxdma_engine *imxdma = platform_get_drvdata(pdev);
-
-	imxdma_free_irq(pdev, imxdma);
 
         dma_async_device_unregister(&imxdma->dma_device);
 

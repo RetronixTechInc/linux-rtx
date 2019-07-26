@@ -1288,7 +1288,8 @@ static int __init calibrate_adc(WORD srate)
 		       & ~0x0001, dev.SMA + SMA_wCurrHostStatusFlags);
 	if (msnd_send_word(&dev, 0, 0, HDEXAR_CAL_A_TO_D) == 0 &&
 	    chk_send_dsp_cmd(&dev, HDEX_AUX_REQ) == 0) {
-		schedule_timeout_interruptible(HZ / 3);
+		__set_current_state(TASK_INTERRUPTIBLE);
+		schedule_timeout(HZ / 3);
 		return 0;
 	}
 	printk(KERN_WARNING LOGNAME ": ADC calibration failed\n");

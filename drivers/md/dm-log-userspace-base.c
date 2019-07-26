@@ -313,7 +313,8 @@ static int userspace_ctr(struct dm_dirty_log *log, struct dm_target *ti,
 out:
 	kfree(devices_rdata);
 	if (r) {
-		mempool_destroy(lc->flush_entry_pool);
+		if (lc->flush_entry_pool)
+			mempool_destroy(lc->flush_entry_pool);
 		kfree(lc);
 		kfree(ctr_str);
 	} else {

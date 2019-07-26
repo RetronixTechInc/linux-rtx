@@ -128,6 +128,7 @@ static irqreturn_t nop_gpio_vbus_thread(int irq, void *data)
 		status = USB_EVENT_VBUS;
 		otg->state = OTG_STATE_B_PERIPHERAL;
 		nop->phy.last_event = status;
+		usb_gadget_vbus_connect(otg->gadget);
 
 		/* drawing a "unit load" is *always* OK, except for OTG */
 		nop_set_vbus_draw(nop, 100);
@@ -137,6 +138,7 @@ static irqreturn_t nop_gpio_vbus_thread(int irq, void *data)
 	} else {
 		nop_set_vbus_draw(nop, 0);
 
+		usb_gadget_vbus_disconnect(otg->gadget);
 		status = USB_EVENT_NONE;
 		otg->state = OTG_STATE_B_IDLE;
 		nop->phy.last_event = status;
@@ -150,18 +152,14 @@ static irqreturn_t nop_gpio_vbus_thread(int irq, void *data)
 int usb_gen_phy_init(struct usb_phy *phy)
 {
 	struct usb_phy_generic *nop = dev_get_drvdata(phy->dev);
-	int ret;
 
 	if (!IS_ERR(nop->vcc)) {
 		if (regulator_enable(nop->vcc))
 			dev_err(phy->dev, "Failed to enable power\n");
 	}
 
-	if (!IS_ERR(nop->clk)) {
-		ret = clk_prepare_enable(nop->clk);
-		if (ret)
-			return ret;
-	}
+	if (!IS_ERR(nop->clk))
+		clk_prepare_enable(nop->clk);
 
 	nop_reset(nop);
 
@@ -196,11 +194,7 @@ static int nop_set_peripheral(struct usb_otg *otg, struct usb_gadget *gadget)
 	}
 
 	otg->gadget = gadget;
-	if (otg->state == OTG_STATE_B_PERIPHERAL)
-		atomic_notifier_call_chain(&otg->usb_phy->notifier,
-					   USB_EVENT_VBUS, otg->gadget);
-	else
-		otg->state = OTG_STATE_B_IDLE;
+	otg->state = OTG_STATE_B_IDLE;
 	return 0;
 }
 
@@ -234,13 +228,11 @@ int usb_phy_gen_create_phy(struct device *dev, struct usb_phy_generic *nop,
 			clk_rate = 0;
 
 		needs_vcc = of_property_read_bool(node, "vcc-supply");
-		nop->gpiod_reset = devm_gpiod_get_optional(dev, "reset",
-							   GPIOD_ASIS);
+		nop->gpiod_reset = devm_gpiod_get_optional(dev, "reset");
 		err = PTR_ERR_OR_ZERO(nop->gpiod_reset);
 		if (!err) {
 			nop->gpiod_vbus = devm_gpiod_get_optional(dev,
-							 "vbus-detect",
-							 GPIOD_ASIS);
+							 "vbus-detect");
 			err = PTR_ERR_OR_ZERO(nop->gpiod_vbus);
 		}
 	} else if (pdata) {
@@ -333,8 +325,6 @@ static int usb_phy_generic_probe(struct platform_device *pdev)
 				gpiod_to_irq(nop->gpiod_vbus), err);
 			return err;
 		}
-		nop->phy.otg->state = gpiod_get_value(nop->gpiod_vbus) ?
-			OTG_STATE_B_PERIPHERAL : OTG_STATE_B_IDLE;
 	}
 
 	nop->phy.init		= usb_gen_phy_init;

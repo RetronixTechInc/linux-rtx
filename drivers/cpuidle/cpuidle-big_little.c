@@ -108,7 +108,13 @@ static int notrace bl_powerdown_finisher(unsigned long arg)
 	unsigned int cpu = MPIDR_AFFINITY_LEVEL(mpidr, 0);
 
 	mcpm_set_entry_vector(cpu, cluster, cpu_resume);
-	mcpm_cpu_suspend();
+
+	/*
+	 * Residency value passed to mcpm_cpu_suspend back-end
+	 * has to be given clear semantics. Set to 0 as a
+	 * temporary value.
+	 */
+	mcpm_cpu_suspend(0);
 
 	/* return value != 0 means failure */
 	return 1;

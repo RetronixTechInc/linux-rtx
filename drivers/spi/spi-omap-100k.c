@@ -244,12 +244,12 @@ static int omap1_spi100k_setup_transfer(struct spi_device *spi,
 {
 	struct omap1_spi100k *spi100k = spi_master_get_devdata(spi->master);
 	struct omap1_spi100k_cs *cs = spi->controller_state;
-	u8 word_len;
+	u8 word_len = spi->bits_per_word;
 
-	if (t != NULL)
+	if (t != NULL && t->bits_per_word)
 		word_len = t->bits_per_word;
-	else
-		word_len = spi->bits_per_word;
+	if (!word_len)
+		word_len = 8;
 
 	if (spi->bits_per_word > 32)
 		return -EINVAL;
@@ -302,6 +302,7 @@ static int omap1_spi100k_transfer_one_message(struct spi_master *master,
 	struct spi_device *spi = m->spi;
 	struct spi_transfer *t = NULL;
 	int cs_active = 0;
+	int par_override = 0;
 	int status = 0;
 
 	list_for_each_entry(t, &m->transfers, transfer_list) {
@@ -309,9 +310,14 @@ static int omap1_spi100k_transfer_one_message(struct spi_master *master,
 			status = -EINVAL;
 			break;
 		}
-		status = omap1_spi100k_setup_transfer(spi, t);
-		if (status < 0)
-			break;
+		if (par_override || t->speed_hz || t->bits_per_word) {
+			par_override = 1;
+			status = omap1_spi100k_setup_transfer(spi, t);
+			if (status < 0)
+				break;
+			if (!t->speed_hz && !t->bits_per_word)
+				par_override = 0;
+		}
 
 		if (!cs_active) {
 			omap1_spi100k_force_cs(spi100k, 1);
@@ -341,7 +347,11 @@ static int omap1_spi100k_transfer_one_message(struct spi_master *master,
 		}
 	}
 
-	status = omap1_spi100k_setup_transfer(spi, NULL);
+	/* Restore defaults if they were overriden */
+	if (par_override) {
+		par_override = 0;
+		status = omap1_spi100k_setup_transfer(spi, NULL);
+	}
 
 	if (cs_active)
 		omap1_spi100k_force_cs(spi100k, 0);

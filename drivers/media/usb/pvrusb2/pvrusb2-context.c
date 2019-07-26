@@ -196,7 +196,7 @@ int pvr2_context_global_init(void)
 	pvr2_context_thread_ptr = kthread_run(pvr2_context_thread_func,
 					      NULL,
 					      "pvrusb2-context");
-	return IS_ERR(pvr2_context_thread_ptr) ? -ENOMEM : 0;
+	return (pvr2_context_thread_ptr ? 0 : -ENOMEM);
 }
 
 
@@ -398,8 +398,7 @@ int pvr2_channel_claim_stream(struct pvr2_channel *cp,
 		if (!sp) break;
 		sp->user = cp;
 		cp->stream = sp;
-	} while (0);
-	pvr2_context_exit(cp->mc_head);
+	} while (0); pvr2_context_exit(cp->mc_head);
 	return code;
 }
 

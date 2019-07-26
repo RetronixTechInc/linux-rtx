@@ -22,6 +22,7 @@
 #ifndef TS2020_H
 #define TS2020_H
 
+#include <linux/kconfig.h>
 #include <linux/dvb/frontend.h>
 
 struct ts2020_config {
@@ -31,7 +32,7 @@ struct ts2020_config {
 	/*
 	 * RF loop-through
 	 */
-	bool loop_through:1;
+	u8 loop_through:1;
 
 	/*
 	 * clock output
@@ -47,27 +48,14 @@ struct ts2020_config {
 	 */
 	u8 clk_out_div:5;
 
-	/* Set to true to suppress stat polling */
-	bool dont_poll:1;
-
 	/*
 	 * pointer to DVB frontend
 	 */
 	struct dvb_frontend *fe;
-
-	/*
-	 * driver private, do not set value
-	 */
-	u8 attach_in_use:1;
-
-	/* Operation to be called by the ts2020 driver to get the value of the
-	 * AGC PWM tuner input as theoretically output by the demodulator.
-	 */
-	int (*get_agc_pwm)(struct dvb_frontend *fe, u8 *_agc_pwm);
 };
 
-/* Do not add new ts2020_attach() users! Use I2C bindings instead. */
 #if IS_REACHABLE(CONFIG_DVB_TS2020)
+
 extern struct dvb_frontend *ts2020_attach(
 	struct dvb_frontend *fe,
 	const struct ts2020_config *config,

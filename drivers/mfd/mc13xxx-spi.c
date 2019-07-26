@@ -177,6 +177,7 @@ static struct spi_driver mc13xxx_spi_driver = {
 	.id_table = mc13xxx_device_id,
 	.driver = {
 		.name = "mc13xxx",
+		.owner = THIS_MODULE,
 		.of_match_table = mc13xxx_dt_ids,
 	},
 	.probe = mc13xxx_spi_probe,

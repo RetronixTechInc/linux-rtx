@@ -220,7 +220,6 @@ static int tusb_omap_dma_program(struct dma_channel *channel, u16 packet_sz,
 	u32				dma_remaining;
 	int				src_burst, dst_burst;
 	u16				csr;
-	u32				psize;
 	int				ch;
 	s8				dmareq;
 	s8				sync_dev;
@@ -311,9 +310,9 @@ static int tusb_omap_dma_program(struct dma_channel *channel, u16 packet_sz,
 
 	dma_params.frame_count	= chdat->transfer_len / 32; /* Burst sz frame */
 
-	dev_dbg(musb->controller, "ep%i %s dma ch%i dma: %pad len: %u(%u) packet_sz: %i(%i)\n",
+	dev_dbg(musb->controller, "ep%i %s dma ch%i dma: %08x len: %u(%u) packet_sz: %i(%i)\n",
 		chdat->epnum, chdat->tx ? "tx" : "rx",
-		ch, &dma_addr, chdat->transfer_len, len,
+		ch, dma_addr, chdat->transfer_len, len,
 		chdat->transfer_packet_sz, packet_sz);
 
 	/*
@@ -392,19 +391,15 @@ static int tusb_omap_dma_program(struct dma_channel *channel, u16 packet_sz,
 
 	if (chdat->tx) {
 		/* Send transfer_packet_sz packets at a time */
-		psize = musb_readl(ep_conf, TUSB_EP_MAX_PACKET_SIZE_OFFSET);
-		psize &= ~0x7ff;
-		psize |= chdat->transfer_packet_sz;
-		musb_writel(ep_conf, TUSB_EP_MAX_PACKET_SIZE_OFFSET, psize);
+		musb_writel(ep_conf, TUSB_EP_MAX_PACKET_SIZE_OFFSET,
+			chdat->transfer_packet_sz);
 
 		musb_writel(ep_conf, TUSB_EP_TX_OFFSET,
 			TUSB_EP_CONFIG_XFR_SIZE(chdat->transfer_len));
 	} else {
 		/* Receive transfer_packet_sz packets at a time */
-		psize = musb_readl(ep_conf, TUSB_EP_MAX_PACKET_SIZE_OFFSET);
-		psize &= ~(0x7ff << 16);
-		psize |= (chdat->transfer_packet_sz << 16);
-		musb_writel(ep_conf, TUSB_EP_MAX_PACKET_SIZE_OFFSET, psize);
+		musb_writel(ep_conf, TUSB_EP_MAX_PACKET_SIZE_OFFSET,
+			chdat->transfer_packet_sz << 16);
 
 		musb_writel(ep_conf, TUSB_EP_RX_OFFSET,
 			TUSB_EP_CONFIG_XFR_SIZE(chdat->transfer_len));
@@ -630,7 +625,7 @@ static void tusb_omap_dma_release(struct dma_channel *channel)
 	channel = NULL;
 }
 
-void tusb_dma_controller_destroy(struct dma_controller *c)
+void dma_controller_destroy(struct dma_controller *c)
 {
 	struct tusb_omap_dma	*tusb_dma;
 	int			i;
@@ -649,10 +644,8 @@ void tusb_dma_controller_destroy(struct dma_controller *c)
 
 	kfree(tusb_dma);
 }
-EXPORT_SYMBOL_GPL(tusb_dma_controller_destroy);
 
-struct dma_controller *
-tusb_dma_controller_create(struct musb *musb, void __iomem *base)
+struct dma_controller *dma_controller_create(struct musb *musb, void __iomem *base)
 {
 	void __iomem		*tbase = musb->ctrl_base;
 	struct tusb_omap_dma	*tusb_dma;
@@ -708,8 +701,7 @@ tusb_dma_controller_create(struct musb *musb, void __iomem *base)
 	return &tusb_dma->controller;
 
 cleanup:
-	musb_dma_controller_destroy(&tusb_dma->controller);
+	dma_controller_destroy(&tusb_dma->controller);
 out:
 	return NULL;
 }
-EXPORT_SYMBOL_GPL(tusb_dma_controller_create);

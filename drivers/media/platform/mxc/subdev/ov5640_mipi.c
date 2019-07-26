@@ -1106,9 +1106,12 @@ static int ov5640_init_mode(enum ov5640_frame_rate frame_rate,
 		/* dump the first two frames: 1/7.5*2
 		 * the frame rate of QSXGA is 7.5fps */
 		msec_wait4stable = 267;
-	} else {
-		/* dump the first eighteen frames: 1/30*18 */
+	} else if (frame_rate == ov5640_15_fps) {
+		/* dump the first nine frames: 1/15*9 */
 		msec_wait4stable = 600;
+	} else if (frame_rate == ov5640_30_fps) {
+		/* dump the first nine frames: 1/30*9 */
+		msec_wait4stable = 300;
 	}
 	msleep(msec_wait4stable);
 
@@ -1289,14 +1292,10 @@ static int ov5640_s_parm(struct v4l2_subdev *sd, struct v4l2_streamparm *a)
 	return ret;
 }
 
-static int ov5640_set_fmt(struct v4l2_subdev *sd,
-			struct v4l2_subdev_pad_config *cfg,
-			struct v4l2_subdev_format *format)
+static int ov5640_try_fmt(struct v4l2_subdev *sd,
+			  struct v4l2_mbus_framefmt *mf)
 {
-	struct v4l2_mbus_framefmt *mf = &format->format;
 	const struct ov5640_datafmt *fmt = ov5640_find_datafmt(mf->code);
-	struct i2c_client *client = v4l2_get_subdevdata(sd);
-	struct ov5640 *sensor = to_ov5640(client);
 
 	if (!fmt) {
 		mf->code	= ov5640_colour_fmts[0].code;
@@ -1305,26 +1304,32 @@ static int ov5640_set_fmt(struct v4l2_subdev *sd,
 
 	mf->field	= V4L2_FIELD_NONE;
 
-	if (format->which == V4L2_SUBDEV_FORMAT_TRY)
-		return 0;
+	return 0;
+}
 
-	sensor->fmt = fmt;
+static int ov5640_s_fmt(struct v4l2_subdev *sd,
+			struct v4l2_mbus_framefmt *mf)
+{
+	struct i2c_client *client = v4l2_get_subdevdata(sd);
+	struct ov5640 *sensor = to_ov5640(client);
+
+	/* MIPI CSI could have changed the format, double-check */
+	if (!ov5640_find_datafmt(mf->code))
+		return -EINVAL;
+
+	ov5640_try_fmt(sd, mf);
+	sensor->fmt = ov5640_find_datafmt(mf->code);
 
 	return 0;
 }
 
-
-static int ov5640_get_fmt(struct v4l2_subdev *sd,
-			  struct v4l2_subdev_pad_config *cfg,
-			  struct v4l2_subdev_format *format)
+static int ov5640_g_fmt(struct v4l2_subdev *sd,
+			struct v4l2_mbus_framefmt *mf)
 {
-	struct v4l2_mbus_framefmt *mf = &format->format;
 	struct i2c_client *client = v4l2_get_subdevdata(sd);
 	struct ov5640 *sensor = to_ov5640(client);
-	const struct ov5640_datafmt *fmt = sensor->fmt;
 
-	if (format->pad)
-		return -EINVAL;
+	const struct ov5640_datafmt *fmt = sensor->fmt;
 
 	mf->code	= fmt->code;
 	mf->colorspace	= fmt->colorspace;
@@ -1333,14 +1338,13 @@ static int ov5640_get_fmt(struct v4l2_subdev *sd,
 	return 0;
 }
 
-static int ov5640_enum_mbus_code(struct v4l2_subdev *sd,
-				 struct v4l2_subdev_pad_config *cfg,
-				 struct v4l2_subdev_mbus_code_enum *code)
+static int ov5640_enum_fmt(struct v4l2_subdev *sd, unsigned int index,
+			   u32 *code)
 {
-	if (code->pad || code->index >= ARRAY_SIZE(ov5640_colour_fmts))
+	if (index >= ARRAY_SIZE(ov5640_colour_fmts))
 		return -EINVAL;
 
-	code->code = ov5640_colour_fmts[code->index].code;
+	*code = ov5640_colour_fmts[index].code;
 	return 0;
 }
 
@@ -1465,14 +1469,16 @@ static struct v4l2_subdev_video_ops ov5640_subdev_video_ops = {
 	.g_parm = ov5640_g_parm,
 	.s_parm = ov5640_s_parm,
 	.s_stream = ov5640_s_stream,
+
+	.s_mbus_fmt	= ov5640_s_fmt,
+	.g_mbus_fmt	= ov5640_g_fmt,
+	.try_mbus_fmt	= ov5640_try_fmt,
+	.enum_mbus_fmt	= ov5640_enum_fmt,
 };
 
 static const struct v4l2_subdev_pad_ops ov5640_subdev_pad_ops = {
 	.enum_frame_size       = ov5640_enum_framesizes,
 	.enum_frame_interval   = ov5640_enum_frameintervals,
-	.enum_mbus_code        = ov5640_enum_mbus_code,
-	.set_fmt               = ov5640_set_fmt,
-	.get_fmt               = ov5640_get_fmt,
 };
 
 static struct v4l2_subdev_core_ops ov5640_subdev_core_ops = {

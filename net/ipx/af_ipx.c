@@ -1168,10 +1168,11 @@ static int ipxitf_ioctl(unsigned int cmd, void __user *arg)
 		sipx->sipx_network	= ipxif->if_netnum;
 		memcpy(sipx->sipx_node, ipxif->if_node,
 			sizeof(sipx->sipx_node));
-		rc = 0;
+		rc = -EFAULT;
 		if (copy_to_user(arg, &ifr, sizeof(ifr)))
-			rc = -EFAULT;
+			break;
 		ipxitf_put(ipxif);
+		rc = 0;
 		break;
 	}
 	case SIOCAIPXITFCRT:
@@ -1346,7 +1347,7 @@ static int ipx_create(struct net *net, struct socket *sock, int protocol,
 		goto out;
 
 	rc = -ENOMEM;
-	sk = sk_alloc(net, PF_IPX, GFP_KERNEL, &ipx_proto, kern);
+	sk = sk_alloc(net, PF_IPX, GFP_KERNEL, &ipx_proto);
 	if (!sk)
 		goto out;
 

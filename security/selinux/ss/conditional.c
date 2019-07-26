@@ -242,8 +242,6 @@ int cond_read_bool(struct policydb *p, struct hashtab *h, void *fp)
 		goto err;
 
 	len = le32_to_cpu(buf[2]);
-	if (((len == 0) || (len == (u32)-1)))
-		goto err;
 
 	rc = -ENOMEM;
 	key = kmalloc(len + 1, GFP_KERNEL);
@@ -640,7 +638,7 @@ void cond_compute_av(struct avtab *ctab, struct avtab_key *key,
 {
 	struct avtab_node *node;
 
-	if (!ctab || !key || !avd)
+	if (!ctab || !key || !avd || !xperms)
 		return;
 
 	for (node = avtab_search_node(ctab, key); node;
@@ -659,7 +657,7 @@ void cond_compute_av(struct avtab *ctab, struct avtab_key *key,
 		if ((u16)(AVTAB_AUDITALLOW|AVTAB_ENABLED) ==
 		    (node->key.specified & (AVTAB_AUDITALLOW|AVTAB_ENABLED)))
 			avd->auditallow |= node->datum.u.data;
-		if (xperms && (node->key.specified & AVTAB_ENABLED) &&
+		if ((node->key.specified & AVTAB_ENABLED) &&
 				(node->key.specified & AVTAB_XPERMS))
 			services_compute_xperms_drivers(xperms, node);
 	}

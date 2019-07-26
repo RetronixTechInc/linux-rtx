@@ -32,8 +32,10 @@
 #include "dgnc_pci.h"
 #include "dgnc_mgmt.h"
 
+
 /* Our "in use" variables, to enforce 1 open only */
 static int dgnc_mgmt_in_use[MAXMGMTDEVICES];
+
 
 /*
  * dgnc_mgmt_open()
@@ -65,6 +67,7 @@ int dgnc_mgmt_open(struct inode *inode, struct file *file)
 	return 0;
 }
 
+
 /*
  * dgnc_mgmt_close()
  *
@@ -87,6 +90,7 @@ int dgnc_mgmt_close(struct inode *inode, struct file *file)
 	return 0;
 }
 
+
 /*
  * dgnc_mgmt_ioctl()
  *
@@ -96,9 +100,10 @@ int dgnc_mgmt_close(struct inode *inode, struct file *file)
 long dgnc_mgmt_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 {
 	unsigned long flags;
-	void __user *uarg = (void __user *)arg;
+	void __user *uarg = (void __user *) arg;
 
 	switch (cmd) {
+
 	case DIGI_GETDD:
 	{
 		/*
@@ -110,8 +115,7 @@ long dgnc_mgmt_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 
 		spin_lock_irqsave(&dgnc_global_lock, flags);
 
-		memset(&ddi, 0, sizeof(ddi));
-		ddi.dinfo_nboards = dgnc_num_boards;
+		ddi.dinfo_nboards = dgnc_NumBoards;
 		sprintf(ddi.dinfo_version, "%s", DG_PART);
 
 		spin_unlock_irqrestore(&dgnc_global_lock, flags);
@@ -131,27 +135,26 @@ long dgnc_mgmt_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 		if (copy_from_user(&brd, uarg, sizeof(int)))
 			return -EFAULT;
 
-		if (brd < 0 || brd >= dgnc_num_boards)
+		if (brd < 0 || brd >= dgnc_NumBoards)
 			return -ENODEV;
 
 		memset(&di, 0, sizeof(di));
 
 		di.info_bdnum = brd;
 
-		spin_lock_irqsave(&dgnc_board[brd]->bd_lock, flags);
+		spin_lock_irqsave(&dgnc_Board[brd]->bd_lock, flags);
 
-		di.info_bdtype = dgnc_board[brd]->dpatype;
-		di.info_bdstate = dgnc_board[brd]->dpastatus;
+		di.info_bdtype = dgnc_Board[brd]->dpatype;
+		di.info_bdstate = dgnc_Board[brd]->dpastatus;
 		di.info_ioport = 0;
-		di.info_physaddr = (ulong)dgnc_board[brd]->membase;
-		di.info_physsize = (ulong)dgnc_board[brd]->membase
-			- dgnc_board[brd]->membase_end;
-		if (dgnc_board[brd]->state != BOARD_FAILED)
-			di.info_nports = dgnc_board[brd]->nasync;
+		di.info_physaddr = (ulong) dgnc_Board[brd]->membase;
+		di.info_physsize = (ulong) dgnc_Board[brd]->membase - dgnc_Board[brd]->membase_end;
+		if (dgnc_Board[brd]->state != BOARD_FAILED)
+			di.info_nports = dgnc_Board[brd]->nasync;
 		else
 			di.info_nports = 0;
 
-		spin_unlock_irqrestore(&dgnc_board[brd]->bd_lock, flags);
+		spin_unlock_irqrestore(&dgnc_Board[brd]->bd_lock, flags);
 
 		if (copy_to_user(uarg, &di, sizeof(di)))
 			return -EFAULT;
@@ -174,14 +177,14 @@ long dgnc_mgmt_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 		channel = ni.channel;
 
 		/* Verify boundaries on board */
-		if (board >= dgnc_num_boards)
+		if (board >= dgnc_NumBoards)
 			return -ENODEV;
 
 		/* Verify boundaries on channel */
-		if (channel >= dgnc_board[board]->nasync)
+		if (channel >= dgnc_Board[board]->nasync)
 			return -ENODEV;
 
-		ch = dgnc_board[board]->channels[channel];
+		ch = dgnc_Board[board]->channels[channel];
 
 		if (!ch || ch->magic != DGNC_CHANNEL_MAGIC)
 			return -ENODEV;
@@ -192,7 +195,7 @@ long dgnc_mgmt_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 
 		spin_lock_irqsave(&ch->ch_lock, flags);
 
-		mstat = ch->ch_mostat | ch->ch_mistat;
+		mstat = (ch->ch_mostat | ch->ch_mistat);
 
 		if (mstat & UART_MCR_DTR) {
 			ni.mstat |= TIOCM_DTR;
@@ -251,6 +254,8 @@ long dgnc_mgmt_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 
 		break;
 	}
+
+
 	}
 
 	return 0;

@@ -120,7 +120,7 @@ static int e750_probe(struct platform_device *pdev)
 
 	card->dev = &pdev->dev;
 
-	ret = devm_snd_soc_register_card(&pdev->dev, card);
+	ret = snd_soc_register_card(card);
 	if (ret) {
 		dev_err(&pdev->dev, "snd_soc_register_card() failed: %d\n",
 			ret);
@@ -131,7 +131,10 @@ static int e750_probe(struct platform_device *pdev)
 
 static int e750_remove(struct platform_device *pdev)
 {
+	struct snd_soc_card *card = platform_get_drvdata(pdev);
+
 	gpio_free_array(e750_audio_gpios, ARRAY_SIZE(e750_audio_gpios));
+	snd_soc_unregister_card(card);
 	return 0;
 }
 

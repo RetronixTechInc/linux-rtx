@@ -21,7 +21,7 @@
  * software in any way with any other Broadcom software provided under a license
  * other than the GPL, without Broadcom's express prior written consent.
  *
- * $Id: bcmsdh_sdmmc_linux.c 662758 2016-11-10 08:03:26Z $
+ * $Id: bcmsdh_sdmmc_linux.c 523920 2015-01-05 06:07:16Z $
  */
 
 #include <typedefs.h>
@@ -216,20 +216,6 @@ static const struct sdio_device_id bcmsdh_sdmmc_ids[] = {
 
 MODULE_DEVICE_TABLE(sdio, bcmsdh_sdmmc_ids);
 
-#ifdef OOB_PARAM
-uint
-sdioh_get_oob_disable(sdioh_info_t *sd)
-{
-	int host_idx = sd->func[0]->card->host->index;
-	uint32 rca = sd->func[0]->card->rca;
-	wifi_adapter_info_t *adapter;
-
-	adapter = dhd_wifi_platform_get_adapter(SDIO_BUS, host_idx, rca);
-
-	return adapter->oob_disable;
-}
-#endif /* OOB_PARAM */
-
 #if (LINUX_VERSION_CODE > KERNEL_VERSION(2, 6, 39)) && defined(CONFIG_PM)
 static int bcmsdh_sdmmc_suspend(struct device *pdev)
 {
@@ -265,9 +251,7 @@ static int bcmsdh_sdmmc_suspend(struct device *pdev)
 		return err;
 	}
 #if defined(OOB_INTR_ONLY)
-	OOB_PARAM_IF(!(sdioh_get_oob_disable(sdioh))) {
-		bcmsdh_oob_intr_set(sdioh->bcmsdh, FALSE);
-	}
+	bcmsdh_oob_intr_set(sdioh->bcmsdh, FALSE);
 #endif 
 	smp_mb();
 
@@ -285,7 +269,9 @@ static int bcmsdh_sdmmc_resume(struct device *pdev)
 
 	sdioh = sdio_get_drvdata(func);
 	dhd_mmc_suspend = FALSE;
+#if defined(OOB_INTR_ONLY)
 	bcmsdh_resume(sdioh->bcmsdh);
+#endif 
 
 	smp_mb();
 	return 0;

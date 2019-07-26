@@ -2,7 +2,7 @@
  * drivers/gpu/mxc/mxc_ion.c
  *
  * Copyright (C) 2011 Google, Inc.
- * Copyright (C) 2012-2016 Freescale Semiconductor, Inc.
+ * Copyright (C) 2012-2015 Freescale Semiconductor, Inc.
  *
  * This software is licensed under the terms of the GNU General Public
  * License version 2, as published by the Free Software Foundation, and
@@ -23,9 +23,7 @@
 #include <linux/of.h>
 #include <linux/of_platform.h>
 #include <linux/uaccess.h>
-#include <media/videobuf2-dma-contig.h>
-#include <linux/dma-buf.h>
-
+#include "mxc_ion.h"
 #include "../ion_priv.h"
 
 static struct ion_device *idev;
@@ -33,8 +31,11 @@ static int num_heaps = 1;
 static struct ion_heap **heaps;
 static int cacheable;
 
-struct ion_platform_data *
-mxc_ion_parse_of(struct platform_device *pdev)
+extern int ion_handle_put_wrap(struct ion_handle *handle);
+extern struct ion_handle *ion_handle_get_by_id(struct ion_client *client,
+						 int id);
+
+struct ion_platform_data *mxc_ion_parse_of(struct platform_device *pdev)
 {
 	struct ion_platform_data *pdata = 0;
 	const struct device_node *node = pdev->dev.of_node;
@@ -73,140 +74,43 @@ mxc_ion_parse_of(struct platform_device *pdev)
 	return pdata;
 }
 
-static long
-mxc_custom_ioctl(struct ion_client *client, unsigned int cmd, unsigned long arg)
+static long mxc_custom_ioctl(struct ion_client *client,
+				unsigned int cmd,
+				unsigned long arg)
 {
 	switch (cmd) {
 	case ION_IOC_PHYS:
-		{
-			struct ion_handle *handle;
-			struct ion_phys_data data;
-			struct device *dev;
-			void *vaddr;
+	{
+		struct ion_handle *handle;
+		struct ion_phys_data data;
+		ion_phys_addr_t phys;
+		int len;
+		bool valid;
+		if (copy_from_user(&data, (void __user *)arg,
+				sizeof(struct ion_phys_data)))
+			return -EFAULT;
+		handle = ion_handle_get_by_id(client, data.handle);
+		if (IS_ERR(handle))
+			return PTR_ERR(handle);
 
-			if (copy_from_user(&data, (void __user *) arg,
-					   sizeof(struct ion_phys_data)))
-				return -EFAULT;
-			handle = ion_handle_get_by_id_wrap(client, data.handle);
-			if (IS_ERR(handle))
-				return PTR_ERR(handle);
+		valid = ion_phys(client, handle, &phys, &len);
+		ion_handle_put_wrap(handle);
 
-			vaddr = ion_map_kernel(client, handle);
-			ion_handle_put_wrap(handle);
-
-			if (IS_ERR(vaddr))
-				return PTR_ERR(vaddr);
-
-			dev = ion_device_get_by_client(client);
-			data.phys = virt_to_dma(dev, vaddr);
-
-			if (copy_to_user((void __user *) arg, &data,
-					 sizeof(struct ion_phys_data)))
-				return -EFAULT;
-			return 0;
-		}
-	case ION_IOC_PHYS_DMA:
-		{
-			int ret = 0;
-			struct device *dev = NULL;
-			struct dma_buf *dmabuf = NULL;
-			unsigned long phys = 0;
-			u64 dma_mask = DMA_BIT_MASK(32);
-			size_t len = 0;
-			struct ion_phys_dma_data data;
-			const struct vb2_mem_ops *mem_ops =
-			    &vb2_dma_contig_memops;
-			dma_addr_t *addr;
-			void *mem_priv;
-
-			if (copy_from_user(&data, (void __user *) arg,
-					   sizeof(struct ion_phys_dma_data)))
-				return -EFAULT;
-
-			/* Get physical address from dmafd */
-			dmabuf = dma_buf_get(data.dmafd);
-			if (!dmabuf)
-				return -1;
-
-			dev = ion_device_get_by_client(client);
-			dev->dma_mask = &dma_mask;
-
-			mem_priv = mem_ops->attach_dmabuf(dev,
-							  dmabuf, dmabuf->size,
-							  DMA_BIDIRECTIONAL);
-			if (IS_ERR(mem_priv))
-				goto err1;
-			ret = mem_ops->map_dmabuf(mem_priv);
-			if (ret)
-				goto err0;
-
-			addr = mem_ops->cookie(mem_priv);
-			phys = *addr;
-			len = dmabuf->size;
-
-			data.phys = phys;
-			data.size = len;
-			if (copy_to_user((void __user *) arg, &data,
-					 sizeof(struct ion_phys_dma_data))) {
-				ret = -EFAULT;
-			}
-
-			/* unmap and detach */
-			mem_ops->unmap_dmabuf(mem_priv);
-err0:
-			mem_ops->detach_dmabuf(mem_priv);
-err1:
-			dma_buf_put(dmabuf);
-
-			if (ret < 0)
-				return ret;
-			return 0;
-		}
-	case ION_IOC_PHYS_VIRT:
-		{
-			struct device *dev = NULL;
-			u64 dma_mask = DMA_BIT_MASK(32);
-			struct ion_phys_virt_data data;
-			const struct vb2_mem_ops *mem_ops =
-			    &vb2_dma_contig_memops;
-			dma_addr_t *addr;
-			void *mem_priv;
-
-			if (copy_from_user(&data, (void __user *) arg,
-					   sizeof(struct ion_phys_virt_data)))
-				return -EFAULT;
-
-			/* Get physical address from virtual address */
-			if (!data.virt)
-				return -1;
-
-			dev = ion_device_get_by_client(client);
-			dev->dma_mask = &dma_mask;
-
-			mem_priv = mem_ops->get_userptr(dev,
-							data.virt, data.size,
-							DMA_BIDIRECTIONAL);
-			if (IS_ERR(mem_priv))
-				return -1;
-
-			addr = mem_ops->cookie(mem_priv);
-			mem_ops->put_userptr(mem_priv);
-
-			data.phys = *addr;
-			if (copy_to_user((void __user *) arg, &data,
-					 sizeof(struct ion_phys_virt_data)))
-				return -EFAULT;
-			return 0;
-		}
+		if (valid)
+			return -1;
+		data.phys = phys;
+		if (copy_to_user((void __user *)arg, &data,
+				sizeof(struct ion_phys_data)))
+			return -EFAULT;
+		return 0;
+	}
 	default:
 		return -ENOTTY;
 	}
-
 	return 0;
 }
 
-int
-mxc_ion_probe(struct platform_device *pdev)
+int mxc_ion_probe(struct platform_device *pdev)
 {
 	struct ion_platform_data *pdata = NULL;
 	int pdata_is_created = 0;
@@ -220,8 +124,9 @@ mxc_ion_probe(struct platform_device *pdev)
 		pdata = pdev->dev.platform_data;
 	}
 
-	if (IS_ERR_OR_NULL(pdata))
+	if (IS_ERR_OR_NULL(pdata)) {
 		return PTR_ERR(pdata);
+	}
 
 	num_heaps = pdata->nr;
 
@@ -260,8 +165,7 @@ err:
 	return err;
 }
 
-int
-mxc_ion_remove(struct platform_device *pdev)
+int mxc_ion_remove(struct platform_device *pdev)
 {
 	struct ion_device *idev = platform_get_drvdata(pdev);
 	int i;
@@ -282,19 +186,17 @@ static struct platform_driver ion_driver = {
 	.probe = mxc_ion_probe,
 	.remove = mxc_ion_remove,
 	.driver = {
-		   .name = "ion-mxc",
-		   .of_match_table = ion_match_table,
-		   },
+		.name = "ion-mxc",
+		.of_match_table = ion_match_table,
+	 },
 };
 
-static int __init
-ion_init(void)
+static int __init ion_init(void)
 {
 	return platform_driver_register(&ion_driver);
 }
 
-static void __exit
-ion_exit(void)
+static void __exit ion_exit(void)
 {
 	platform_driver_unregister(&ion_driver);
 }

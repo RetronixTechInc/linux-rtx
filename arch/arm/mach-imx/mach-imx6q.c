@@ -1,7 +1,6 @@
 /*
- * Copyright 2011-2015 Freescale Semiconductor, Inc.
+ * Copyright 2011-2016 Freescale Semiconductor, Inc.
  * Copyright 2011 Linaro Ltd.
- * Copyright 2017 NXP.
  *
  * The code contained herein is licensed under the GNU General Public
  * License. You may obtain a copy of the GNU General Public License
@@ -23,6 +22,7 @@
 #include <linux/of.h>
 #include <linux/of_address.h>
 #include <linux/of_irq.h>
+#include <linux/of_gpio.h>
 #include <linux/of_platform.h>
 #include <linux/pm_opp.h>
 #include <linux/pci.h>
@@ -36,6 +36,8 @@
 #include <asm/mach/arch.h>
 #include <asm/mach/map.h>
 #include <asm/system_misc.h>
+#include <linux/memblock.h>
+#include <asm/setup.h>
 
 #include "common.h"
 #include "cpuidle.h"
@@ -187,7 +189,7 @@ static void __init imx6q_enet_phy_init(void)
 				ksz9021rn_phy_fixup);
 		phy_register_fixup_for_uid(PHY_ID_KSZ9031, MICREL_PHY_ID_MASK,
 				ksz9031rn_phy_fixup);
-		phy_register_fixup_for_uid(PHY_ID_AR8031, 0xffffffef,
+		phy_register_fixup_for_uid(PHY_ID_AR8031, 0xffffffff,
 				ar8031_phy_fixup);
 		phy_register_fixup_for_uid(PHY_ID_AR8035, 0xffffffef,
 				ar8035_phy_fixup);
@@ -223,7 +225,7 @@ static void __init imx6q_1588_init(void)
 				IMX6Q_GPR1_ENET_CLK_SEL_MASK,
 				IMX6Q_GPR1_ENET_CLK_SEL_ANATOP);
 	else
-		pr_err("failed to find fsl,imx6q-iomuxc-gpr regmap\n");
+		pr_err("failed to find fsl,imx6q-iomux-gpr regmap\n");
 
 	clk_put(ptp_clk);
 put_node:
@@ -248,9 +250,7 @@ static void __init imx6q_csi_mux_init(void)
 	gpr = syscon_regmap_lookup_by_compatible("fsl,imx6q-iomuxc-gpr");
 	if (!IS_ERR(gpr)) {
 		if (of_machine_is_compatible("fsl,imx6q-sabresd") ||
-			of_machine_is_compatible("fsl,imx6q-sabreauto") ||
-			of_machine_is_compatible("fsl,imx6qp-sabresd") ||
-			of_machine_is_compatible("fsl,imx6qp-sabreauto"))
+			of_machine_is_compatible("fsl,imx6q-sabreauto"))
 			regmap_update_bits(gpr, IOMUXC_GPR1, 1 << 19, 1 << 19);
 		else if (of_machine_is_compatible("fsl,imx6dl-sabresd") ||
 			 of_machine_is_compatible("fsl,imx6dl-sabreauto"))
@@ -294,6 +294,28 @@ static void __init imx6q_axi_init(void)
 	}
 }
 
+/*
+ * Init GPIO PCIE_PWR_EN to keep power supply to miniPCIE 3G modem
+ *
+*/
+static void __init imx6q_mini_pcie_init(void)
+{
+	struct device_node *np = NULL;
+	int ret, power_on_gpio;
+	np = of_find_node_by_name(NULL, "minipcie_ctrl");
+	if (!np)
+		return;
+
+	power_on_gpio = of_get_named_gpio(np, "power-on-gpio", 0);
+	if (gpio_is_valid(power_on_gpio)) {
+		ret = gpio_request_one(power_on_gpio, GPIOF_OUT_INIT_HIGH,
+			"miniPCIE Power On");
+		pr_warn("!!request miniPCIE Power On gpio\n");
+		if (ret)
+			pr_warn("failed to request miniPCIE Power On gpio\n");
+	}
+}
+
 static void __init imx6q_enet_clk_sel(void)
 {
 	struct regmap *gpr;
@@ -311,7 +333,7 @@ static inline void imx6q_enet_init(void)
 	imx6_enet_mac_init("fsl,imx6q-fec", "fsl,imx6q-ocotp");
 	imx6q_enet_phy_init();
 	imx6q_1588_init();
-	if (cpu_is_imx6q() && imx_get_soc_revision() >= IMX_CHIP_REVISION_2_0)
+	if (cpu_is_imx6q() && imx_get_soc_revision() == IMX_CHIP_REVISION_2_0)
 		imx6q_enet_clk_sel();
 }
 
@@ -319,23 +341,24 @@ static void __init imx6q_init_machine(void)
 {
 	struct device *parent;
 
-	if (cpu_is_imx6q() && imx_get_soc_revision() >= IMX_CHIP_REVISION_2_0)
+	if (cpu_is_imx6q() && imx_get_soc_revision() == IMX_CHIP_REVISION_2_0)
 		imx_print_silicon_rev("i.MX6QP", IMX_CHIP_REVISION_1_0);
 	else
 		imx_print_silicon_rev(cpu_is_imx6dl() ? "i.MX6DL" : "i.MX6Q",
-				imx_get_soc_revision());
+				 imx_get_soc_revision());
 
 	parent = imx_soc_device_init();
 	if (parent == NULL)
 		pr_warn("failed to initialize soc device\n");
 
-	of_platform_default_populate(NULL, NULL, parent);
+	of_platform_populate(NULL, of_default_bus_match_table, NULL, parent);
 
 	imx6q_enet_init();
 	imx_anatop_init();
 	imx6q_csi_mux_init();
 	cpu_is_imx6q() ?  imx6q_pm_init() : imx6dl_pm_init();
 	imx6q_axi_init();
+	imx6q_mini_pcie_init();
 }
 
 #define OCOTP_CFG3			0x440
@@ -412,7 +435,7 @@ static void __init imx6q_opp_init(void)
 		return;
 	}
 
-	if (dev_pm_opp_of_add_table(cpu_dev)) {
+	if (of_init_opp_table(cpu_dev)) {
 		pr_warn("failed to init OPP table\n");
 		goto put_node;
 	}
@@ -459,23 +482,47 @@ static void __init imx6q_init_irq(void)
 	imx_init_l2cache();
 	imx_src_init();
 	irqchip_init();
-	imx6_pm_ccm_init("fsl,imx6q-ccm");
 }
 
 static const char * const imx6q_dt_compat[] __initconst = {
 	"fsl,imx6dl",
 	"fsl,imx6q",
-	"fsl,imx6qp",
 	NULL,
 };
 
+extern unsigned long int ramoops_phys_addr;
+extern unsigned long int ramoops_mem_size;
+static void imx6q_reserve(void)
+{
+	phys_addr_t phys;
+	phys_addr_t max_phys;
+	struct meminfo *mi;
+	struct membank *bank;
+
+#ifdef CONFIG_PSTORE_RAM
+	max_phys = memblock_end_of_DRAM();
+	/* reserve 64M for uboot avoid ram console data is cleaned by uboot */
+	phys = memblock_alloc_base(SZ_1M, SZ_4K, max_phys - SZ_64M);
+	if (phys) {
+		memblock_remove(phys, SZ_1M);
+		memblock_reserve(phys, SZ_1M);
+		ramoops_phys_addr = phys;
+		ramoops_mem_size = SZ_1M;
+	} else {
+		ramoops_phys_addr = 0;
+		ramoops_mem_size = 0;
+		pr_err("no memory reserve for ramoops.\n");
+	}
+#endif
+	return;
+}
+
 DT_MACHINE_START(IMX6Q, "Freescale i.MX6 Quad/DualLite (Device Tree)")
-	.l2c_aux_val 	= 0,
-	.l2c_aux_mask	= ~0,
 	.smp		= smp_ops(imx_smp_ops),
 	.map_io		= imx6q_map_io,
 	.init_irq	= imx6q_init_irq,
 	.init_machine	= imx6q_init_machine,
 	.init_late      = imx6q_init_late,
 	.dt_compat	= imx6q_dt_compat,
+	.reserve        = imx6q_reserve,
 MACHINE_END

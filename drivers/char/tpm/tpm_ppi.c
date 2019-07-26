@@ -53,7 +53,7 @@ tpm_eval_dsm(acpi_handle ppi_handle, int func, acpi_object_type type,
 static ssize_t tpm_show_ppi_version(struct device *dev,
 				    struct device_attribute *attr, char *buf)
 {
-	struct tpm_chip *chip = to_tpm_chip(dev);
+	struct tpm_chip *chip = dev_get_drvdata(dev);
 
 	return scnprintf(buf, PAGE_SIZE, "%s\n", chip->ppi_version);
 }
@@ -63,7 +63,7 @@ static ssize_t tpm_show_ppi_request(struct device *dev,
 {
 	ssize_t size = -EINVAL;
 	union acpi_object *obj;
-	struct tpm_chip *chip = to_tpm_chip(dev);
+	struct tpm_chip *chip = dev_get_drvdata(dev);
 
 	obj = tpm_eval_dsm(chip->acpi_dev_handle, TPM_PPI_FN_GETREQ,
 			   ACPI_TYPE_PACKAGE, NULL);
@@ -100,7 +100,7 @@ static ssize_t tpm_store_ppi_request(struct device *dev,
 	int func = TPM_PPI_FN_SUBREQ;
 	union acpi_object *obj, tmp;
 	union acpi_object argv4 = ACPI_INIT_DSM_ARGV4(1, &tmp);
-	struct tpm_chip *chip = to_tpm_chip(dev);
+	struct tpm_chip *chip = dev_get_drvdata(dev);
 
 	/*
 	 * the function to submit TPM operation request to pre-os environment
@@ -156,7 +156,7 @@ static ssize_t tpm_show_ppi_transition_action(struct device *dev,
 		.buffer.length = 0,
 		.buffer.pointer = NULL
 	};
-	struct tpm_chip *chip = to_tpm_chip(dev);
+	struct tpm_chip *chip = dev_get_drvdata(dev);
 
 	static char *info[] = {
 		"None",
@@ -197,7 +197,7 @@ static ssize_t tpm_show_ppi_response(struct device *dev,
 	acpi_status status = -EINVAL;
 	union acpi_object *obj, *ret_obj;
 	u64 req, res;
-	struct tpm_chip *chip = to_tpm_chip(dev);
+	struct tpm_chip *chip = dev_get_drvdata(dev);
 
 	obj = tpm_eval_dsm(chip->acpi_dev_handle, TPM_PPI_FN_GETRSP,
 			   ACPI_TYPE_PACKAGE, NULL);
@@ -296,7 +296,7 @@ static ssize_t tpm_show_ppi_tcg_operations(struct device *dev,
 					   struct device_attribute *attr,
 					   char *buf)
 {
-	struct tpm_chip *chip = to_tpm_chip(dev);
+	struct tpm_chip *chip = dev_get_drvdata(dev);
 
 	return show_ppi_operations(chip->acpi_dev_handle, buf, 0,
 				   PPI_TPM_REQ_MAX);
@@ -306,7 +306,7 @@ static ssize_t tpm_show_ppi_vs_operations(struct device *dev,
 					  struct device_attribute *attr,
 					  char *buf)
 {
-	struct tpm_chip *chip = to_tpm_chip(dev);
+	struct tpm_chip *chip = dev_get_drvdata(dev);
 
 	return show_ppi_operations(chip->acpi_dev_handle, buf, PPI_VS_REQ_START,
 				   PPI_VS_REQ_END);
@@ -334,16 +334,17 @@ static struct attribute_group ppi_attr_grp = {
 	.attrs = ppi_attrs
 };
 
-void tpm_add_ppi(struct tpm_chip *chip)
+int tpm_add_ppi(struct tpm_chip *chip)
 {
 	union acpi_object *obj;
+	int rc;
 
 	if (!chip->acpi_dev_handle)
-		return;
+		return 0;
 
 	if (!acpi_check_dsm(chip->acpi_dev_handle, tpm_ppi_uuid,
 			    TPM_PPI_REVISION_ID, 1 << TPM_PPI_FN_VERSION))
-		return;
+		return 0;
 
 	/* Cache PPI version string. */
 	obj = acpi_evaluate_dsm_typed(chip->acpi_dev_handle, tpm_ppi_uuid,
@@ -355,5 +356,16 @@ void tpm_add_ppi(struct tpm_chip *chip)
 		ACPI_FREE(obj);
 	}
 
-	chip->groups[chip->groups_cnt++] = &ppi_attr_grp;
+	rc = sysfs_create_group(&chip->pdev->kobj, &ppi_attr_grp);
+
+	if (!rc)
+		chip->flags |= TPM_CHIP_FLAG_PPI;
+
+	return rc;
+}
+
+void tpm_remove_ppi(struct tpm_chip *chip)
+{
+	if (chip->flags & TPM_CHIP_FLAG_PPI)
+		sysfs_remove_group(&chip->pdev->kobj, &ppi_attr_grp);
 }

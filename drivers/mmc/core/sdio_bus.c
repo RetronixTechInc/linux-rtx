@@ -28,6 +28,10 @@
 #include "sdio_cis.h"
 #include "sdio_bus.h"
 
+#ifdef CONFIG_MMC_EMBEDDED_SDIO
+#include <linux/mmc/host.h>
+#endif
+
 #define to_sdio_driver(d)	container_of(d, struct sdio_driver, drv)
 
 /* show configuration fields */
@@ -263,10 +267,17 @@ static void sdio_release_func(struct device *dev)
 {
 	struct sdio_func *func = dev_to_sdio_func(dev);
 
-	sdio_free_func_cis(func);
+#ifdef CONFIG_MMC_EMBEDDED_SDIO
+	/*
+	 * If this device is embedded then we never allocated
+	 * cis tables for this func
+	 */
+	if (!func->card->host->embedded_sdio_data.funcs)
+#endif
+		sdio_free_func_cis(func);
 
 	kfree(func->info);
-	kfree(func->tmpbuf);
+
 	kfree(func);
 }
 
@@ -280,16 +291,6 @@ struct sdio_func *sdio_alloc_func(struct mmc_card *card)
 	func = kzalloc(sizeof(struct sdio_func), GFP_KERNEL);
 	if (!func)
 		return ERR_PTR(-ENOMEM);
-
-	/*
-	 * allocate buffer separately to make sure it's properly aligned for
-	 * DMA usage (incl. 64 bit DMA)
-	 */
-	func->tmpbuf = kmalloc(4, GFP_KERNEL);
-	if (!func->tmpbuf) {
-		kfree(func);
-		return ERR_PTR(-ENOMEM);
-	}
 
 	func->card = card;
 
@@ -332,7 +333,6 @@ int sdio_add_func(struct sdio_func *func)
 
 	sdio_set_of_node(func);
 	sdio_acpi_set_handle(func);
-	device_enable_async_suspend(&func->dev);
 	ret = device_add(&func->dev);
 	if (ret == 0)
 		sdio_func_set_present(func);

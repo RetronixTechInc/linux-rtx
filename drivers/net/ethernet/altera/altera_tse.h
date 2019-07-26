@@ -458,6 +458,7 @@ struct altera_tse_private {
 	u32 rxctrlreg;
 	dma_addr_t rxdescphys;
 	dma_addr_t txdescphys;
+	size_t sgdmadesclen;
 
 	struct list_head txlisthd;
 	struct list_head rxlisthd;
@@ -473,6 +474,7 @@ struct altera_tse_private {
 	int phy_addr;		/* PHY's MDIO address, -1 for autodetection */
 	phy_interface_t phy_iface;
 	struct mii_bus *mdio;
+	struct phy_device *phydev;
 	int oldspeed;
 	int oldduplex;
 	int oldlink;

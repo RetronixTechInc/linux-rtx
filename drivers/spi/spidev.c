@@ -29,7 +29,6 @@
 #include <linux/compat.h>
 #include <linux/of.h>
 #include <linux/of_device.h>
-#include <linux/acpi.h>
 
 #include <linux/spi/spi.h>
 #include <linux/spi/spidev.h>
@@ -96,25 +95,37 @@ MODULE_PARM_DESC(bufsiz, "data bytes in biggest supported SPI message");
 
 /*-------------------------------------------------------------------------*/
 
+/*
+ * We can't use the standard synchronous wrappers for file I/O; we
+ * need to protect against async removal of the underlying spi_device.
+ */
+static void spidev_complete(void *arg)
+{
+	complete(arg);
+}
+
 static ssize_t
 spidev_sync(struct spidev_data *spidev, struct spi_message *message)
 {
 	DECLARE_COMPLETION_ONSTACK(done);
 	int status;
-	struct spi_device *spi;
+
+	message->complete = spidev_complete;
+	message->context = &done;
 
 	spin_lock_irq(&spidev->spi_lock);
-	spi = spidev->spi;
-	spin_unlock_irq(&spidev->spi_lock);
-
-	if (spi == NULL)
+	if (spidev->spi == NULL)
 		status = -ESHUTDOWN;
 	else
-		status = spi_sync(spi, message);
+		status = spi_async(spidev->spi, message);
+	spin_unlock_irq(&spidev->spi_lock);
 
-	if (status == 0)
-		status = message->actual_length;
-
+	if (status == 0) {
+		wait_for_completion(&done);
+		status = message->status;
+		if (status == 0)
+			status = message->actual_length;
+	}
 	return status;
 }
 
@@ -285,7 +296,7 @@ static int spidev_message(struct spidev_data *spidev,
 			k_tmp->speed_hz = spidev->speed_hz;
 #ifdef VERBOSE
 		dev_dbg(&spidev->spi->dev,
-			"  xfer len %u %s%s%s%dbits %u usec %uHz\n",
+			"  xfer len %zd %s%s%s%dbits %u usec %uHz\n",
 			u_tmp->len,
 			u_tmp->rx_buf ? "rx " : "",
 			u_tmp->tx_buf ? "tx " : "",
@@ -603,11 +614,11 @@ static int spidev_open(struct inode *inode, struct file *filp)
 	if (!spidev->tx_buffer) {
 		spidev->tx_buffer = kmalloc(bufsiz, GFP_KERNEL);
 		if (!spidev->tx_buffer) {
-			dev_dbg(&spidev->spi->dev, "open/ENOMEM\n");
-			status = -ENOMEM;
+				dev_dbg(&spidev->spi->dev, "open/ENOMEM\n");
+				status = -ENOMEM;
 			goto err_find_dev;
+			}
 		}
-	}
 
 	if (!spidev->rx_buffer) {
 		spidev->rx_buffer = kmalloc(bufsiz, GFP_KERNEL);
@@ -636,6 +647,7 @@ err_find_dev:
 static int spidev_release(struct inode *inode, struct file *filp)
 {
 	struct spidev_data	*spidev;
+	int			status = 0;
 
 	mutex_lock(&device_list_lock);
 	spidev = filp->private_data;
@@ -652,11 +664,11 @@ static int spidev_release(struct inode *inode, struct file *filp)
 		kfree(spidev->rx_buffer);
 		spidev->rx_buffer = NULL;
 
-		spin_lock_irq(&spidev->spi_lock);
 		if (spidev->spi)
 			spidev->speed_hz = spidev->spi->max_speed_hz;
 
 		/* ... after we unbound from the underlying device? */
+		spin_lock_irq(&spidev->spi_lock);
 		dofree = (spidev->spi == NULL);
 		spin_unlock_irq(&spidev->spi_lock);
 
@@ -665,7 +677,7 @@ static int spidev_release(struct inode *inode, struct file *filp)
 	}
 	mutex_unlock(&device_list_lock);
 
-	return 0;
+	return status;
 }
 
 static const struct file_operations spidev_fops = {
@@ -695,47 +707,9 @@ static struct class *spidev_class;
 #ifdef CONFIG_OF
 static const struct of_device_id spidev_dt_ids[] = {
 	{ .compatible = "rohm,dh2228fv" },
-	{ .compatible = "lineartechnology,ltc2488" },
 	{},
 };
 MODULE_DEVICE_TABLE(of, spidev_dt_ids);
-#endif
-
-#ifdef CONFIG_ACPI
-
-/* Dummy SPI devices not to be used in production systems */
-#define SPIDEV_ACPI_DUMMY	1
-
-static const struct acpi_device_id spidev_acpi_ids[] = {
-	/*
-	 * The ACPI SPT000* devices are only meant for development and
-	 * testing. Systems used in production should have a proper ACPI
-	 * description of the connected peripheral and they should also use
-	 * a proper driver instead of poking directly to the SPI bus.
-	 */
-	{ "SPT0001", SPIDEV_ACPI_DUMMY },
-	{ "SPT0002", SPIDEV_ACPI_DUMMY },
-	{ "SPT0003", SPIDEV_ACPI_DUMMY },
-	{},
-};
-MODULE_DEVICE_TABLE(acpi, spidev_acpi_ids);
-
-static void spidev_probe_acpi(struct spi_device *spi)
-{
-	const struct acpi_device_id *id;
-
-	if (!has_acpi_companion(&spi->dev))
-		return;
-
-	id = acpi_match_device(spidev_acpi_ids, &spi->dev);
-	if (WARN_ON(!id))
-		return;
-
-	if (id->driver_data == SPIDEV_ACPI_DUMMY)
-		dev_warn(&spi->dev, "do not use this driver in production systems!\n");
-}
-#else
-static inline void spidev_probe_acpi(struct spi_device *spi) {}
 #endif
 
 /*-------------------------------------------------------------------------*/
@@ -748,7 +722,7 @@ static int spidev_probe(struct spi_device *spi)
 
 	/*
 	 * spidev should never be referenced in DT without a specific
-	 * compatible string, it is a Linux implementation thing
+	 * compatbile string, it is a Linux implementation thing
 	 * rather than a description of the hardware.
 	 */
 	if (spi->dev.of_node && !of_match_device(spidev_dt_ids, &spi->dev)) {
@@ -756,8 +730,6 @@ static int spidev_probe(struct spi_device *spi)
 		WARN_ON(spi->dev.of_node &&
 			!of_match_device(spidev_dt_ids, &spi->dev));
 	}
-
-	spidev_probe_acpi(spi);
 
 	/* Allocate driver data */
 	spidev = kzalloc(sizeof(*spidev), GFP_KERNEL);
@@ -828,8 +800,8 @@ static int spidev_remove(struct spi_device *spi)
 static struct spi_driver spidev_spi_driver = {
 	.driver = {
 		.name =		"spidev",
+		.owner =	THIS_MODULE,
 		.of_match_table = of_match_ptr(spidev_dt_ids),
-		.acpi_match_table = ACPI_PTR(spidev_acpi_ids),
 	},
 	.probe =	spidev_probe,
 	.remove =	spidev_remove,

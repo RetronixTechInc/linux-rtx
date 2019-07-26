@@ -1,5 +1,5 @@
 /*
- * Montage Technology M88DS3103/M88RS6000 demodulator driver
+ * Montage M88DS3103 demodulator driver
  *
  * Copyright (C) 2013 Antti Palosaari <crope@iki.fi>
  *
@@ -22,32 +22,29 @@
 #include "dvb_math.h"
 #include <linux/firmware.h>
 #include <linux/i2c-mux.h>
-#include <linux/regmap.h>
 #include <linux/math64.h>
 
 #define M88DS3103_FIRMWARE "dvb-demod-m88ds3103.fw"
 #define M88RS6000_FIRMWARE "dvb-demod-m88rs6000.fw"
+#define M88DS3103_MCLK_KHZ 96000
 #define M88RS6000_CHIP_ID 0x74
 #define M88DS3103_CHIP_ID 0x70
 
-struct m88ds3103_dev {
-	struct i2c_client *client;
-	struct regmap_config regmap_config;
-	struct regmap *regmap;
-	struct m88ds3103_config config;
+struct m88ds3103_priv {
+	struct i2c_adapter *i2c;
+	/* mutex needed due to own tuner I2C adapter */
+	struct mutex i2c_mutex;
 	const struct m88ds3103_config *cfg;
 	struct dvb_frontend fe;
-	enum fe_delivery_system delivery_system;
-	enum fe_status fe_status;
-	u32 dvbv3_ber; /* for old DVBv3 API read_ber */
+	fe_delivery_system_t delivery_system;
+	fe_status_t fe_status;
+	u32 ber;
 	bool warm; /* FW running */
-	struct i2c_mux_core *muxc;
+	struct i2c_adapter *i2c_adapter;
 	/* auto detect chip id to do different config */
 	u8 chip_id;
 	/* main mclk is calculated for M88RS6000 dynamically */
-	s32 mclk;
-	u64 post_bit_error;
-	u64 post_bit_count;
+	u32 mclk_khz;
 };
 
 struct m88ds3103_reg_val {

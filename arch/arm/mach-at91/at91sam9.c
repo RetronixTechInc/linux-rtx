@@ -61,7 +61,9 @@ static void __init at91sam9_common_init(void)
 	if (soc != NULL)
 		soc_dev = soc_device_to_device(soc);
 
-	of_platform_default_populate(NULL, NULL, soc_dev);
+	of_platform_populate(NULL, of_default_bus_match_table, NULL, soc_dev);
+
+	arm_pm_idle = at91sam9_idle;
 }
 
 static void __init at91sam9_dt_device_init(void)
@@ -70,7 +72,7 @@ static void __init at91sam9_dt_device_init(void)
 	at91sam9260_pm_init();
 }
 
-static const char *const at91_dt_board_compat[] __initconst = {
+static const char *at91_dt_board_compat[] __initconst = {
 	"atmel,at91sam9",
 	NULL
 };
@@ -87,7 +89,7 @@ static void __init at91sam9g45_dt_device_init(void)
 	at91sam9g45_pm_init();
 }
 
-static const char *const at91sam9g45_board_compat[] __initconst = {
+static const char *at91sam9g45_board_compat[] __initconst = {
 	"atmel,at91sam9g45",
 	NULL
 };
@@ -104,7 +106,7 @@ static void __init at91sam9x5_dt_device_init(void)
 	at91sam9x5_pm_init();
 }
 
-static const char *const at91sam9x5_board_compat[] __initconst = {
+static const char *at91sam9x5_board_compat[] __initconst = {
 	"atmel,at91sam9x5",
 	"atmel,at91sam9n12",
 	NULL

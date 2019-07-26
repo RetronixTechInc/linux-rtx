@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2011-2015 Freescale Semiconductor, Inc. All Rights Reserved.
+ * Copyright (C) 2011-2016 Freescale Semiconductor, Inc. All Rights Reserved.
  */
 
 /*
@@ -48,7 +48,22 @@ struct mxc_dispdrv_entry {
 	bool active;
 	void *priv;
 	struct list_head list;
+	struct device *dev;
 };
+
+void mxc_dispdrv_setdev(struct mxc_dispdrv_handle *drv_handle, struct device *dev)
+{
+	struct mxc_dispdrv_entry *dentry;
+	dentry = (struct mxc_dispdrv_entry *)drv_handle;
+	dentry->dev = dev;
+}
+
+struct device *mxc_dispdrv_getdev(struct mxc_dispdrv_handle *drv_handle)
+{
+	struct mxc_dispdrv_entry *dentry;
+	dentry = (struct mxc_dispdrv_entry *)drv_handle;
+	return dentry->dev;
+}
 
 struct mxc_dispdrv_handle *mxc_dispdrv_register(struct mxc_dispdrv_driver *drv)
 {
@@ -89,7 +104,7 @@ EXPORT_SYMBOL_GPL(mxc_dispdrv_unregister);
 struct mxc_dispdrv_handle *mxc_dispdrv_gethandle(char *name,
 	struct mxc_dispdrv_setting *setting)
 {
-	int ret = -ENODEV, found = 0;
+	int ret, found = 0;
 	struct mxc_dispdrv_entry *entry;
 
 	mutex_lock(&dispdrv_lock);
@@ -106,7 +121,7 @@ struct mxc_dispdrv_handle *mxc_dispdrv_gethandle(char *name,
 	}
 	mutex_unlock(&dispdrv_lock);
 
-	return found ? (struct mxc_dispdrv_handle *)entry:ERR_PTR(ret);
+	return found ? (struct mxc_dispdrv_handle *)entry:ERR_PTR(-ENODEV);
 }
 EXPORT_SYMBOL_GPL(mxc_dispdrv_gethandle);
 

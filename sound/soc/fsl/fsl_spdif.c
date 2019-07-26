@@ -90,7 +90,6 @@ struct spdif_mixer_control {
  * @rxclk: rx clock sources for capture
  * @coreclk: core clock for register access via DMA
  * @sysclk: system clock for rx clock rate measurement
- * @spbaclk: SPBA clock (optional, depending on SoC design)
  * @dma_params_tx: DMA parameters for transmit channel
  * @dma_params_rx: DMA parameters for receive channel
  */
@@ -109,7 +108,7 @@ struct fsl_spdif_priv {
 	struct clk *rxclk;
 	struct clk *coreclk;
 	struct clk *sysclk;
-	struct clk *spbaclk;
+	struct clk *dmaclk;
 	struct snd_dmaengine_dai_dma_data dma_params_tx;
 	struct snd_dmaengine_dai_dma_data dma_params_rx;
 	/* regcache for SRPC */
@@ -174,7 +173,7 @@ static void spdif_irq_uqrx_full(struct fsl_spdif_priv *spdif_priv, char name)
 	if (*pos >= size * 2) {
 		*pos = 0;
 	} else if (unlikely((*pos % size) + 3 > size)) {
-		dev_err(&pdev->dev, "User bit receive buffer overflow\n");
+		dev_err(&pdev->dev, "User bit receivce buffer overflow\n");
 		return;
 	}
 
@@ -452,8 +451,7 @@ static int fsl_spdif_startup(struct snd_pcm_substream *substream,
 	struct fsl_spdif_priv *spdif_priv = snd_soc_dai_get_drvdata(rtd->cpu_dai);
 	struct platform_device *pdev = spdif_priv->pdev;
 	struct regmap *regmap = spdif_priv->regmap;
-	u32 scr, mask;
-	int i;
+	u32 scr, mask, i;
 	int ret;
 
 	pm_runtime_get_sync(cpu_dai->dev);
@@ -466,12 +464,10 @@ static int fsl_spdif_startup(struct snd_pcm_substream *substream,
 			return ret;
 		}
 
-		if (!IS_ERR(spdif_priv->spbaclk)) {
-			ret = clk_prepare_enable(spdif_priv->spbaclk);
-			if (ret) {
-				dev_err(&pdev->dev, "failed to enable spba clock\n");
-				goto err_spbaclk;
-			}
+		ret = clk_prepare_enable(spdif_priv->dmaclk);
+		if (ret) {
+			dev_err(&pdev->dev, "failed to enable dma clock\n");
+			return ret;
 		}
 
 		ret = spdif_softreset(spdif_priv);
@@ -491,18 +487,13 @@ static int fsl_spdif_startup(struct snd_pcm_substream *substream,
 		mask = SCR_TXFIFO_AUTOSYNC_MASK | SCR_TXFIFO_CTRL_MASK |
 			SCR_TXSEL_MASK | SCR_USRC_SEL_MASK |
 			SCR_TXFIFO_FSEL_MASK;
-		for (i = 0; i < SPDIF_TXRATE_MAX; i++) {
-			ret = clk_prepare_enable(spdif_priv->txclk[i]);
-			if (ret)
-				goto disable_txclk;
-		}
+		for (i = 0; i < SPDIF_TXRATE_MAX; i++)
+			clk_prepare_enable(spdif_priv->txclk[i]);
 	} else {
 		scr = SCR_RXFIFO_FSEL_IF8 | SCR_RXFIFO_AUTOSYNC;
 		mask = SCR_RXFIFO_FSEL_MASK | SCR_RXFIFO_AUTOSYNC_MASK|
 			SCR_RXFIFO_CTL_MASK | SCR_RXFIFO_OFF_MASK;
-		ret = clk_prepare_enable(spdif_priv->rxclk);
-		if (ret)
-			goto err;
+		clk_prepare_enable(spdif_priv->rxclk);
 	}
 	regmap_update_bits(regmap, REG_SPDIF_SCR, mask, scr);
 
@@ -511,13 +502,7 @@ static int fsl_spdif_startup(struct snd_pcm_substream *substream,
 
 	return 0;
 
-disable_txclk:
-	for (i--; i >= 0; i--)
-		clk_disable_unprepare(spdif_priv->txclk[i]);
 err:
-	if (!IS_ERR(spdif_priv->spbaclk))
-		clk_disable_unprepare(spdif_priv->spbaclk);
-err_spbaclk:
 	clk_disable_unprepare(spdif_priv->coreclk);
 
 	return ret;
@@ -551,8 +536,7 @@ static void fsl_spdif_shutdown(struct snd_pcm_substream *substream,
 		spdif_intr_status_clear(spdif_priv);
 		regmap_update_bits(regmap, REG_SPDIF_SCR,
 				SCR_LOW_POWER, SCR_LOW_POWER);
-		if (!IS_ERR(spdif_priv->spbaclk))
-			clk_disable_unprepare(spdif_priv->spbaclk);
+		clk_disable_unprepare(spdif_priv->dmaclk);
 		clk_disable_unprepare(spdif_priv->coreclk);
 	}
 
@@ -731,7 +715,7 @@ static int fsl_spdif_subcode_get(struct snd_kcontrol *kcontrol,
 	return ret;
 }
 
-/* Q-subcode information. The byte size is SPDIF_UBITS_SIZE/8 */
+/* Q-subcode infomation. The byte size is SPDIF_UBITS_SIZE/8 */
 static int fsl_spdif_qinfo(struct snd_kcontrol *kcontrol,
 				struct snd_ctl_elem_info *uinfo)
 {
@@ -763,7 +747,7 @@ static int fsl_spdif_qget(struct snd_kcontrol *kcontrol,
 	return ret;
 }
 
-/* Valid bit information */
+/* Valid bit infomation */
 static int fsl_spdif_rx_vbit_info(struct snd_kcontrol *kcontrol,
 				struct snd_ctl_elem_info *uinfo)
 {
@@ -831,7 +815,7 @@ static int fsl_spdif_tx_vbit_put(struct snd_kcontrol *kcontrol,
 	return 0;
 }
 
-/* DPLL lock information */
+/* DPLL lock infomation */
 static int fsl_spdif_rxrate_info(struct snd_kcontrol *kcontrol,
 				struct snd_ctl_elem_info *uinfo)
 {
@@ -1145,7 +1129,7 @@ static const struct regmap_config fsl_spdif_regmap_config = {
 	.readable_reg = fsl_spdif_readable_reg,
 	.volatile_reg = fsl_spdif_volatile_reg,
 	.writeable_reg = fsl_spdif_writeable_reg,
-	.cache_type = REGCACHE_FLAT,
+	.cache_type = REGCACHE_RBTREE,
 };
 
 static u32 fsl_spdif_txclk_caldiv(struct fsl_spdif_priv *spdif_priv,
@@ -1315,9 +1299,12 @@ static int fsl_spdif_probe(struct platform_device *pdev)
 		return PTR_ERR(spdif_priv->coreclk);
 	}
 
-	spdif_priv->spbaclk = devm_clk_get(&pdev->dev, "spba");
-	if (IS_ERR(spdif_priv->spbaclk))
-		dev_warn(&pdev->dev, "no spba clock in devicetree\n");
+	/* Get dma clock for dma script operation */
+	spdif_priv->dmaclk = devm_clk_get(&pdev->dev, "dma");
+	if (IS_ERR(spdif_priv->dmaclk)) {
+		dev_err(&pdev->dev, "no dma clock in devicetree\n");
+		return PTR_ERR(spdif_priv->dmaclk);
+	}
 
 	/* Select clock source for rx/tx clock */
 	spdif_priv->rxclk = devm_clk_get(&pdev->dev, "rxtx1");
@@ -1378,6 +1365,20 @@ static int fsl_spdif_probe(struct platform_device *pdev)
 	return ret;
 }
 
+#ifdef CONFIG_PM
+static int fsl_spdif_runtime_resume(struct device *dev)
+{
+	request_bus_freq(BUS_FREQ_HIGH);
+	return 0;
+}
+
+static int fsl_spdif_runtime_suspend(struct device *dev)
+{
+	release_bus_freq(BUS_FREQ_HIGH);
+	return 0;
+}
+#endif
+
 #ifdef CONFIG_PM_SLEEP
 static int fsl_spdif_suspend(struct device *dev)
 {
@@ -1403,24 +1404,13 @@ static int fsl_spdif_resume(struct device *dev)
 }
 #endif /* CONFIG_PM_SLEEP */
 
-#ifdef CONFIG_PM
-static int fsl_spdif_runtime_resume(struct device *dev)
-{
-	request_bus_freq(BUS_FREQ_HIGH);
-	return 0;
-}
-
-static int fsl_spdif_runtime_suspend(struct device *dev)
-{
-	release_bus_freq(BUS_FREQ_HIGH);
-	return 0;
-}
-#endif
-
 static const struct dev_pm_ops fsl_spdif_pm = {
+#ifdef CONFIG_PM
+	SET_RUNTIME_PM_OPS(fsl_spdif_runtime_suspend,
+			fsl_spdif_runtime_resume,
+			NULL)
+#endif
 	SET_SYSTEM_SLEEP_PM_OPS(fsl_spdif_suspend, fsl_spdif_resume)
-	SET_RUNTIME_PM_OPS(fsl_spdif_runtime_suspend, fsl_spdif_runtime_resume,
-			   NULL)
 };
 
 static const struct of_device_id fsl_spdif_dt_ids[] = {

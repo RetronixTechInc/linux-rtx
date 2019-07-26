@@ -72,13 +72,14 @@ void coda_sysctl_clean(void);
 } while (0)
 
 
-#define CODA_FREE(ptr, size) kvfree((ptr))
+#define CODA_FREE(ptr,size) \
+    do { if (size < PAGE_SIZE) kfree((ptr)); else vfree((ptr)); } while (0)
 
 /* inode to cnode access functions */
 
 static inline struct coda_inode_info *ITOC(struct inode *inode)
 {
-	return container_of(inode, struct coda_inode_info, vfs_inode);
+	return list_entry(inode, struct coda_inode_info, vfs_inode);
 }
 
 static __inline__ struct CodaFid *coda_i2f(struct inode *inode)

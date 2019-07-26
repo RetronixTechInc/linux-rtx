@@ -7,22 +7,31 @@
  *
  * Copyright (C) 2008-2011 Gabor Juhos <juhosg@openwrt.org>
  * Copyright (C) 2008 Imre Kaloz <kaloz@openwrt.org>
- * Copyright (C) 2013 John Crispin <john@phrozen.org>
+ * Copyright (C) 2013 John Crispin <blogic@openwrt.org>
  */
 
 #ifndef _RT305X_REGS_H_
 #define _RT305X_REGS_H_
 
-extern enum ralink_soc_type ralink_soc;
+enum rt305x_soc_type {
+	RT305X_SOC_UNKNOWN = 0,
+	RT305X_SOC_RT3050,
+	RT305X_SOC_RT3052,
+	RT305X_SOC_RT3350,
+	RT305X_SOC_RT3352,
+	RT305X_SOC_RT5350,
+};
+
+extern enum rt305x_soc_type rt305x_soc;
 
 static inline int soc_is_rt3050(void)
 {
-	return ralink_soc == RT305X_SOC_RT3050;
+	return rt305x_soc == RT305X_SOC_RT3050;
 }
 
 static inline int soc_is_rt3052(void)
 {
-	return ralink_soc == RT305X_SOC_RT3052;
+	return rt305x_soc == RT305X_SOC_RT3052;
 }
 
 static inline int soc_is_rt305x(void)
@@ -32,17 +41,17 @@ static inline int soc_is_rt305x(void)
 
 static inline int soc_is_rt3350(void)
 {
-	return ralink_soc == RT305X_SOC_RT3350;
+	return rt305x_soc == RT305X_SOC_RT3350;
 }
 
 static inline int soc_is_rt3352(void)
 {
-	return ralink_soc == RT305X_SOC_RT3352;
+	return rt305x_soc == RT305X_SOC_RT3352;
 }
 
 static inline int soc_is_rt5350(void)
 {
-	return ralink_soc == RT305X_SOC_RT5350;
+	return rt305x_soc == RT305X_SOC_RT5350;
 }
 
 #define RT305X_SYSC_BASE		0x10000000

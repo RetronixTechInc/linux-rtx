@@ -1,6 +1,5 @@
 /*
  * Copyright (C) 2013-2016 Freescale Semiconductor, Inc.
- * Copyright 2017 NXP.
  *
  * The code contained herein is licensed under the GNU General Public
  * License. You may obtain a copy of the GNU General Public License
@@ -69,8 +68,7 @@ static void imx_anatop_enable_weak2p5(bool enable)
 
 	regmap_read(anatop, ANADIG_ANA_MISC0, &val);
 
-	if (cpu_is_imx6sx() || cpu_is_imx6ul() || cpu_is_imx6ull()
-		|| cpu_is_imx6sll())
+	if (cpu_is_imx6sx() || cpu_is_imx6ul())
 		mask = BM_ANADIG_ANA_MISC0_V3_STOP_MODE_CONFIG;
 	else if (cpu_is_imx6sl())
 		mask = BM_ANADIG_ANA_MISC0_V2_STOP_MODE_CONFIG;
@@ -97,8 +95,7 @@ static inline void imx_anatop_enable_2p5_pulldown(bool enable)
 
 static inline void imx_anatop_disconnect_high_snvs(bool enable)
 {
-	if (cpu_is_imx6sx() || cpu_is_imx6ul() || cpu_is_imx6ull() ||
-		cpu_is_imx6sll())
+	if (cpu_is_imx6sx() || cpu_is_imx6ul())
 		regmap_write(anatop, ANADIG_ANA_MISC0 +
 			(enable ? REG_SET : REG_CLR),
 			BM_ANADIG_ANA_MISC0_V2_DISCON_HIGH_SNVS);
@@ -146,20 +143,18 @@ void imx_anatop_pre_suspend(void)
 		return;
 	}
 
-	if (cpu_is_imx6q() && imx_get_soc_revision() >= IMX_CHIP_REVISION_2_0)
+	if (cpu_is_imx6q() && imx_get_soc_revision() == IMX_CHIP_REVISION_2_0)
 		imx_anatop_disable_pu(true);
 
-	if ((imx_mmdc_get_ddr_type() == IMX_DDR_TYPE_LPDDR2 ||
-		imx_mmdc_get_ddr_type() == IMX_MMDC_DDR_TYPE_LPDDR3) &&
-		!imx_gpc_usb_wakeup_enabled() && !imx_gpc_enet_wakeup_enabled())
+	if ((imx_mmdc_get_ddr_type() == IMX_DDR_TYPE_LPDDR2) &&
+		!imx_gpc_usb_wakeup_enabled())
 		imx_anatop_enable_2p5_pulldown(true);
 	else
 		imx_anatop_enable_weak2p5(true);
 
 	imx_anatop_enable_fet_odrive(true);
 
-	if (cpu_is_imx6sl() || cpu_is_imx6sx() || cpu_is_imx6ul() ||
-		cpu_is_imx6ull() || cpu_is_imx6sll())
+	if (cpu_is_imx6sl() || cpu_is_imx6sx() || cpu_is_imx6ul())
 		imx_anatop_disconnect_high_snvs(true);
 }
 
@@ -176,21 +171,20 @@ void imx_anatop_post_resume(void)
 		return;
 	}
 
-	if (cpu_is_imx6q() && imx_get_soc_revision() >= IMX_CHIP_REVISION_2_0)
+	if (cpu_is_imx6q() && imx_get_soc_revision() == IMX_CHIP_REVISION_2_0)
 		imx_anatop_disable_pu(false);
 
-	if ((imx_mmdc_get_ddr_type() == IMX_DDR_TYPE_LPDDR2 ||
-		imx_mmdc_get_ddr_type() == IMX_MMDC_DDR_TYPE_LPDDR3) &&
-		!imx_gpc_usb_wakeup_enabled() && !imx_gpc_enet_wakeup_enabled())
+	if ((imx_mmdc_get_ddr_type() == IMX_DDR_TYPE_LPDDR2) &&
+		!imx_gpc_usb_wakeup_enabled())
 		imx_anatop_enable_2p5_pulldown(false);
 	else
 		imx_anatop_enable_weak2p5(false);
 
 	imx_anatop_enable_fet_odrive(false);
 
-	if (cpu_is_imx6sl() || cpu_is_imx6sx() || cpu_is_imx6ul() ||
-		cpu_is_imx6ull() || cpu_is_imx6sll())
+	if (cpu_is_imx6sl() || cpu_is_imx6sx() || cpu_is_imx6ul())
 		imx_anatop_disconnect_high_snvs(false);
+
 }
 
 static void imx_anatop_usb_chrg_detect_disable(void)
@@ -210,7 +204,6 @@ void __init imx_init_revision_from_anatop(void)
 	unsigned int revision;
 	u32 digprog;
 	u16 offset = ANADIG_DIGPROG;
-	u16 major_part, minor_part;
 
 	np = of_find_compatible_node(NULL, NULL, "fsl,imx6q-anatop");
 	anatop_base = of_iomap(np, 0);
@@ -222,25 +215,41 @@ void __init imx_init_revision_from_anatop(void)
 	digprog = readl_relaxed(anatop_base + offset);
 	iounmap(anatop_base);
 
-	/*
-	 * On i.MX7D digprog value match linux version format, so
-	 * it needn't map again and we can use register value directly.
-	 */
-	if (of_device_is_compatible(np, "fsl,imx7d-anatop")) {
-		revision = digprog & 0xff;
-	} else {
+	switch (digprog & 0xff) {
+	case 0:
+		if (digprog >> 8 & 0x01)
+			revision = IMX_CHIP_REVISION_2_0;
+		else
+			revision = IMX_CHIP_REVISION_1_0;
+		break;
+	case 1:
+		revision = IMX_CHIP_REVISION_1_1;
+		break;
+	case 2:
+		revision = IMX_CHIP_REVISION_1_2;
+		break;
+	case 3:
+		revision = IMX_CHIP_REVISION_1_3;
+		break;
+	case 4:
+		revision = IMX_CHIP_REVISION_1_4;
+		break;
+	case 5:
 		/*
-		 * MAJOR: [15:8], the major silicon revison;
-		 * MINOR: [7: 0], the minor silicon revison;
-		 *
-		 * please refer to the i.MX RM for the detailed
-		 * silicon revison bit define.
-		 * format the major part and minor part to match the
-		 * linux kernel soc version format.
+		 * i.MX6DQ TO1.5 is defined as Rev 1.3 in Data Sheet, marked
+		 * as 'D' in Part Number last character.
 		 */
-		major_part = (digprog >> 8) & 0xf;
-		minor_part = digprog & 0xf;
-		revision = ((major_part + 1) << 4) | minor_part;
+		revision = IMX_CHIP_REVISION_1_5;
+		break;
+	default:
+		/*
+		 * Fail back to return raw register value instead of 0xff.
+		 * It will be easy know version information in SOC if it
+		 * can't recongized by known version. And some chip like
+		 * i.MX7D soc digprog value match linux version format,
+		 * needn't map again and direct use register value.
+		 */
+		revision = digprog & 0xff;
 	}
 
 	mxc_set_cpu_type(digprog >> 16 & 0xff);

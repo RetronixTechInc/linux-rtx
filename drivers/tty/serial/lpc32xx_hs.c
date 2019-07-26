@@ -691,13 +691,12 @@ static int serial_hs_lpc32xx_probe(struct platform_device *pdev)
 	p->port.mapbase = res->start;
 	p->port.membase = NULL;
 
-	ret = platform_get_irq(pdev, 0);
-	if (ret < 0) {
+	p->port.irq = platform_get_irq(pdev, 0);
+	if (p->port.irq < 0) {
 		dev_err(&pdev->dev, "Error getting irq for HS UART port %d\n",
 			uarts_registered);
-		return ret;
+		return p->port.irq;
 	}
-	p->port.irq = ret;
 
 	p->port.iotype = UPIO_MEM32;
 	p->port.uartclk = LPC32XX_MAIN_OSC_FREQ;

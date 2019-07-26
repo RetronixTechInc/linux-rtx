@@ -138,9 +138,7 @@ static inline int zl10039_writereg(struct zl10039_state *state,
 				const enum zl10039_reg_addr reg,
 				const u8 val)
 {
-	const u8 tmp = val; /* see gcc.gnu.org/bugzilla/show_bug.cgi?id=81715 */
-
-	return zl10039_write(state, reg, &tmp, 1);
+	return zl10039_write(state, reg, &val, 1);
 }
 
 static int zl10039_init(struct dvb_frontend *fe)
@@ -257,7 +255,7 @@ static int zl10039_release(struct dvb_frontend *fe)
 	return 0;
 }
 
-static const struct dvb_tuner_ops zl10039_ops = {
+static struct dvb_tuner_ops zl10039_ops = {
 	.release = zl10039_release,
 	.init = zl10039_init,
 	.sleep = zl10039_sleep,

@@ -402,7 +402,7 @@ static int wm8955_put_deemph(struct snd_kcontrol *kcontrol,
 {
 	struct snd_soc_codec *codec = snd_soc_kcontrol_codec(kcontrol);
 	struct wm8955_priv *wm8955 = snd_soc_codec_get_drvdata(codec);
-	unsigned int deemph = ucontrol->value.integer.value[0];
+	int deemph = ucontrol->value.integer.value[0];
 
 	if (deemph > 1)
 		return -EINVAL;
@@ -785,7 +785,7 @@ static int wm8955_set_bias_level(struct snd_soc_codec *codec,
 		break;
 
 	case SND_SOC_BIAS_STANDBY:
-		if (snd_soc_codec_get_bias_level(codec) == SND_SOC_BIAS_OFF) {
+		if (codec->dapm.bias_level == SND_SOC_BIAS_OFF) {
 			ret = regulator_bulk_enable(ARRAY_SIZE(wm8955->supplies),
 						    wm8955->supplies);
 			if (ret != 0) {
@@ -838,6 +838,7 @@ static int wm8955_set_bias_level(struct snd_soc_codec *codec,
 				       wm8955->supplies);
 		break;
 	}
+	codec->dapm.bias_level = level;
 	return 0;
 }
 
@@ -928,7 +929,7 @@ static int wm8955_probe(struct snd_soc_codec *codec)
 					    WM8955_DMEN, WM8955_DMEN);
 	}
 
-	snd_soc_codec_force_bias_level(codec, SND_SOC_BIAS_STANDBY);
+	wm8955_set_bias_level(codec, SND_SOC_BIAS_STANDBY);
 
 	/* Bias level configuration will have done an extra enable */
 	regulator_bulk_disable(ARRAY_SIZE(wm8955->supplies), wm8955->supplies);
@@ -940,19 +941,17 @@ err_enable:
 	return ret;
 }
 
-static const struct snd_soc_codec_driver soc_codec_dev_wm8955 = {
+static struct snd_soc_codec_driver soc_codec_dev_wm8955 = {
 	.probe =	wm8955_probe,
 	.set_bias_level = wm8955_set_bias_level,
 	.suspend_bias_off = true,
 
-	.component_driver = {
-		.controls		= wm8955_snd_controls,
-		.num_controls		= ARRAY_SIZE(wm8955_snd_controls),
-		.dapm_widgets		= wm8955_dapm_widgets,
-		.num_dapm_widgets	= ARRAY_SIZE(wm8955_dapm_widgets),
-		.dapm_routes		= wm8955_dapm_routes,
-		.num_dapm_routes	= ARRAY_SIZE(wm8955_dapm_routes),
-	},
+	.controls =	wm8955_snd_controls,
+	.num_controls = ARRAY_SIZE(wm8955_snd_controls),
+	.dapm_widgets = wm8955_dapm_widgets,
+	.num_dapm_widgets = ARRAY_SIZE(wm8955_dapm_widgets),
+	.dapm_routes =	wm8955_dapm_routes,
+	.num_dapm_routes = ARRAY_SIZE(wm8955_dapm_routes),
 };
 
 static const struct regmap_config wm8955_regmap = {
@@ -1011,6 +1010,7 @@ MODULE_DEVICE_TABLE(i2c, wm8955_i2c_id);
 static struct i2c_driver wm8955_i2c_driver = {
 	.driver = {
 		.name = "wm8955",
+		.owner = THIS_MODULE,
 	},
 	.probe =    wm8955_i2c_probe,
 	.remove =   wm8955_i2c_remove,

@@ -549,11 +549,15 @@ static void x25_asy_receive_buf(struct tty_struct *tty,
 
 static int x25_asy_open_tty(struct tty_struct *tty)
 {
-	struct x25_asy *sl;
+	struct x25_asy *sl = tty->disc_data;
 	int err;
 
 	if (tty->ops->write == NULL)
 		return -EOPNOTSUPP;
+
+	/* First make sure we're not already connected. */
+	if (sl && sl->magic == X25_ASY_MAGIC)
+		return -EEXIST;
 
 	/* OK.  Find a free X.25 channel to use. */
 	sl = x25_asy_alloc();
@@ -571,10 +575,8 @@ static int x25_asy_open_tty(struct tty_struct *tty)
 
 	/* Perform the low-level X.25 async init */
 	err = x25_asy_open(sl->dev);
-	if (err) {
-		x25_asy_free(sl);
+	if (err)
 		return err;
-	}
 	/* Done.  We have linked the TTY line to a channel. */
 	return 0;
 }

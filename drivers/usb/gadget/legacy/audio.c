@@ -15,6 +15,7 @@
 #include <linux/module.h>
 #include <linux/usb/composite.h>
 
+#include "gadget_chips.h"
 #define DRIVER_DESC		"Linux USB Audio Gadget"
 #define DRIVER_VERSION		"Feb 2, 2012"
 
@@ -123,7 +124,7 @@ static struct usb_device_descriptor device_desc = {
 	.bLength =		sizeof device_desc,
 	.bDescriptorType =	USB_DT_DEVICE,
 
-	/* .bcdUSB = DYNAMIC */
+	.bcdUSB =		__constant_cpu_to_le16(0x200),
 
 #ifdef CONFIG_GADGET_UAC1
 	.bDeviceClass =		USB_CLASS_PER_INTERFACE,
@@ -140,8 +141,8 @@ static struct usb_device_descriptor device_desc = {
 	 * we support.  (As does bNumConfigurations.)  These values can
 	 * also be overridden by module parameters.
 	 */
-	.idVendor =		cpu_to_le16(AUDIO_VENDOR_NUM),
-	.idProduct =		cpu_to_le16(AUDIO_PRODUCT_NUM),
+	.idVendor =		__constant_cpu_to_le16(AUDIO_VENDOR_NUM),
+	.idProduct =		__constant_cpu_to_le16(AUDIO_PRODUCT_NUM),
 	/* .bcdDevice = f(hardware) */
 	/* .iManufacturer = DYNAMIC */
 	/* .iProduct = DYNAMIC */

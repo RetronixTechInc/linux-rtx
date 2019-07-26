@@ -22,11 +22,9 @@
  * Authors: Ben Skeggs
  */
 
-#include "nouveau_drv.h"
+#include "nouveau_drm.h"
 #include "nouveau_dma.h"
 #include "nouveau_fence.h"
-
-#include <nvif/if0004.h>
 
 struct nv04_fence_chan {
 	struct nouveau_fence_chan base;
@@ -59,10 +57,8 @@ nv04_fence_sync(struct nouveau_fence *fence,
 static u32
 nv04_fence_read(struct nouveau_channel *chan)
 {
-	struct nv04_nvsw_get_ref_v0 args = {};
-	WARN_ON(nvif_object_mthd(&chan->nvsw, NV04_NVSW_GET_REF,
-				 &args, sizeof(args)));
-	return args.ref;
+	struct nvkm_fifo_chan *fifo = nvxx_fifo_chan(chan);;
+	return atomic_read(&fifo->refcnt);
 }
 
 static void

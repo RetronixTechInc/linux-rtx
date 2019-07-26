@@ -1953,7 +1953,7 @@ static struct ldc_mtable_entry *alloc_npages(struct ldc_iommu *iommu,
 
 	entry = iommu_tbl_range_alloc(NULL, &iommu->iommu_map_table,
 				      npages, NULL, (unsigned long)-1, 0);
-	if (unlikely(entry == IOMMU_ERROR_CODE))
+	if (unlikely(entry < 0))
 		return NULL;
 
 	return iommu->page_table + entry;
@@ -2086,7 +2086,6 @@ int ldc_map_sg(struct ldc_channel *lp,
 	struct cookie_state state;
 	struct ldc_iommu *iommu;
 	int err;
-	struct scatterlist *s;
 
 	if (map_perm & ~LDC_MAP_ALL)
 		return -EINVAL;
@@ -2113,10 +2112,9 @@ int ldc_map_sg(struct ldc_channel *lp,
 	state.pte_idx = (base - iommu->page_table);
 	state.nc = 0;
 
-	for_each_sg(sg, s, num_sg, i) {
-		fill_cookies(&state, page_to_pfn(sg_page(s)) << PAGE_SHIFT,
-			     s->offset, s->length);
-	}
+	for (i = 0; i < num_sg; i++)
+		fill_cookies(&state, page_to_pfn(sg_page(&sg[i])) << PAGE_SHIFT,
+			     sg[i].offset, sg[i].length);
 
 	return state.nc;
 }

@@ -57,7 +57,6 @@ static int patch_cmi9880(struct hda_codec *codec)
 		return -ENOMEM;
 
 	codec->spec = spec;
-	codec->patch_ops = cmi_auto_patch_ops;
 	cfg = &spec->gen.autocfg;
 	snd_hda_gen_spec_init(&spec->gen);
 
@@ -68,6 +67,7 @@ static int patch_cmi9880(struct hda_codec *codec)
 	if (err < 0)
 		goto error;
 
+	codec->patch_ops = cmi_auto_patch_ops;
 	return 0;
 
  error:
@@ -86,7 +86,6 @@ static int patch_cmi8888(struct hda_codec *codec)
 		return -ENOMEM;
 
 	codec->spec = spec;
-	codec->patch_ops = cmi_auto_patch_ops;
 	cfg = &spec->gen.autocfg;
 	snd_hda_gen_spec_init(&spec->gen);
 
@@ -113,6 +112,7 @@ static int patch_cmi8888(struct hda_codec *codec)
 		}
 	}
 
+	codec->patch_ops = cmi_auto_patch_ops;
 	return 0;
 
  error:
@@ -123,19 +123,22 @@ static int patch_cmi8888(struct hda_codec *codec)
 /*
  * patch entries
  */
-static const struct hda_device_id snd_hda_id_cmedia[] = {
-	HDA_CODEC_ENTRY(0x13f68888, "CMI8888", patch_cmi8888),
-	HDA_CODEC_ENTRY(0x13f69880, "CMI9880", patch_cmi9880),
-	HDA_CODEC_ENTRY(0x434d4980, "CMI9880", patch_cmi9880),
+static const struct hda_codec_preset snd_hda_preset_cmedia[] = {
+	{ .id = 0x13f68888, .name = "CMI8888", .patch = patch_cmi8888 },
+	{ .id = 0x13f69880, .name = "CMI9880", .patch = patch_cmi9880 },
+ 	{ .id = 0x434d4980, .name = "CMI9880", .patch = patch_cmi9880 },
 	{} /* terminator */
 };
-MODULE_DEVICE_TABLE(hdaudio, snd_hda_id_cmedia);
+
+MODULE_ALIAS("snd-hda-codec-id:13f68888");
+MODULE_ALIAS("snd-hda-codec-id:13f69880");
+MODULE_ALIAS("snd-hda-codec-id:434d4980");
 
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("C-Media HD-audio codec");
 
 static struct hda_codec_driver cmedia_driver = {
-	.id = snd_hda_id_cmedia,
+	.preset = snd_hda_preset_cmedia,
 };
 
 module_hda_codec_driver(cmedia_driver);

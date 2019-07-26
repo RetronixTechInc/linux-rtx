@@ -65,7 +65,7 @@ static void *ibmebus_alloc_coherent(struct device *dev,
 				    size_t size,
 				    dma_addr_t *dma_handle,
 				    gfp_t flag,
-				    unsigned long attrs)
+				    struct dma_attrs *attrs)
 {
 	void *mem;
 
@@ -78,7 +78,7 @@ static void *ibmebus_alloc_coherent(struct device *dev,
 static void ibmebus_free_coherent(struct device *dev,
 				  size_t size, void *vaddr,
 				  dma_addr_t dma_handle,
-				  unsigned long attrs)
+				  struct dma_attrs *attrs)
 {
 	kfree(vaddr);
 }
@@ -88,7 +88,7 @@ static dma_addr_t ibmebus_map_page(struct device *dev,
 				   unsigned long offset,
 				   size_t size,
 				   enum dma_data_direction direction,
-				   unsigned long attrs)
+				   struct dma_attrs *attrs)
 {
 	return (dma_addr_t)(page_address(page) + offset);
 }
@@ -97,7 +97,7 @@ static void ibmebus_unmap_page(struct device *dev,
 			       dma_addr_t dma_addr,
 			       size_t size,
 			       enum dma_data_direction direction,
-			       unsigned long attrs)
+			       struct dma_attrs *attrs)
 {
 	return;
 }
@@ -105,7 +105,7 @@ static void ibmebus_unmap_page(struct device *dev,
 static int ibmebus_map_sg(struct device *dev,
 			  struct scatterlist *sgl,
 			  int nents, enum dma_data_direction direction,
-			  unsigned long attrs)
+			  struct dma_attrs *attrs)
 {
 	struct scatterlist *sg;
 	int i;
@@ -121,7 +121,7 @@ static int ibmebus_map_sg(struct device *dev,
 static void ibmebus_unmap_sg(struct device *dev,
 			     struct scatterlist *sg,
 			     int nents, enum dma_data_direction direction,
-			     unsigned long attrs)
+			     struct dma_attrs *attrs)
 {
 	return;
 }
@@ -180,7 +180,6 @@ static int ibmebus_create_device(struct device_node *dn)
 static int ibmebus_create_devices(const struct of_device_id *matches)
 {
 	struct device_node *root, *child;
-	struct device *dev;
 	int ret = 0;
 
 	root = of_find_node_by_path("/");
@@ -189,12 +188,9 @@ static int ibmebus_create_devices(const struct of_device_id *matches)
 		if (!of_match_node(matches, child))
 			continue;
 
-		dev = bus_find_device(&ibmebus_bus_type, NULL, child,
-				      ibmebus_match_node);
-		if (dev) {
-			put_device(dev);
+		if (bus_find_device(&ibmebus_bus_type, NULL, child,
+				    ibmebus_match_node))
 			continue;
-		}
 
 		ret = ibmebus_create_device(child);
 		if (ret) {
@@ -231,7 +227,7 @@ int ibmebus_request_irq(u32 ist, irq_handler_t handler,
 {
 	unsigned int irq = irq_create_mapping(NULL, ist);
 
-	if (!irq)
+	if (irq == NO_IRQ)
 		return -EINVAL;
 
 	return request_irq(irq, handler, irq_flags, devname, dev_id);
@@ -266,7 +262,6 @@ static ssize_t ibmebus_store_probe(struct bus_type *bus,
 				   const char *buf, size_t count)
 {
 	struct device_node *dn = NULL;
-	struct device *dev;
 	char *path;
 	ssize_t rc = 0;
 
@@ -274,10 +269,8 @@ static ssize_t ibmebus_store_probe(struct bus_type *bus,
 	if (!path)
 		return -ENOMEM;
 
-	dev = bus_find_device(&ibmebus_bus_type, NULL, path,
-			      ibmebus_match_path);
-	if (dev) {
-		put_device(dev);
+	if (bus_find_device(&ibmebus_bus_type, NULL, path,
+			    ibmebus_match_path)) {
 		printk(KERN_WARNING "%s: %s has already been probed\n",
 		       __func__, path);
 		rc = -EEXIST;
@@ -314,7 +307,6 @@ static ssize_t ibmebus_store_remove(struct bus_type *bus,
 	if ((dev = bus_find_device(&ibmebus_bus_type, NULL, path,
 				   ibmebus_match_path))) {
 		of_device_unregister(to_platform_device(dev));
-		put_device(dev);
 
 		kfree(path);
 		return count;
@@ -416,7 +408,7 @@ static ssize_t modalias_show(struct device *dev,
 	return len+1;
 }
 
-static struct device_attribute ibmebus_bus_device_attrs[] = {
+struct device_attribute ibmebus_bus_device_attrs[] = {
 	__ATTR_RO(devspec),
 	__ATTR_RO(name),
 	__ATTR_RO(modalias),

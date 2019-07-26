@@ -58,7 +58,6 @@
 #include <linux/slab.h>
 #include <linux/io.h>
 #include <linux/goldfish.h>
-#include <linux/dma-mapping.h>
 #include <linux/mm.h>
 #include <linux/acpi.h>
 
@@ -158,8 +157,8 @@ static u32 goldfish_cmd_status(struct goldfish_pipe *pipe, u32 cmd)
 	struct goldfish_pipe_dev *dev = pipe->dev;
 
 	spin_lock_irqsave(&dev->lock, flags);
-	gf_write_ptr(pipe, dev->base + PIPE_REG_CHANNEL,
-		     dev->base + PIPE_REG_CHANNEL_HIGH);
+	gf_write64((u64)(unsigned long)pipe, dev->base + PIPE_REG_CHANNEL,
+				dev->base + PIPE_REG_CHANNEL_HIGH);
 	writel(cmd, dev->base + PIPE_REG_COMMAND);
 	status = readl(dev->base + PIPE_REG_STATUS);
 	spin_unlock_irqrestore(&dev->lock, flags);
@@ -172,8 +171,8 @@ static void goldfish_cmd(struct goldfish_pipe *pipe, u32 cmd)
 	struct goldfish_pipe_dev *dev = pipe->dev;
 
 	spin_lock_irqsave(&dev->lock, flags);
-	gf_write_ptr(pipe, dev->base + PIPE_REG_CHANNEL,
-		     dev->base + PIPE_REG_CHANNEL_HIGH);
+	gf_write64((u64)(unsigned long)pipe, dev->base + PIPE_REG_CHANNEL,
+				dev->base + PIPE_REG_CHANNEL_HIGH);
 	writel(cmd, dev->base + PIPE_REG_COMMAND);
 	spin_unlock_irqrestore(&dev->lock, flags);
 }
@@ -217,16 +216,17 @@ static int valid_batchbuffer_addr(struct goldfish_pipe_dev *dev,
 static int setup_access_params_addr(struct platform_device *pdev,
 					struct goldfish_pipe_dev *dev)
 {
-	dma_addr_t dma_handle;
+	u64 paddr;
 	struct access_params *aps;
 
-	aps = dmam_alloc_coherent(&pdev->dev, sizeof(struct access_params),
-				  &dma_handle, GFP_KERNEL);
+	aps = devm_kzalloc(&pdev->dev, sizeof(struct access_params), GFP_KERNEL);
 	if (!aps)
-		return -ENOMEM;
+		return -1;
 
-	writel(upper_32_bits(dma_handle), dev->base + PIPE_REG_PARAMS_ADDR_HIGH);
-	writel(lower_32_bits(dma_handle), dev->base + PIPE_REG_PARAMS_ADDR_LOW);
+	/* FIXME */
+	paddr = __pa(aps);
+	writel((u32)(paddr >> 32), dev->base + PIPE_REG_PARAMS_ADDR_HIGH);
+	writel((u32)paddr, dev->base + PIPE_REG_PARAMS_ADDR_LOW);
 
 	if (valid_batchbuffer_addr(dev, aps)) {
 		dev->aps = aps;
@@ -263,7 +263,7 @@ static int access_with_param(struct goldfish_pipe_dev *dev, const int cmd,
 }
 
 static ssize_t goldfish_pipe_read_write(struct file *filp, char __user *buffer,
-				       size_t bufflen, int is_write)
+				    size_t bufflen, int is_write)
 {
 	unsigned long irq_flags;
 	struct goldfish_pipe *pipe = filp->private_data;
@@ -276,7 +276,7 @@ static ssize_t goldfish_pipe_read_write(struct file *filp, char __user *buffer,
 		return -EIO;
 
 	/* Null reads or writes succeeds */
-	if (unlikely(bufflen == 0))
+	if (unlikely(bufflen) == 0)
 		return 0;
 
 	/* Check the buffer range for access */
@@ -292,10 +292,10 @@ static ssize_t goldfish_pipe_read_write(struct file *filp, char __user *buffer,
 	address_end = address + bufflen;
 
 	while (address < address_end) {
-		unsigned long page_end = (address & PAGE_MASK) + PAGE_SIZE;
-		unsigned long next     = page_end < address_end ? page_end
-								: address_end;
-		unsigned long avail    = next - address;
+		unsigned long  page_end = (address & PAGE_MASK) + PAGE_SIZE;
+		unsigned long  next     = page_end < address_end ? page_end
+								 : address_end;
+		unsigned long  avail    = next - address;
 		int status, wakeBit;
 		struct page *page;
 
@@ -309,37 +309,35 @@ static ssize_t goldfish_pipe_read_write(struct file *filp, char __user *buffer,
 		 * much memory to the process.
 		 */
 		down_read(&current->mm->mmap_sem);
-		ret = get_user_pages(address, 1, is_write ? 0 : FOLL_WRITE,
-				&page, NULL);
+		ret = get_user_pages(current, current->mm, address, 1,
+				     !is_write, 0, &page, NULL);
 		up_read(&current->mm->mmap_sem);
 		if (ret < 0)
-			break;
+			return ret;
 
 		if (dev->version) {
 			/* Device version 1 or newer (qemu-android) expects the
-			 * physical address.
-			 */
+			 * physical address. */
 			xaddr = page_to_phys(page) | (address & ~PAGE_MASK);
 		} else {
 			/* Device version 0 (classic emulator) expects the
-			 * virtual address.
-			 */
+			 * virtual address. */
 			xaddr = address;
 		}
 
 		/* Now, try to transfer the bytes in the current page */
 		spin_lock_irqsave(&dev->lock, irq_flags);
 		if (access_with_param(dev,
-				is_write ? CMD_WRITE_BUFFER : CMD_READ_BUFFER,
-				xaddr, avail, pipe, &status)) {
-			gf_write_ptr(pipe, dev->base + PIPE_REG_CHANNEL,
-				     dev->base + PIPE_REG_CHANNEL_HIGH);
+				      is_write ? CMD_WRITE_BUFFER : CMD_READ_BUFFER,
+				      xaddr, avail, pipe, &status)) {
+			gf_write64((u64)(unsigned long)pipe,
+				   dev->base + PIPE_REG_CHANNEL,
+				   dev->base + PIPE_REG_CHANNEL_HIGH);
 			writel(avail, dev->base + PIPE_REG_SIZE);
-			gf_write_ptr((void *)xaddr,
-				     dev->base + PIPE_REG_ADDRESS,
-				     dev->base + PIPE_REG_ADDRESS_HIGH);
+			gf_write64(xaddr, dev->base + PIPE_REG_ADDRESS,
+				dev->base + PIPE_REG_ADDRESS_HIGH);
 			writel(is_write ? CMD_WRITE_BUFFER : CMD_READ_BUFFER,
-					dev->base + PIPE_REG_COMMAND);
+			       dev->base + PIPE_REG_COMMAND);
 			status = readl(dev->base + PIPE_REG_STATUS);
 		}
 		spin_unlock_irqrestore(&dev->lock, irq_flags);
@@ -357,7 +355,7 @@ static ssize_t goldfish_pipe_read_write(struct file *filp, char __user *buffer,
 			break;
 		} else if (status < 0 && count > 0) {
 			/*
-			 * An error occurred and we already transferred
+			 * An error occured and we already transfered
 			 * something on one of the previous pages.
 			 * Just return what we already copied and log this
 			 * err.
@@ -368,7 +366,7 @@ static ssize_t goldfish_pipe_read_write(struct file *filp, char __user *buffer,
 			 */
 			if (status != PIPE_ERROR_AGAIN)
 				pr_info_ratelimited("goldfish_pipe: backend returned error %d on %s\n",
-					status, is_write ? "write" : "read");
+					    status, is_write ? "write" : "read");
 			ret = 0;
 			break;
 		}
@@ -392,7 +390,7 @@ static ssize_t goldfish_pipe_read_write(struct file *filp, char __user *buffer,
 
 		/* Tell the emulator we're going to wait for a wake event */
 		goldfish_cmd(pipe,
-			is_write ? CMD_WAKE_ON_WRITE : CMD_WAKE_ON_READ);
+		             is_write ? CMD_WAKE_ON_WRITE : CMD_WAKE_ON_READ);
 
 		/* Unlock the pipe, then wait for the wake signal */
 		mutex_unlock(&pipe->lock);
@@ -400,16 +398,22 @@ static ssize_t goldfish_pipe_read_write(struct file *filp, char __user *buffer,
 		while (test_bit(wakeBit, &pipe->flags)) {
 			if (wait_event_interruptible(
 					pipe->wake_queue,
-					!test_bit(wakeBit, &pipe->flags)))
-				return -ERESTARTSYS;
+					!test_bit(wakeBit, &pipe->flags))) {
+				ret = -ERESTARTSYS;
+				break;
+			}
 
-			if (test_bit(BIT_CLOSED_ON_HOST, &pipe->flags))
-				return -EIO;
+			if (test_bit(BIT_CLOSED_ON_HOST, &pipe->flags)) {
+				ret = -EIO;
+				break;
+			}
 		}
 
 		/* Try to re-acquire the lock */
-		if (mutex_lock_interruptible(&pipe->lock))
-			return -ERESTARTSYS;
+		if (mutex_lock_interruptible(&pipe->lock)) {
+			ret = -ERESTARTSYS;
+			break;
+		}
 	}
 	mutex_unlock(&pipe->lock);
 
@@ -471,7 +475,7 @@ static irqreturn_t goldfish_pipe_interrupt(int irq, void *dev_id)
 
 	/*
 	 * We're going to read from the emulator a list of (channel,flags)
-	 * pairs corresponding to the wake events that occurred on each
+	 * pairs corresponding to the wake events that occured on each
 	 * blocked pipe (i.e. channel).
 	 */
 	spin_lock_irqsave(&dev->lock, irq_flags);
@@ -627,8 +631,7 @@ static int goldfish_pipe_probe(struct platform_device *pdev)
 
 	/* Although the pipe device in the classic Android emulator does not
 	 * recognize the 'version' register, it won't treat this as an error
-	 * either and will simply return 0, which is fine.
-	 */
+	 * either and will simply return 0, which is fine. */
 	dev->version = readl(dev->base + PIPE_REG_VERSION);
 	return 0;
 
@@ -652,7 +655,7 @@ static const struct acpi_device_id goldfish_pipe_acpi_match[] = {
 MODULE_DEVICE_TABLE(acpi, goldfish_pipe_acpi_match);
 
 static const struct of_device_id goldfish_pipe_of_match[] = {
-	{ .compatible = "google,android-pipe", },
+	{ .compatible = "generic,android-pipe", },
 	{},
 };
 MODULE_DEVICE_TABLE(of, goldfish_pipe_of_match);

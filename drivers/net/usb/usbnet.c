@@ -323,10 +323,7 @@ void usbnet_skb_return (struct usbnet *dev, struct sk_buff *skb)
 		return;
 	}
 
-	/* only update if unset to allow minidriver rx_fixup override */
-	if (skb->protocol == 0)
-		skb->protocol = eth_type_trans (skb, dev->net);
-
+	skb->protocol = eth_type_trans (skb, dev->net);
 	dev->net->stats.rx_packets++;
 	dev->net->stats.rx_bytes += skb->len;
 
@@ -355,7 +352,6 @@ void usbnet_update_max_qlen(struct usbnet *dev)
 		dev->tx_qlen = MAX_QUEUE_MEMORY / dev->hard_mtu;
 		break;
 	case USB_SPEED_SUPER:
-	case USB_SPEED_SUPER_PLUS:
 		/*
 		 * Not take default 5ms qlen for super speed HC to
 		 * save memory, and iperf tests show 2.5ms qlen can
@@ -394,11 +390,8 @@ int usbnet_change_mtu (struct net_device *net, int new_mtu)
 	dev->hard_mtu = net->mtu + net->hard_header_len;
 	if (dev->rx_urb_size == old_hard_mtu) {
 		dev->rx_urb_size = dev->hard_mtu;
-		if (dev->rx_urb_size > old_rx_urb_size) {
-			usbnet_pause_rx(dev);
+		if (dev->rx_urb_size > old_rx_urb_size)
 			usbnet_unlink_rx_urbs(dev);
-			usbnet_resume_rx(dev);
-		}
 	}
 
 	/* max qlen depend on hard_mtu and rx_urb_size */
@@ -435,18 +428,12 @@ static enum skb_state defer_bh(struct usbnet *dev, struct sk_buff *skb,
 	old_state = entry->state;
 	entry->state = state;
 	__skb_unlink(skb, list);
-
-	/* defer_bh() is never called with list == &dev->done.
-	 * spin_lock_nested() tells lockdep that it is OK to take
-	 * dev->done.lock here with list->lock held.
-	 */
-	spin_lock_nested(&dev->done.lock, SINGLE_DEPTH_NESTING);
-
+	spin_unlock(&list->lock);
+	spin_lock(&dev->done.lock);
 	__skb_queue_tail(&dev->done, skb);
 	if (dev->done.qlen == 1)
 		tasklet_schedule(&dev->bh);
-	spin_unlock(&dev->done.lock);
-	spin_unlock_irqrestore(&list->lock, flags);
+	spin_unlock_irqrestore(&dev->done.lock, flags);
 	return old_state;
 }
 
@@ -485,10 +472,7 @@ static int rx_submit (struct usbnet *dev, struct urb *urb, gfp_t flags)
 		return -ENOLINK;
 	}
 
-	if (test_bit(EVENT_NO_IP_ALIGN, &dev->flags))
-		skb = __netdev_alloc_skb(dev->net, size, flags);
-	else
-		skb = __netdev_alloc_skb_ip_align(dev->net, size, flags);
+	skb = __netdev_alloc_skb_ip_align(dev->net, size, flags);
 	if (!skb) {
 		netif_dbg(dev, rx_err, dev->net, "no rx skb\n");
 		usbnet_defer_kevent (dev, EVENT_RX_MEMORY);
@@ -765,20 +749,6 @@ EXPORT_SYMBOL_GPL(usbnet_unlink_rx_urbs);
 
 /*-------------------------------------------------------------------------*/
 
-static void wait_skb_queue_empty(struct sk_buff_head *q)
-{
-	unsigned long flags;
-
-	spin_lock_irqsave(&q->lock, flags);
-	while (!skb_queue_empty(q)) {
-		spin_unlock_irqrestore(&q->lock, flags);
-		schedule_timeout(msecs_to_jiffies(UNLINK_TIMEOUT_MS));
-		set_current_state(TASK_UNINTERRUPTIBLE);
-		spin_lock_irqsave(&q->lock, flags);
-	}
-	spin_unlock_irqrestore(&q->lock, flags);
-}
-
 // precondition: never called in_interrupt
 static void usbnet_terminate_urbs(struct usbnet *dev)
 {
@@ -792,11 +762,14 @@ static void usbnet_terminate_urbs(struct usbnet *dev)
 		unlink_urbs(dev, &dev->rxq);
 
 	/* maybe wait for deletions to finish. */
-	wait_skb_queue_empty(&dev->rxq);
-	wait_skb_queue_empty(&dev->txq);
-	wait_skb_queue_empty(&dev->done);
-	netif_dbg(dev, ifdown, dev->net,
-		  "waited for %d urb completions\n", temp);
+	while (!skb_queue_empty(&dev->rxq)
+		&& !skb_queue_empty(&dev->txq)
+		&& !skb_queue_empty(&dev->done)) {
+			schedule_timeout(msecs_to_jiffies(UNLINK_TIMEOUT_MS));
+			set_current_state(TASK_UNINTERRUPTIBLE);
+			netif_dbg(dev, ifdown, dev->net,
+				  "waited for %d urb completions\n", temp);
+	}
 	set_current_state(TASK_RUNNING);
 	remove_wait_queue(&dev->wait, &wait);
 }
@@ -1421,7 +1394,7 @@ netdev_tx_t usbnet_start_xmit (struct sk_buff *skb,
 			  "tx: submit urb err %d\n", retval);
 		break;
 	case 0:
-		netif_trans_update(net);
+		net->trans_start = jiffies;
 		__usbnet_queue_skb(&dev->txq, skb, tx_start);
 		if (dev->txq.qlen >= TX_QLEN (dev))
 			netif_stop_queue (net);
@@ -1513,9 +1486,8 @@ static void usbnet_bh (unsigned long param)
 	} else if (netif_running (dev->net) &&
 		   netif_device_present (dev->net) &&
 		   netif_carrier_ok(dev->net) &&
-		   !timer_pending(&dev->delay) &&
-		   !test_bit(EVENT_RX_PAUSED, &dev->flags) &&
-		   !test_bit(EVENT_RX_HALT, &dev->flags)) {
+		   !timer_pending (&dev->delay) &&
+		   !test_bit (EVENT_RX_HALT, &dev->flags)) {
 		int	temp = dev->rxq.qlen;
 
 		if (temp < RX_QLEN(dev)) {
@@ -1672,6 +1644,12 @@ usbnet_probe (struct usb_interface *udev, const struct usb_device_id *prod)
 	 * bind() should set rx_urb_size in that case.
 	 */
 	dev->hard_mtu = net->mtu + net->hard_header_len;
+#if 0
+// dma_supported() is deeply broken on almost all architectures
+	// possible with some EHCI controllers
+	if (dma_supported (&udev->dev, DMA_BIT_MASK(64)))
+		net->features |= NETIF_F_HIGHDMA;
+#endif
 
 	net->netdev_ops = &usbnet_netdev_ops;
 	net->watchdog_timeo = TX_TIMEOUT_JIFFIES;
@@ -1776,13 +1754,6 @@ out3:
 	if (info->unbind)
 		info->unbind (dev, udev);
 out1:
-	/* subdrivers must undo all they did in bind() if they
-	 * fail it, but we may fail later and a deferred kevent
-	 * may trigger an error resubmitting itself and, worse,
-	 * schedule a timer. So we kill it all just in case.
-	 */
-	cancel_work_sync(&dev->kevent);
-	del_timer_sync(&dev->delay);
 	free_netdev(net);
 out:
 	return status;
@@ -1851,7 +1822,7 @@ int usbnet_resume (struct usb_interface *intf)
 				usb_free_urb(res);
 				usb_autopm_put_interface_async(dev->intf);
 			} else {
-				netif_trans_update(dev->net);
+				dev->net->trans_start = jiffies;
 				__skb_queue_tail(&dev->txq, skb);
 			}
 		}
@@ -2065,8 +2036,11 @@ int usbnet_write_cmd_async(struct usbnet *dev, u8 cmd, u8 reqtype,
 		   cmd, reqtype, value, index, size);
 
 	urb = usb_alloc_urb(0, GFP_ATOMIC);
-	if (!urb)
+	if (!urb) {
+		netdev_err(dev->net, "Error allocating URB in"
+			   " %s!\n", __func__);
 		goto fail;
+	}
 
 	if (data) {
 		buf = kmemdup(data, size, GFP_ATOMIC);

@@ -1,7 +1,7 @@
 /*
  * caam - Freescale FSL CAAM support for hw_random
  *
- * Copyright 2011 Freescale Semiconductor, Inc.
+ * Copyright (C) 2011-2015 Freescale Semiconductor, Inc.
  *
  * Based on caamalg.c crypto API driver.
  *
@@ -80,9 +80,12 @@ static struct caam_rng_ctx *rng_ctx;
 
 static inline void rng_unmap_buf(struct device *jrdev, struct buf_data *bd)
 {
-	if (bd->addr)
+	if (bd->addr) {
+		dma_sync_single_for_cpu(jrdev, bd->addr, RN_BUF_SIZE,
+					DMA_FROM_DEVICE);
 		dma_unmap_single(jrdev, bd->addr, RN_BUF_SIZE,
 				 DMA_FROM_DEVICE);
+	}
 }
 
 static inline void rng_unmap_ctx(struct caam_rng_ctx *ctx)
@@ -211,6 +214,9 @@ static inline int rng_create_sh_desc(struct caam_rng_ctx *ctx)
 		dev_err(jrdev, "unable to map shared descriptor\n");
 		return -ENOMEM;
 	}
+	dma_sync_single_for_device(jrdev, ctx->sh_desc_dma, desc_bytes(desc),
+			       DMA_TO_DEVICE);
+
 #ifdef DEBUG
 	print_hex_dump(KERN_ERR, "rng shdesc@: ", DUMP_PREFIX_ADDRESS, 16, 4,
 		       desc, desc_bytes(desc), 1);
@@ -358,7 +364,7 @@ static int __init caam_rng_init(void)
 	struct device_node *dev_node;
 	struct platform_device *pdev;
 	struct device *ctrldev;
-	struct caam_drv_private *priv;
+	void *priv;
 	int err;
 
 	dev_node = of_find_compatible_node(NULL, NULL, "fsl,sec-v4.0");
@@ -385,23 +391,17 @@ static int __init caam_rng_init(void)
 	if (!priv)
 		return -ENODEV;
 
-	/* Check for an instantiated RNG before registration */
-	if (!(rd_reg32(&priv->ctrl->perfmon.cha_num_ls) & CHA_ID_LS_RNG_MASK))
-		return -ENODEV;
-
 	dev = caam_jr_alloc();
 	if (IS_ERR(dev)) {
 		pr_err("Job Ring Device allocation for transform failed\n");
 		return PTR_ERR(dev);
 	}
-	rng_ctx = kmalloc(sizeof(*rng_ctx), GFP_DMA);
-	if (!rng_ctx) {
-		err = -ENOMEM;
-		goto free_caam_alloc;
-	}
+	rng_ctx = kmalloc(sizeof(struct caam_rng_ctx), GFP_DMA);
+	if (!rng_ctx)
+		return -ENOMEM;
 	err = caam_init_rng(rng_ctx, dev);
 	if (err)
-		goto free_rng_ctx;
+		return err;
 
 #ifdef CONFIG_CRYPTO_DEV_FSL_CAAM_RNG_TEST
 	self_test(&caam_rng);
@@ -409,12 +409,6 @@ static int __init caam_rng_init(void)
 
 	dev_info(dev, "registering rng-caam\n");
 	return hwrng_register(&caam_rng);
-
-free_rng_ctx:
-	kfree(rng_ctx);
-free_caam_alloc:
-	caam_jr_free(dev);
-	return err;
 }
 
 module_init(caam_rng_init);

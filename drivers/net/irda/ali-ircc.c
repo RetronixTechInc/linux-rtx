@@ -1031,6 +1031,7 @@ static void ali_ircc_fir_change_speed(struct ali_ircc_cb *priv, __u32 baud)
 static void ali_ircc_sir_change_speed(struct ali_ircc_cb *priv, __u32 speed)
 {
 	struct ali_ircc_cb *self = priv;
+	unsigned long flags;
 	int iobase; 
 	int fcr;    /* FIFO control reg */
 	int lcr;    /* Line control reg */
@@ -1060,6 +1061,8 @@ static void ali_ircc_sir_change_speed(struct ali_ircc_cb *priv, __u32 speed)
 	/* Update accounting for new speed */
 	self->io.speed = speed;
 
+	spin_lock_irqsave(&self->lock, flags);
+
 	divisor = 115200/speed;
 	
 	fcr = UART_FCR_ENABLE_FIFO;
@@ -1086,6 +1089,9 @@ static void ali_ircc_sir_change_speed(struct ali_ircc_cb *priv, __u32 speed)
 	/* without this, the connection will be broken after come back from FIR speed,
 	   but with this, the SIR connection is harder to established */
 	outb((UART_MCR_DTR | UART_MCR_RTS | UART_MCR_OUT2), iobase+UART_MCR);
+	
+	spin_unlock_irqrestore(&self->lock, flags);
+	
 }
 
 static void ali_ircc_change_dongle_speed(struct ali_ircc_cb *priv, int speed)
@@ -1427,7 +1433,7 @@ static netdev_tx_t ali_ircc_fir_hard_xmit(struct sk_buff *skb,
 		/* Check for empty frame */
 		if (!skb->len) {
 			ali_ircc_change_speed(self, speed); 
-			netif_trans_update(dev);
+			dev->trans_start = jiffies;
 			spin_unlock_irqrestore(&self->lock, flags);
 			dev_kfree_skb(skb);
 			return NETDEV_TX_OK;
@@ -1533,7 +1539,7 @@ static netdev_tx_t ali_ircc_fir_hard_xmit(struct sk_buff *skb,
 	/* Restore bank register */
 	switch_bank(iobase, BANK0);
 
-	netif_trans_update(dev);
+	dev->trans_start = jiffies;
 	spin_unlock_irqrestore(&self->lock, flags);
 	dev_kfree_skb(skb);
 
@@ -1946,7 +1952,7 @@ static netdev_tx_t ali_ircc_sir_hard_xmit(struct sk_buff *skb,
 		/* Check for empty frame */
 		if (!skb->len) {
 			ali_ircc_change_speed(self, speed); 
-			netif_trans_update(dev);
+			dev->trans_start = jiffies;
 			spin_unlock_irqrestore(&self->lock, flags);
 			dev_kfree_skb(skb);
 			return NETDEV_TX_OK;
@@ -1966,7 +1972,7 @@ static netdev_tx_t ali_ircc_sir_hard_xmit(struct sk_buff *skb,
 	/* Turn on transmit finished interrupt. Will fire immediately!  */
 	outb(UART_IER_THRI, iobase+UART_IER); 
 
-	netif_trans_update(dev);
+	dev->trans_start = jiffies;
 	spin_unlock_irqrestore(&self->lock, flags);
 
 	dev_kfree_skb(skb);

@@ -22,7 +22,6 @@
 #include <linux/device.h>
 #include <linux/highmem.h>
 #include <linux/backing-dev.h>
-#include <linux/shmem_fs.h>
 #include <linux/splice.h>
 #include <linux/pfn.h>
 #include <linux/export.h>
@@ -60,10 +59,6 @@ static inline int valid_mmap_phys_addr_range(unsigned long pfn, size_t size)
 #endif
 
 #ifdef CONFIG_STRICT_DEVMEM
-static inline int page_is_allowed(unsigned long pfn)
-{
-	return devmem_is_allowed(pfn);
-}
 static inline int range_is_allowed(unsigned long pfn, unsigned long size)
 {
 	u64 from = ((u64)pfn) << PAGE_SHIFT;
@@ -71,18 +66,18 @@ static inline int range_is_allowed(unsigned long pfn, unsigned long size)
 	u64 cursor = from;
 
 	while (cursor < to) {
-		if (!devmem_is_allowed(pfn))
+		if (!devmem_is_allowed(pfn)) {
+			printk(KERN_INFO
+		"Program %s tried to access /dev/mem between %Lx->%Lx.\n",
+				current->comm, from, to);
 			return 0;
+		}
 		cursor += PAGE_SIZE;
 		pfn++;
 	}
 	return 1;
 }
 #else
-static inline int page_is_allowed(unsigned long pfn)
-{
-	return 1;
-}
 static inline int range_is_allowed(unsigned long pfn, unsigned long size)
 {
 	return 1;
@@ -130,31 +125,23 @@ static ssize_t read_mem(struct file *file, char __user *buf,
 
 	while (count > 0) {
 		unsigned long remaining;
-		int allowed;
 
 		sz = size_inside_page(p, count);
 
-		allowed = page_is_allowed(p >> PAGE_SHIFT);
-		if (!allowed)
+		if (!range_is_allowed(p >> PAGE_SHIFT, count))
 			return -EPERM;
-		if (allowed == 2) {
-			/* Show zeros for restricted memory. */
-			remaining = clear_user(buf, sz);
-		} else {
-			/*
-			 * On ia64 if a page has been mapped somewhere as
-			 * uncached, then it must also be accessed uncached
-			 * by the kernel or data corruption may occur.
-			 */
-			ptr = xlate_dev_mem_ptr(p);
-			if (!ptr)
-				return -EFAULT;
 
-			remaining = copy_to_user(buf, ptr, sz);
+		/*
+		 * On ia64 if a page has been mapped somewhere as uncached, then
+		 * it must also be accessed uncached by the kernel or data
+		 * corruption may occur.
+		 */
+		ptr = xlate_dev_mem_ptr(p);
+		if (!ptr)
+			return -EFAULT;
 
-			unxlate_dev_mem_ptr(p, ptr);
-		}
-
+		remaining = copy_to_user(buf, ptr, sz);
+		unxlate_dev_mem_ptr(p, ptr);
 		if (remaining)
 			return -EFAULT;
 
@@ -197,36 +184,30 @@ static ssize_t write_mem(struct file *file, const char __user *buf,
 #endif
 
 	while (count > 0) {
-		int allowed;
-
 		sz = size_inside_page(p, count);
 
-		allowed = page_is_allowed(p >> PAGE_SHIFT);
-		if (!allowed)
+		if (!range_is_allowed(p >> PAGE_SHIFT, sz))
 			return -EPERM;
 
-		/* Skip actual writing when a page is marked as restricted. */
-		if (allowed == 1) {
-			/*
-			 * On ia64 if a page has been mapped somewhere as
-			 * uncached, then it must also be accessed uncached
-			 * by the kernel or data corruption may occur.
-			 */
-			ptr = xlate_dev_mem_ptr(p);
-			if (!ptr) {
-				if (written)
-					break;
-				return -EFAULT;
-			}
+		/*
+		 * On ia64 if a page has been mapped somewhere as uncached, then
+		 * it must also be accessed uncached by the kernel or data
+		 * corruption may occur.
+		 */
+		ptr = xlate_dev_mem_ptr(p);
+		if (!ptr) {
+			if (written)
+				break;
+			return -EFAULT;
+		}
 
-			copied = copy_from_user(ptr, buf, sz);
-			unxlate_dev_mem_ptr(p, ptr);
-			if (copied) {
-				written += sz - copied;
-				if (written)
-					break;
-				return -EFAULT;
-			}
+		copied = copy_from_user(ptr, buf, sz);
+		unxlate_dev_mem_ptr(p, ptr);
+		if (copied) {
+			written += sz - copied;
+			if (written)
+				break;
+			return -EFAULT;
 		}
 
 		buf += sz;
@@ -340,11 +321,6 @@ static const struct vm_operations_struct mmap_mem_ops = {
 static int mmap_mem(struct file *file, struct vm_area_struct *vma)
 {
 	size_t size = vma->vm_end - vma->vm_start;
-	phys_addr_t offset = (phys_addr_t)vma->vm_pgoff << PAGE_SHIFT;
-
-	/* It's illegal to wrap around the end of the physical address space. */
-	if (offset + (phys_addr_t)size - 1 < offset)
-		return -EINVAL;
 
 	if (!valid_mmap_phys_addr_range(vma->vm_pgoff, size))
 		return -EINVAL;
@@ -436,8 +412,6 @@ static ssize_t read_kmem(struct file *file, char __user *buf,
 			 * by the kernel or data corruption may occur
 			 */
 			kbuf = xlate_dev_kmem_ptr((void *)p);
-			if (!virt_addr_valid(kbuf))
-				return -ENXIO;
 
 			if (copy_to_user(buf, kbuf, sz))
 				return -EFAULT;
@@ -508,8 +482,6 @@ static ssize_t do_write_kmem(unsigned long p, const char __user *buf,
 		 * corruption may occur.
 		 */
 		ptr = xlate_dev_kmem_ptr((void *)p);
-		if (!virt_addr_valid(ptr))
-			return -ENXIO;
 
 		copied = copy_from_user(ptr, buf, sz);
 		if (copied) {
@@ -689,28 +661,6 @@ static int mmap_zero(struct file *file, struct vm_area_struct *vma)
 	return 0;
 }
 
-static unsigned long get_unmapped_area_zero(struct file *file,
-				unsigned long addr, unsigned long len,
-				unsigned long pgoff, unsigned long flags)
-{
-#ifdef CONFIG_MMU
-	if (flags & MAP_SHARED) {
-		/*
-		 * mmap_zero() will call shmem_zero_setup() to create a file,
-		 * so use shmem's get_unmapped_area in case it can be huge;
-		 * and pass NULL for file as in mmap.c's get_unmapped_area(),
-		 * so as not to confuse shmem with our handle on "/dev/zero".
-		 */
-		return shmem_get_unmapped_area(NULL, addr, len, pgoff, flags);
-	}
-
-	/* Otherwise flags & MAP_PRIVATE: with no shmem object beneath it */
-	return current->mm->get_unmapped_area(file, addr, len, pgoff, flags);
-#else
-	return -ENOSYS;
-#endif
-}
-
 static ssize_t write_full(struct file *file, const char __user *buf,
 			  size_t count, loff_t *ppos)
 {
@@ -739,13 +689,13 @@ static loff_t memory_lseek(struct file *file, loff_t offset, int orig)
 {
 	loff_t ret;
 
-	inode_lock(file_inode(file));
+	mutex_lock(&file_inode(file)->i_mutex);
 	switch (orig) {
 	case SEEK_CUR:
 		offset += file->f_pos;
 	case SEEK_SET:
 		/* to avoid userland mistaking f_pos=-9 as -EBADF=-9 */
-		if ((unsigned long long)offset >= -MAX_ERRNO) {
+		if (IS_ERR_VALUE((unsigned long long)offset)) {
 			ret = -EOVERFLOW;
 			break;
 		}
@@ -756,7 +706,7 @@ static loff_t memory_lseek(struct file *file, loff_t offset, int orig)
 	default:
 		ret = -EINVAL;
 	}
-	inode_unlock(file_inode(file));
+	mutex_unlock(&file_inode(file)->i_mutex);
 	return ret;
 }
 
@@ -818,7 +768,6 @@ static const struct file_operations zero_fops = {
 	.read_iter	= read_iter_zero,
 	.write_iter	= write_iter_zero,
 	.mmap		= mmap_zero,
-	.get_unmapped_area = get_unmapped_area_zero,
 #ifndef CONFIG_MMU
 	.mmap_capabilities = zero_mmap_capabilities,
 #endif

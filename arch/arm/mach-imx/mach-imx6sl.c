@@ -15,10 +15,12 @@
 #include <linux/regmap.h>
 #include <asm/mach/arch.h>
 #include <asm/mach/map.h>
+#include <asm/system_misc.h>
+#include <linux/memblock.h>
+#include <asm/setup.h>
 
 #include "common.h"
 #include "cpuidle.h"
-#include "hardware.h"
 
 static void __init imx6sl_fec_clk_init(void)
 {
@@ -47,11 +49,7 @@ static void __init imx6sl_init_late(void)
 	if (IS_ENABLED(CONFIG_ARM_IMX6Q_CPUFREQ))
 		platform_device_register_simple("imx6q-cpufreq", -1, NULL, 0);
 
-	/* cpuidle will be enabled later for i.MX6SLL */
-	if (cpu_is_imx6sll())
-		imx6sll_cpuidle_init();
-	else
-		imx6sl_cpuidle_init();
+	imx6sl_cpuidle_init();
 }
 
 static void __init imx6sl_init_machine(void)
@@ -62,10 +60,9 @@ static void __init imx6sl_init_machine(void)
 	if (parent == NULL)
 		pr_warn("failed to initialize soc device\n");
 
-	of_platform_default_populate(NULL, NULL, parent);
+	of_platform_populate(NULL, of_default_bus_match_table, NULL, parent);
 
-	if (!cpu_is_imx6sll())
-		imx6sl_fec_init();
+	imx6sl_fec_init();
 	imx_anatop_init();
 	imx6sl_pm_init();
 }
@@ -77,10 +74,6 @@ static void __init imx6sl_init_irq(void)
 	imx_init_l2cache();
 	imx_src_init();
 	irqchip_init();
-	if (cpu_is_imx6sll())
-		imx6_pm_ccm_init("fsl,imx6sll-ccm");
-	else
-		imx6_pm_ccm_init("fsl,imx6sl-ccm");
 }
 
 static void __init imx6sl_map_io(void)
@@ -91,19 +84,44 @@ static void __init imx6sl_map_io(void)
 	imx_busfreq_map_io();
 #endif
 }
+extern unsigned long int ramoops_phys_addr;
+extern unsigned long int ramoops_mem_size;
+static void imx6sl_reserve(void)
+{
+	phys_addr_t phys;
+	phys_addr_t max_phys;
+	struct meminfo *mi;
+	struct membank *bank;
+
+#ifdef CONFIG_PSTORE_RAM
+	max_phys = memblock_end_of_DRAM();
+	/* reserve 64M for uboot avoid ram console data is cleaned by uboot */
+	phys = memblock_alloc_base(SZ_1M, SZ_4K, max_phys - SZ_64M);
+	if (phys) {
+		memblock_remove(phys, SZ_1M);
+		memblock_reserve(phys, SZ_1M);
+		ramoops_phys_addr = phys;
+		ramoops_mem_size = SZ_1M;
+	} else {
+		ramoops_phys_addr = 0;
+		ramoops_mem_size = 0;
+		pr_err("no memory reserve for ramoops.\n");
+	}
+#endif
+	return;
+}
+
 
 static const char * const imx6sl_dt_compat[] __initconst = {
 	"fsl,imx6sl",
-	"fsl,imx6sll",
 	NULL,
 };
 
 DT_MACHINE_START(IMX6SL, "Freescale i.MX6 SoloLite (Device Tree)")
-	.l2c_aux_val 	= 0,
-	.l2c_aux_mask	= ~0,
 	.map_io		= imx6sl_map_io,
 	.init_irq	= imx6sl_init_irq,
 	.init_machine	= imx6sl_init_machine,
 	.init_late      = imx6sl_init_late,
 	.dt_compat	= imx6sl_dt_compat,
+	.reserve        = imx6sl_reserve,
 MACHINE_END

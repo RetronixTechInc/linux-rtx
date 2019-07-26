@@ -98,7 +98,13 @@ static int dt_remember_or_free_map(struct pinctrl *p, const char *statename,
 
 struct pinctrl_dev *of_pinctrl_get(struct device_node *np)
 {
-	return get_pinctrl_dev_from_of_node(np);
+	struct pinctrl_dev *pctldev;
+
+	pctldev = get_pinctrl_dev_from_of_node(np);
+	if (!pctldev)
+		return NULL;
+
+	return pctldev;
 }
 
 static int dt_to_map_one_config(struct pinctrl *p, const char *statename,
@@ -239,13 +245,8 @@ int pinctrl_dt_to_map(struct pinctrl *p)
 		propname = kasprintf(GFP_KERNEL, "pinctrl-%d", state);
 		prop = of_find_property(np, propname, &size);
 		kfree(propname);
-		if (!prop) {
-			if (state == 0) {
-				of_node_put(np);
-				return -ENODEV;
-			}
+		if (!prop)
 			break;
-		}
 		list = prop->value;
 		size /= sizeof(*list);
 

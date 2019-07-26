@@ -1,5 +1,5 @@
 #include "../util.h"
-#include "../config.h"
+#include "../cache.h"
 #include "../../perf.h"
 #include "libslang.h"
 #include "ui.h"
@@ -44,21 +44,6 @@ void ui_browser__set_percent_color(struct ui_browser *browser,
 void ui_browser__gotorc(struct ui_browser *browser, int y, int x)
 {
 	SLsmg_gotorc(browser->y + y, browser->x + x);
-}
-
-void ui_browser__write_nstring(struct ui_browser *browser __maybe_unused, const char *msg,
-			       unsigned int width)
-{
-	slsmg_write_nstring(msg, width);
-}
-
-void ui_browser__printf(struct ui_browser *browser __maybe_unused, const char *fmt, ...)
-{
-	va_list args;
-
-	va_start(args, fmt);
-	slsmg_vprintf(fmt, args);
-	va_end(args);
 }
 
 static struct list_head *
@@ -249,7 +234,7 @@ void __ui_browser__show_title(struct ui_browser *browser, const char *title)
 {
 	SLsmg_gotorc(0, 0);
 	ui_browser__set_color(browser, HE_COLORSET_ROOT);
-	ui_browser__write_nstring(browser, title, browser->width + 1);
+	slsmg_write_nstring(title, browser->width + 1);
 }
 
 void ui_browser__show_title(struct ui_browser *browser, const char *title)
@@ -393,7 +378,6 @@ int ui_browser__run(struct ui_browser *browser, int delay_secs)
 
 		if (browser->use_navkeypressed && !browser->navkeypressed) {
 			if (key == K_DOWN || key == K_UP ||
-			    (browser->columns && (key == K_LEFT || key == K_RIGHT)) ||
 			    key == K_PGDN || key == K_PGUP ||
 			    key == K_HOME || key == K_END ||
 			    key == ' ') {
@@ -421,18 +405,6 @@ int ui_browser__run(struct ui_browser *browser, int delay_secs)
 				--browser->top_idx;
 				browser->seek(browser, -1, SEEK_CUR);
 			}
-			break;
-		case K_RIGHT:
-			if (!browser->columns)
-				goto out;
-			if (browser->horiz_scroll < browser->columns - 1)
-				++browser->horiz_scroll;
-			break;
-		case K_LEFT:
-			if (!browser->columns)
-				goto out;
-			if (browser->horiz_scroll != 0)
-				--browser->horiz_scroll;
 			break;
 		case K_PGDN:
 		case ' ':
@@ -472,7 +444,6 @@ int ui_browser__run(struct ui_browser *browser, int delay_secs)
 			browser->seek(browser, -offset, SEEK_END);
 			break;
 		default:
-		out:
 			return key;
 		}
 	}
@@ -528,11 +499,11 @@ static struct ui_browser_colorset {
 		.colorset = HE_COLORSET_SELECTED,
 		.name	  = "selected",
 		.fg	  = "black",
-		.bg	  = "yellow",
+		.bg	  = "lightgray",
 	},
 	{
-		.colorset = HE_COLORSET_JUMP_ARROWS,
-		.name	  = "jump_arrows",
+		.colorset = HE_COLORSET_CODE,
+		.name	  = "code",
 		.fg	  = "blue",
 		.bg	  = "default",
 	},
@@ -702,7 +673,7 @@ static void __ui_browser__line_arrow_down(struct ui_browser *browser,
 		ui_browser__gotorc(browser, row, column + 1);
 		SLsmg_draw_hline(2);
 
-		if (++row == 0)
+		if (row++ == 0)
 			goto out;
 	} else
 		row = 0;

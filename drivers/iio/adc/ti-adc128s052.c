@@ -18,6 +18,11 @@
 #include <linux/iio/iio.h>
 #include <linux/regulator/consumer.h>
 
+#define ADC128S052 0
+#define ADC122S021 1
+#define ADC124S021 2
+
+
 struct adc128_configuration {
 	const struct iio_chan_spec	*channels;
 	u8				num_channels;
@@ -27,47 +32,73 @@ struct adc128 {
 	struct spi_device *spi;
 
 	struct regulator *reg;
-	struct mutex lock;
+	
+	int chip_config ;
 
-	u8 buffer[2] ____cacheline_aligned;
+	u8 txbuffer[4] ____cacheline_aligned;
+	u8 rxbuffer[4] ____cacheline_aligned;
+
+	__be16	rx_buf[2] ____cacheline_aligned;
+	__be16	tx_buf[2] ____cacheline_aligned;
+
 };
 
-static int adc128_adc_conversion(struct adc128 *adc, u8 channel)
+static int adc128_adc_conversion(struct iio_dev *indio_dev, u8 channel)
 {
+	struct adc128 *st = iio_priv(indio_dev);
 	int ret;
+	int ret_value ;
+		
+	mutex_lock(&indio_dev->mlock);
+	
+	if ( st->chip_config == ADC124S021 ) {
+		
+		struct spi_transfer t[] = {
+			{
+				.tx_buf = &st->tx_buf[0],
+				.rx_buf = &st->rx_buf[0],
+				.len = 4,
+			}, 
+		};		
+		
+		st->tx_buf[0] = cpu_to_be16((channel << 3));
+		st->tx_buf[1] = cpu_to_be16((channel << 3));
+		ret = spi_sync_transfer(st->spi, t, ARRAY_SIZE(t));
+		ret_value = (st->rx_buf[1]&0xFFF) ;
+		
+	} else {
+		st->txbuffer[0] = (channel << 3);
+		st->txbuffer[1] = 0;
 
-	mutex_lock(&adc->lock);
+		ret = spi_write(st->spi, &st->txbuffer, 2);
+		if (ret < 0) {
+			mutex_unlock(&indio_dev->mlock);
+			return ret;
+		}
 
-	adc->buffer[0] = channel << 3;
-	adc->buffer[1] = 0;
-
-	ret = spi_write(adc->spi, &adc->buffer, 2);
-	if (ret < 0) {
-		mutex_unlock(&adc->lock);
-		return ret;
+		ret = spi_read(st->spi, &st->rxbuffer, 2);
+		
+		ret_value = ((st->rxbuffer[0] << 8 | st->rxbuffer[1]) & 0xFFF) ;
 	}
 
-	ret = spi_read(adc->spi, &adc->buffer, 2);
-
-	mutex_unlock(&adc->lock);
+	mutex_unlock(&indio_dev->mlock);
 
 	if (ret < 0)
 		return ret;
 
-	return ((adc->buffer[0] << 8 | adc->buffer[1]) & 0xFFF);
+	return (ret_value) ;
 }
 
 static int adc128_read_raw(struct iio_dev *indio_dev,
 			   struct iio_chan_spec const *channel, int *val,
 			   int *val2, long mask)
 {
-	struct adc128 *adc = iio_priv(indio_dev);
 	int ret;
-
+	struct adc128 *st = iio_priv(indio_dev);
+	
 	switch (mask) {
 	case IIO_CHAN_INFO_RAW:
-
-		ret = adc128_adc_conversion(adc, channel->channel);
+		ret = adc128_adc_conversion(indio_dev, channel->channel);
 		if (ret < 0)
 			return ret;
 
@@ -76,7 +107,7 @@ static int adc128_read_raw(struct iio_dev *indio_dev,
 
 	case IIO_CHAN_INFO_SCALE:
 
-		ret = regulator_get_voltage(adc->reg);
+		ret = regulator_get_voltage(st->reg);
 		if (ret < 0)
 			return ret;
 
@@ -99,6 +130,24 @@ static int adc128_read_raw(struct iio_dev *indio_dev,
 		.info_mask_shared_by_type = BIT(IIO_CHAN_INFO_SCALE) \
 	}
 
+
+#define ADC128_VOLTAGE_CHANNEL1(num)	\
+	{ \
+		.type = IIO_VOLTAGE, \
+		.indexed = 1, \
+		.channel = (num), \
+		.info_mask_separate = BIT(IIO_CHAN_INFO_RAW), \
+		.info_mask_shared_by_type = BIT(IIO_CHAN_INFO_SCALE) ,\
+		.scan_type = {						\
+			.sign = 'u',					\
+			.realbits = 12,			\
+			.storagebits = 16,				\
+			.endianness = IIO_BE,				\
+		}, \
+	}
+
+	
+
 static const struct iio_chan_spec adc128s052_channels[] = {
 	ADC128_VOLTAGE_CHANNEL(0),
 	ADC128_VOLTAGE_CHANNEL(1),
@@ -116,10 +165,10 @@ static const struct iio_chan_spec adc122s021_channels[] = {
 };
 
 static const struct iio_chan_spec adc124s021_channels[] = {
-	ADC128_VOLTAGE_CHANNEL(0),
-	ADC128_VOLTAGE_CHANNEL(1),
-	ADC128_VOLTAGE_CHANNEL(2),
-	ADC128_VOLTAGE_CHANNEL(3),
+	ADC128_VOLTAGE_CHANNEL1(0),
+	ADC128_VOLTAGE_CHANNEL1(1),
+	ADC128_VOLTAGE_CHANNEL1(2),
+	ADC128_VOLTAGE_CHANNEL1(3),
 };
 
 static const struct adc128_configuration adc128_config[] = {
@@ -146,7 +195,13 @@ static int adc128_probe(struct spi_device *spi)
 
 	adc = iio_priv(indio_dev);
 	adc->spi = spi;
-
+	adc->chip_config = config ;
+	
+	if ( config == ADC124S021 ) {
+		spi->bits_per_word = 16 ;
+		spi->mode |= SPI_MODE_3 ;
+	}
+	
 	spi_set_drvdata(spi, indio_dev);
 
 	indio_dev->dev.parent = &spi->dev;
@@ -165,8 +220,6 @@ static int adc128_probe(struct spi_device *spi)
 	ret = regulator_enable(adc->reg);
 	if (ret < 0)
 		return ret;
-
-	mutex_init(&adc->lock);
 
 	ret = iio_device_register(indio_dev);
 
@@ -193,9 +246,9 @@ static const struct of_device_id adc128_of_match[] = {
 MODULE_DEVICE_TABLE(of, adc128_of_match);
 
 static const struct spi_device_id adc128_id[] = {
-	{ "adc128s052", 0},	/* index into adc128_config */
-	{ "adc122s021",	1},
-	{ "adc124s021", 2},
+	{ "adc128s052", ADC128S052 },	/* index into adc128_config */
+	{ "adc122s021",	ADC122S021 },
+	{ "adc124s021", ADC124S021 },
 	{ }
 };
 MODULE_DEVICE_TABLE(spi, adc128_id);

@@ -153,8 +153,6 @@ static int sunxi_ir_probe(struct platform_device *pdev)
 	if (!ir)
 		return -ENOMEM;
 
-	spin_lock_init(&ir->ir_lock);
-
 	if (of_device_is_compatible(dn, "allwinner,sun5i-a13-ir"))
 		ir->fifo_size = 64;
 	else
@@ -326,7 +324,6 @@ static const struct of_device_id sunxi_ir_match[] = {
 	{ .compatible = "allwinner,sun5i-a13-ir", },
 	{},
 };
-MODULE_DEVICE_TABLE(of, sunxi_ir_match);
 
 static struct platform_driver sunxi_ir_driver = {
 	.probe          = sunxi_ir_probe,

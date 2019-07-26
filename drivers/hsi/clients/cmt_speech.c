@@ -444,21 +444,16 @@ static void cs_hsi_read_on_control_complete(struct hsi_msg *msg)
 	hi->control_state &= ~SSI_CHANNEL_STATE_READING;
 	if (msg->status == HSI_STATUS_ERROR) {
 		dev_err(&hi->cl->device, "Control RX error detected\n");
-		spin_unlock(&hi->lock);
 		cs_hsi_control_read_error(hi, msg);
+		spin_unlock(&hi->lock);
 		goto out;
 	}
 	dev_dbg(&hi->cl->device, "Read on control: %08X\n", cmd);
 	cs_release_cmd(msg);
 	if (hi->flags & CS_FEAT_TSTAMP_RX_CTRL) {
-		struct timespec tspec;
-		struct cs_timestamp *tstamp =
+		struct timespec *tstamp =
 			&hi->mmap_cfg->tstamp_rx_ctrl;
-
-		ktime_get_ts(&tspec);
-
-		tstamp->tv_sec = (__u32) tspec.tv_sec;
-		tstamp->tv_nsec = (__u32) tspec.tv_nsec;
+		do_posix_clock_monotonic_gettime(tstamp);
 	}
 	spin_unlock(&hi->lock);
 
@@ -1110,7 +1105,7 @@ static int cs_char_vma_fault(struct vm_area_struct *vma, struct vm_fault *vmf)
 	return 0;
 }
 
-static const struct vm_operations_struct cs_char_vm_ops = {
+static struct vm_operations_struct cs_char_vm_ops = {
 	.fault	= cs_char_vma_fault,
 };
 
@@ -1275,7 +1270,7 @@ static int cs_char_mmap(struct file *file, struct vm_area_struct *vma)
 	if (vma->vm_end < vma->vm_start)
 		return -EINVAL;
 
-	if (vma_pages(vma) != 1)
+	if (((vma->vm_end - vma->vm_start) >> PAGE_SHIFT) != 1)
 		return -EINVAL;
 
 	vma->vm_flags |= VM_IO | VM_DONTDUMP | VM_DONTEXPAND;

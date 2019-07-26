@@ -26,6 +26,7 @@
 #include <net/ip.h>
 #include <net/pkt_sched.h>
 #include <net/inet_ecn.h>
+#include <net/flow_keys.h>
 
 /*
  * SFB uses two B[l][n] : L x N arrays of bins (L levels, N bins per level)
@@ -258,7 +259,7 @@ static bool sfb_classify(struct sk_buff *skb, struct tcf_proto *fl,
 	struct tcf_result res;
 	int result;
 
-	result = tc_classify(skb, fl, &res, false);
+	result = tc_classify(skb, fl, &res);
 	if (result >= 0) {
 #ifdef CONFIG_NET_CLS_ACT
 		switch (result) {
@@ -275,8 +276,7 @@ static bool sfb_classify(struct sk_buff *skb, struct tcf_proto *fl,
 	return false;
 }
 
-static int sfb_enqueue(struct sk_buff *skb, struct Qdisc *sch,
-		       struct sk_buff **to_free)
+static int sfb_enqueue(struct sk_buff *skb, struct Qdisc *sch)
 {
 
 	struct sfb_sched_data *q = qdisc_priv(sch);
@@ -285,9 +285,9 @@ static int sfb_enqueue(struct sk_buff *skb, struct Qdisc *sch,
 	int i;
 	u32 p_min = ~0;
 	u32 minqlen = ~0;
-	u32 r, sfbhash;
-	u32 slot = q->slot;
+	u32 r, slot, salt, sfbhash;
 	int ret = NET_XMIT_SUCCESS | __NET_XMIT_BYPASS;
+	struct flow_keys keys;
 
 	if (unlikely(sch->q.qlen >= q->limit)) {
 		qdisc_qstats_overlimit(sch);
@@ -309,17 +309,22 @@ static int sfb_enqueue(struct sk_buff *skb, struct Qdisc *sch,
 
 	fl = rcu_dereference_bh(q->filter_list);
 	if (fl) {
-		u32 salt;
-
 		/* If using external classifiers, get result and record it. */
 		if (!sfb_classify(skb, fl, &ret, &salt))
 			goto other_drop;
-		sfbhash = jhash_1word(salt, q->bins[slot].perturbation);
+		keys.src = salt;
+		keys.dst = 0;
+		keys.ports = 0;
 	} else {
-		sfbhash = skb_get_hash_perturb(skb, q->bins[slot].perturbation);
+		skb_flow_dissect(skb, &keys);
 	}
 
+	slot = q->slot;
 
+	sfbhash = jhash_3words((__force u32)keys.dst,
+			       (__force u32)keys.src,
+			       (__force u32)keys.ports,
+			       q->bins[slot].perturbation);
 	if (!sfbhash)
 		sfbhash = 1;
 	sfb_skb_cb(skb)->hashes[slot] = sfbhash;
@@ -351,8 +356,10 @@ static int sfb_enqueue(struct sk_buff *skb, struct Qdisc *sch,
 	if (unlikely(p_min >= SFB_MAX_PROB)) {
 		/* Inelastic flow */
 		if (q->double_buffering) {
-			sfbhash = skb_get_hash_perturb(skb,
-			    q->bins[slot].perturbation);
+			sfbhash = jhash_3words((__force u32)keys.dst,
+					       (__force u32)keys.src,
+					       (__force u32)keys.ports,
+					       q->bins[slot].perturbation);
 			if (!sfbhash)
 				sfbhash = 1;
 			sfb_skb_cb(skb)->hashes[slot] = sfbhash;
@@ -398,9 +405,8 @@ static int sfb_enqueue(struct sk_buff *skb, struct Qdisc *sch,
 	}
 
 enqueue:
-	ret = qdisc_enqueue(skb, child, to_free);
+	ret = qdisc_enqueue(skb, child);
 	if (likely(ret == NET_XMIT_SUCCESS)) {
-		qdisc_qstats_backlog_inc(sch, skb);
 		sch->q.qlen++;
 		increment_qlen(skb, q);
 	} else if (net_xmit_drop_count(ret)) {
@@ -410,7 +416,7 @@ enqueue:
 	return ret;
 
 drop:
-	qdisc_drop(skb, sch, to_free);
+	qdisc_drop(skb, sch);
 	return NET_XMIT_CN;
 other_drop:
 	if (ret & __NET_XMIT_BYPASS)
@@ -429,7 +435,6 @@ static struct sk_buff *sfb_dequeue(struct Qdisc *sch)
 
 	if (skb) {
 		qdisc_bstats_update(sch, skb);
-		qdisc_qstats_backlog_dec(sch, skb);
 		sch->q.qlen--;
 		decrement_qlen(skb, q);
 	}
@@ -452,7 +457,6 @@ static void sfb_reset(struct Qdisc *sch)
 	struct sfb_sched_data *q = qdisc_priv(sch);
 
 	qdisc_reset(q->qdisc);
-	sch->qstats.backlog = 0;
 	sch->q.qlen = 0;
 	q->slot = 0;
 	q->double_buffering = false;
@@ -506,7 +510,7 @@ static int sfb_change(struct Qdisc *sch, struct nlattr *opt)
 
 	limit = ctl->limit;
 	if (limit == 0)
-		limit = qdisc_dev(sch)->tx_queue_len;
+		limit = max_t(u32, qdisc_dev(sch)->tx_queue_len, 1);
 
 	child = fifo_create_dflt(sch, &pfifo_qdisc_ops, limit);
 	if (IS_ERR(child))
@@ -514,8 +518,7 @@ static int sfb_change(struct Qdisc *sch, struct nlattr *opt)
 
 	sch_tree_lock(sch);
 
-	qdisc_tree_reduce_backlog(q->qdisc, q->qdisc->q.qlen,
-				  q->qdisc->qstats.backlog);
+	qdisc_tree_decrease_qlen(q->qdisc, q->qdisc->q.qlen);
 	qdisc_destroy(q->qdisc);
 	q->qdisc = child;
 
@@ -611,7 +614,12 @@ static int sfb_graft(struct Qdisc *sch, unsigned long arg, struct Qdisc *new,
 	if (new == NULL)
 		new = &noop_qdisc;
 
-	*old = qdisc_replace(sch, new, &q->qdisc);
+	sch_tree_lock(sch);
+	*old = q->qdisc;
+	q->qdisc = new;
+	qdisc_tree_decrease_qlen(*old, (*old)->q.qlen);
+	qdisc_reset(*old);
+	sch_tree_unlock(sch);
 	return 0;
 }
 

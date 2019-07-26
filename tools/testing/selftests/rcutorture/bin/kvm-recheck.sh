@@ -43,15 +43,8 @@ do
 		if test -f "$i/console.log"
 		then
 			configcheck.sh $i/.config $i/ConfigFragment
-			if test -r $i/Make.oldconfig.err
-			then
-				cat $i/Make.oldconfig.err
-			fi
 			parse-build.sh $i/Make.out $configfile
-			if test "$TORTURE_SUITE" != rcuperf
-			then
-				parse-torture.sh $i/console.log $configfile
-			fi
+			parse-torture.sh $i/console.log $configfile
 			parse-console.sh $i/console.log $configfile
 			if test -r $i/Warnings
 			then

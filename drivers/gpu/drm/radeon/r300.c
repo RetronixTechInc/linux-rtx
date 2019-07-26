@@ -50,31 +50,6 @@
  */
 
 /*
- * Indirect registers accessor
- */
-uint32_t rv370_pcie_rreg(struct radeon_device *rdev, uint32_t reg)
-{
-	unsigned long flags;
-	uint32_t r;
-
-	spin_lock_irqsave(&rdev->pcie_idx_lock, flags);
-	WREG32(RADEON_PCIE_INDEX, ((reg) & rdev->pcie_reg_mask));
-	r = RREG32(RADEON_PCIE_DATA);
-	spin_unlock_irqrestore(&rdev->pcie_idx_lock, flags);
-	return r;
-}
-
-void rv370_pcie_wreg(struct radeon_device *rdev, uint32_t reg, uint32_t v)
-{
-	unsigned long flags;
-
-	spin_lock_irqsave(&rdev->pcie_idx_lock, flags);
-	WREG32(RADEON_PCIE_INDEX, ((reg) & rdev->pcie_reg_mask));
-	WREG32(RADEON_PCIE_DATA, (v));
-	spin_unlock_irqrestore(&rdev->pcie_idx_lock, flags);
-}
-
-/*
  * rv370,rv380 PCIE GART
  */
 static int rv370_debugfs_pcie_gart_info_init(struct radeon_device *rdev);
@@ -410,7 +385,7 @@ static void r300_gpu_init(struct radeon_device *rdev)
 		 rdev->num_gb_pipes, rdev->num_z_pipes);
 }
 
-int r300_asic_reset(struct radeon_device *rdev, bool hard)
+int r300_asic_reset(struct radeon_device *rdev)
 {
 	struct r100_mc_save save;
 	u32 status, tmp;

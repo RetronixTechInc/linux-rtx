@@ -303,7 +303,6 @@ static enum power_supply_property hidinput_battery_props[] = {
 
 #define HID_BATTERY_QUIRK_PERCENT	(1 << 0) /* always reports percent */
 #define HID_BATTERY_QUIRK_FEATURE	(1 << 1) /* ask for feature report */
-#define HID_BATTERY_QUIRK_IGNORE	(1 << 2) /* completely ignore the battery */
 
 static const struct hid_device_id hid_battery_quirks[] = {
 	{ HID_BLUETOOTH_DEVICE(USB_VENDOR_ID_APPLE,
@@ -321,9 +320,6 @@ static const struct hid_device_id hid_battery_quirks[] = {
 	{ HID_BLUETOOTH_DEVICE(USB_VENDOR_ID_APPLE,
 		USB_DEVICE_ID_APPLE_ALU_WIRELESS_ANSI),
 	  HID_BATTERY_QUIRK_PERCENT | HID_BATTERY_QUIRK_FEATURE },
-	{ HID_BLUETOOTH_DEVICE(USB_VENDOR_ID_ELECOM,
-		USB_DEVICE_ID_ELECOM_BM084),
-	  HID_BATTERY_QUIRK_IGNORE },
 	{}
 };
 
@@ -412,14 +408,6 @@ static bool hidinput_setup_battery(struct hid_device *dev, unsigned report_type,
 	if (dev->battery != NULL)
 		goto out;	/* already initialized? */
 
-	quirks = find_battery_quirk(dev);
-
-	hid_dbg(dev, "device %x:%x:%x %d quirks %d\n",
-		dev->bus, dev->vendor, dev->product, dev->version, quirks);
-
-	if (quirks & HID_BATTERY_QUIRK_IGNORE)
-		goto out;
-
 	psy_desc = kzalloc(sizeof(*psy_desc), GFP_KERNEL);
 	if (psy_desc == NULL)
 		goto out;
@@ -435,6 +423,11 @@ static bool hidinput_setup_battery(struct hid_device *dev, unsigned report_type,
 	psy_desc->num_properties = ARRAY_SIZE(hidinput_battery_props);
 	psy_desc->use_for_apm = 0;
 	psy_desc->get_property = hidinput_get_battery_property;
+
+	quirks = find_battery_quirk(dev);
+
+	hid_dbg(dev, "device %x:%x:%x %d quirks %d\n",
+		dev->bus, dev->vendor, dev->product, dev->version, quirks);
 
 	min = field->logical_minimum;
 	max = field->logical_maximum;
@@ -603,15 +596,6 @@ static void hidinput_configure_usage(struct hid_input *hidinput, struct hid_fiel
 			}
 			break;
 		}
-
-		/*
-		 * Some lazy vendors declare 255 usages for System Control,
-		 * leading to the creation of ABS_X|Y axis and too many others.
-		 * It wouldn't be a problem if joydev doesn't consider the
-		 * device as a joystick then.
-		 */
-		if (field->application == HID_GD_SYSTEM_CONTROL)
-			goto ignore;
 
 		if ((usage->hid & 0xf0) == 0x90) {	/* D-pad */
 			switch (usage->hid) {
@@ -962,7 +946,6 @@ static void hidinput_configure_usage(struct hid_input *hidinput, struct hid_fiel
 	case HID_UP_HPVENDOR2:
 		set_bit(EV_REP, input->evbit);
 		switch (usage->hid & HID_USAGE) {
-		case 0x001: map_key_clear(KEY_MICMUTE);		break;
 		case 0x003: map_key_clear(KEY_BRIGHTNESSDOWN);	break;
 		case 0x004: map_key_clear(KEY_BRIGHTNESSUP);	break;
 		default:    goto ignore;
@@ -977,10 +960,6 @@ static void hidinput_configure_usage(struct hid_input *hidinput, struct hid_fiel
 		goto ignore;
 
 	case HID_UP_LOGIVENDOR:
-		/* intentional fallback */
-	case HID_UP_LOGIVENDOR2:
-		/* intentional fallback */
-	case HID_UP_LOGIVENDOR3:
 		goto ignore;
 
 	case HID_UP_PID:
@@ -1181,17 +1160,13 @@ void hidinput_hid_event(struct hid_device *hid, struct hid_field *field, struct 
 		return;
 
 	/* report the usage code as scancode if the key status has changed */
-	if (usage->type == EV_KEY &&
-	    (!test_bit(usage->code, input->key)) == value)
+	if (usage->type == EV_KEY && !!test_bit(usage->code, input->key) != value)
 		input_event(input, EV_MSC, MSC_SCAN, usage->hid);
 
 	input_event(input, usage->type, usage->code, value);
 
-	if ((field->flags & HID_MAIN_ITEM_RELATIVE) &&
-	    usage->type == EV_KEY && value) {
-		input_sync(input);
+	if ((field->flags & HID_MAIN_ITEM_RELATIVE) && (usage->type == EV_KEY))
 		input_event(input, usage->type, usage->code, 0);
-	}
 }
 
 void hidinput_report_event(struct hid_device *hid, struct hid_report *report)

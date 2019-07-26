@@ -8,11 +8,6 @@
 
 #include "imx6dl-sabresd.dts"
 
-&gpc {
-	/* use ldo-enable, u-boot will check it and configure */
-	fsl,ldo-bypass = <0>;
-};
-
 &hdmi_video {
 	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl_hdmi_hdcp>;
@@ -21,16 +16,4 @@
 
 &i2c2 {
 	status = "disable";
-};
-
-&reg_arm {
-	/delete-property/ vin-supply;
-};
-
-&reg_pu {
-	/delete-property/ vin-supply;
-};
-
-&reg_soc {
-	/delete-property/ vin-supply;
 };

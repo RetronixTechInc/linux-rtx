@@ -70,6 +70,7 @@
 #include <linux/shmem_fs.h>
 #include <linux/slab.h>
 #include <linux/perf_event.h>
+#include <linux/file.h>
 #include <linux/ptrace.h>
 #include <linux/blkdev.h>
 #include <linux/elevator.h>
@@ -80,7 +81,6 @@
 #include <linux/integrity.h>
 #include <linux/proc_ns.h>
 #include <linux/io.h>
-#include <linux/kaiser.h>
 
 #include <asm/io.h>
 #include <asm/bugs.h>
@@ -93,6 +93,9 @@ static int kernel_init(void *);
 extern void init_IRQ(void);
 extern void fork_init(void);
 extern void radix_tree_init(void);
+#ifndef CONFIG_DEBUG_RODATA
+static inline void mark_rodata_ro(void) { }
+#endif
 
 /*
  * Debug helper: via this flag we know that we are in 'early bootup code'
@@ -161,10 +164,10 @@ static const char *panic_later, *panic_param;
 
 extern const struct obs_kernel_param __setup_start[], __setup_end[];
 
-static bool __init obsolete_checksetup(char *line)
+static int __init obsolete_checksetup(char *line)
 {
 	const struct obs_kernel_param *p;
-	bool had_early_param = false;
+	int had_early_param = 0;
 
 	p = __setup_start;
 	do {
@@ -176,13 +179,13 @@ static bool __init obsolete_checksetup(char *line)
 				 * Keep iterating, as we can have early
 				 * params and __setups of same names 8( */
 				if (line[n] == '\0' || line[n] == '=')
-					had_early_param = true;
+					had_early_param = 1;
 			} else if (!p->setup_func) {
 				pr_warn("Parameter %s is obsolete, ignored\n",
 					p->str);
-				return true;
+				return 1;
 			} else if (p->setup_func(line + n))
-				return true;
+				return 1;
 		}
 		p++;
 	} while (p < __setup_end);
@@ -232,8 +235,7 @@ static int __init loglevel(char *str)
 early_param("loglevel", loglevel);
 
 /* Change NUL term back to "=", to make "param" the whole string. */
-static int __init repair_env_string(char *param, char *val,
-				    const char *unused, void *arg)
+static int __init repair_env_string(char *param, char *val, const char *unused)
 {
 	if (val) {
 		/* param=val or param="val"? */
@@ -250,15 +252,14 @@ static int __init repair_env_string(char *param, char *val,
 }
 
 /* Anything after -- gets handed straight to init. */
-static int __init set_init_arg(char *param, char *val,
-			       const char *unused, void *arg)
+static int __init set_init_arg(char *param, char *val, const char *unused)
 {
 	unsigned int i;
 
 	if (panic_later)
 		return 0;
 
-	repair_env_string(param, val, unused, NULL);
+	repair_env_string(param, val, unused);
 
 	for (i = 0; argv_init[i]; i++) {
 		if (i == MAX_INIT_ARGS) {
@@ -275,10 +276,9 @@ static int __init set_init_arg(char *param, char *val,
  * Unknown boot options get handed to init, unless they look like
  * unused parameters (modprobe will find them in /proc/cmdline).
  */
-static int __init unknown_bootoption(char *param, char *val,
-				     const char *unused, void *arg)
+static int __init unknown_bootoption(char *param, char *val, const char *unused)
 {
-	repair_env_string(param, val, unused, NULL);
+	repair_env_string(param, val, unused);
 
 	/* Handle obsolete-style parameters */
 	if (obsolete_checksetup(param))
@@ -380,11 +380,12 @@ static void __init setup_command_line(char *command_line)
 
 static __initdata DECLARE_COMPLETION(kthreadd_done);
 
-static noinline void __ref rest_init(void)
+static noinline void __init_refok rest_init(void)
 {
 	int pid;
 
 	rcu_scheduler_starting();
+	smpboot_thread_init();
 	/*
 	 * We need to spawn init first so that it obtains pid 1, however
 	 * the init task will end up wanting to create kthreads, which, if
@@ -409,8 +410,7 @@ static noinline void __ref rest_init(void)
 }
 
 /* Check for early params. */
-static int __init do_early_param(char *param, char *val,
-				 const char *unused, void *arg)
+static int __init do_early_param(char *param, char *val, const char *unused)
 {
 	const struct obs_kernel_param *p;
 
@@ -429,8 +429,7 @@ static int __init do_early_param(char *param, char *val,
 
 void __init parse_early_options(char *cmdline)
 {
-	parse_args("early options", cmdline, NULL, 0, 0, 0, NULL,
-		   do_early_param);
+	parse_args("early options", cmdline, NULL, 0, 0, 0, do_early_param);
 }
 
 /* Arch code calls this early on, or if not, just before other parsing. */
@@ -448,12 +447,26 @@ void __init parse_early_param(void)
 	done = 1;
 }
 
+/*
+ *	Activate the first processor.
+ */
+
+static void __init boot_cpu_init(void)
+{
+	int cpu = smp_processor_id();
+	/* Mark the boot cpu "present", "online" etc for SMP and UP case */
+	set_cpu_online(cpu, true);
+	set_cpu_active(cpu, true);
+	set_cpu_present(cpu, true);
+	set_cpu_possible(cpu, true);
+}
+
 void __init __weak smp_setup_processor_id(void)
 {
 }
 
 # if THREAD_SIZE >= PAGE_SIZE
-void __init __weak thread_stack_cache_init(void)
+void __init __weak thread_info_cache_init(void)
 {
 }
 #endif
@@ -474,7 +487,6 @@ static void __init mm_init(void)
 	pgtable_init();
 	vmalloc_init();
 	ioremap_huge_init();
-	kaiser_init();
 }
 
 asmlinkage __visible void __init start_kernel(void)
@@ -482,6 +494,11 @@ asmlinkage __visible void __init start_kernel(void)
 	char *command_line;
 	char *after_dashes;
 
+	/*
+	 * Need to run as early as possible, to initialize the
+	 * lockdep hash:
+	 */
+	lockdep_init();
 	set_task_stack_end_magic(&init_task);
 	smp_setup_processor_id();
 	debug_objects_early_init();
@@ -508,7 +525,6 @@ asmlinkage __visible void __init start_kernel(void)
 	setup_command_line(command_line);
 	setup_nr_cpu_ids();
 	setup_per_cpu_areas();
-	boot_cpu_state_init();
 	smp_prepare_boot_cpu();	/* arch-specific boot-cpu hooks */
 
 	build_all_zonelists(NULL, NULL);
@@ -519,10 +535,10 @@ asmlinkage __visible void __init start_kernel(void)
 	after_dashes = parse_args("Booting kernel",
 				  static_command_line, __start___param,
 				  __stop___param - __start___param,
-				  -1, -1, NULL, &unknown_bootoption);
+				  -1, -1, &unknown_bootoption);
 	if (!IS_ERR_OR_NULL(after_dashes))
 		parse_args("Setting init args", after_dashes, NULL, 0, -1, -1,
-			   NULL, set_init_arg);
+			   set_init_arg);
 
 	jump_label_init();
 
@@ -570,7 +586,6 @@ asmlinkage __visible void __init start_kernel(void)
 	timekeeping_init();
 	time_init();
 	sched_clock_postinit();
-	printk_nmi_init();
 	perf_event_init();
 	profile_init();
 	call_function_init();
@@ -628,7 +643,7 @@ asmlinkage __visible void __init start_kernel(void)
 	/* Should be run before the first non-init thread is created */
 	init_espfix_bsp();
 #endif
-	thread_stack_cache_init();
+	thread_info_cache_init();
 	cred_init();
 	fork_init();
 	proc_caches_init();
@@ -636,7 +651,7 @@ asmlinkage __visible void __init start_kernel(void)
 	key_init();
 	security_init();
 	dbg_late_init();
-	vfs_caches_init();
+	vfs_caches_init(totalram_pages);
 	signals_init();
 	/* rootfs populating might need page-writeback */
 	page_writeback_init();
@@ -707,29 +722,24 @@ static int __init initcall_blacklist(char *str)
 
 static bool __init_or_module initcall_blacklisted(initcall_t fn)
 {
+	struct list_head *tmp;
 	struct blacklist_entry *entry;
-	char fn_name[KSYM_SYMBOL_LEN];
-	unsigned long addr;
+	char *fn_name;
 
-	if (list_empty(&blacklisted_initcalls))
+	fn_name = kasprintf(GFP_KERNEL, "%pf", fn);
+	if (!fn_name)
 		return false;
 
-	addr = (unsigned long) dereference_function_descriptor(fn);
-	sprint_symbol_no_offset(fn_name, addr);
-
-	/*
-	 * fn will be "function_name [module_name]" where [module_name] is not
-	 * displayed for built-in init functions.  Strip off the [module_name].
-	 */
-	strreplace(fn_name, ' ', '\0');
-
-	list_for_each_entry(entry, &blacklisted_initcalls, next) {
+	list_for_each(tmp, &blacklisted_initcalls) {
+		entry = list_entry(tmp, struct blacklist_entry, next);
 		if (!strcmp(fn_name, entry->buf)) {
 			pr_debug("initcall %s blacklisted\n", fn_name);
+			kfree(fn_name);
 			return true;
 		}
 	}
 
+	kfree(fn_name);
 	return false;
 }
 #else
@@ -790,7 +800,6 @@ int __init_or_module do_one_initcall(initcall_t fn)
 	}
 	WARN(msgbuf[0], "initcall %pF returned with %s\n", fn, msgbuf);
 
-	add_latent_entropy();
 	return ret;
 }
 
@@ -839,7 +848,7 @@ static void __init do_initcall_level(int level)
 		   initcall_command_line, __start___param,
 		   __stop___param - __start___param,
 		   level, level,
-		   NULL, &repair_env_string);
+		   &repair_env_string);
 
 	for (fn = initcall_levels[level]; fn < initcall_levels[level+1]; fn++)
 		do_one_initcall(*fn);
@@ -863,12 +872,14 @@ static void __init do_initcalls(void)
 static void __init do_basic_setup(void)
 {
 	cpuset_init_smp();
+	usermodehelper_init();
 	shmem_init();
 	driver_init();
 	init_irq_proc();
 	do_ctors();
 	usermodehelper_enable();
 	do_initcalls();
+	random_int_secret_init();
 }
 
 static void __init do_pre_smp_initcalls(void)
@@ -914,28 +925,6 @@ static int try_to_run_init_process(const char *init_filename)
 
 static noinline void __init kernel_init_freeable(void);
 
-#ifdef CONFIG_DEBUG_RODATA
-static bool rodata_enabled = true;
-static int __init set_debug_rodata(char *str)
-{
-	return strtobool(str, &rodata_enabled);
-}
-__setup("rodata=", set_debug_rodata);
-
-static void mark_readonly(void)
-{
-	if (rodata_enabled)
-		mark_rodata_ro();
-	else
-		pr_info("Kernel memory protection disabled.\n");
-}
-#else
-static inline void mark_readonly(void)
-{
-	pr_warn("This architecture does not have kernel memory protection.\n");
-}
-#endif
-
 static int __ref kernel_init(void *unused)
 {
 	int ret;
@@ -944,11 +933,11 @@ static int __ref kernel_init(void *unused)
 	/* need to finish all async __init code before freeing the memory */
 	async_synchronize_full();
 	free_initmem();
-	mark_readonly();
+	mark_rodata_ro();
 	system_state = SYSTEM_RUNNING;
 	numa_default_policy();
 
-	rcu_end_inkernel_boot();
+	flush_delayed_fput();
 
 	if (ramdisk_execute_command) {
 		ret = run_init_process(ramdisk_execute_command);
@@ -1009,8 +998,6 @@ static noinline void __init kernel_init_freeable(void)
 
 	smp_init();
 	sched_init_smp();
-
-	page_alloc_init_late();
 
 	do_basic_setup();
 

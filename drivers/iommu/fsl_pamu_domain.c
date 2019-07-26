@@ -923,7 +923,7 @@ static struct iommu_group *get_pci_device_group(struct pci_dev *pdev)
 	pci_endpt_partioning = check_pci_ctl_endpt_part(pci_ctl);
 	/* We can partition PCIe devices so assign device group to the device */
 	if (pci_endpt_partioning) {
-		group = pci_device_group(&pdev->dev);
+		group = iommu_group_get_for_dev(&pdev->dev);
 
 		/*
 		 * PCIe controller is not a paritionable entity
@@ -956,34 +956,44 @@ static struct iommu_group *get_pci_device_group(struct pci_dev *pdev)
 	return group;
 }
 
-static struct iommu_group *fsl_pamu_device_group(struct device *dev)
+static int fsl_pamu_add_device(struct device *dev)
 {
 	struct iommu_group *group = ERR_PTR(-ENODEV);
-	int len;
+	struct pci_dev *pdev;
+	const u32 *prop;
+	int ret = 0, len;
 
 	/*
 	 * For platform devices we allocate a separate group for
 	 * each of the devices.
 	 */
-	if (dev_is_pci(dev))
-		group = get_pci_device_group(to_pci_dev(dev));
-	else if (of_get_property(dev->of_node, "fsl,liodn", &len))
-		group = get_device_iommu_group(dev);
+	if (dev_is_pci(dev)) {
+		pdev = to_pci_dev(dev);
+		/* Don't create device groups for virtual PCI bridges */
+		if (pdev->subordinate)
+			return 0;
 
-	return group;
-}
+		group = get_pci_device_group(pdev);
 
-static int fsl_pamu_add_device(struct device *dev)
-{
-	struct iommu_group *group;
+	} else {
+		prop = of_get_property(dev->of_node, "fsl,liodn", &len);
+		if (prop)
+			group = get_device_iommu_group(dev);
+	}
 
-	group = iommu_group_get_for_dev(dev);
 	if (IS_ERR(group))
 		return PTR_ERR(group);
 
-	iommu_group_put(group);
+	/*
+	 * Check if device has already been added to an iommu group.
+	 * Group could have already been created for a PCI device in
+	 * the iommu_group_get_for_dev path.
+	 */
+	if (!dev->iommu_group)
+		ret = iommu_group_add_device(group, dev);
 
-	return 0;
+	iommu_group_put(group);
+	return ret;
 }
 
 static void fsl_pamu_remove_device(struct device *dev)
@@ -1062,7 +1072,6 @@ static const struct iommu_ops fsl_pamu_ops = {
 	.domain_get_attr = fsl_pamu_get_domain_attr,
 	.add_device	= fsl_pamu_add_device,
 	.remove_device	= fsl_pamu_remove_device,
-	.device_group   = fsl_pamu_device_group,
 };
 
 int __init pamu_domain_init(void)

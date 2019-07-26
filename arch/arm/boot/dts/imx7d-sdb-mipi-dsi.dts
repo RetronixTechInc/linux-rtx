@@ -19,7 +19,6 @@
 
 &lcdif {
 	disp-dev = "mipi_dsi_samsung";
-	disp-videomode = "TRUULY-WVGA-SYNC-LOW";
 };
 
 &mipi_dsi {

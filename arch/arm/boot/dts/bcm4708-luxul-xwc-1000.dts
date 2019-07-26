@@ -10,22 +10,25 @@
 /dts-v1/;
 
 #include "bcm4708.dtsi"
-#include "bcm5301x-nand-cs0-bch8.dtsi"
 
 / {
 	compatible = "luxul,xwc-1000", "brcm,bcm4708";
 	model = "Luxul XWC-1000 (BCM4708)";
 
 	chosen {
-		bootargs = "console=ttyS0,115200 earlycon";
+		bootargs = "console=ttyS0,115200";
 	};
 
 	memory {
 		reg = <0x00000000 0x08000000>;
 	};
 
-	nand: nand@18028000 {
-		nandcs@0 {
+	axi@18000000 {
+		nand@28000 {
+			reg = <0x00028000 0x1000>;
+			#address-cells = <1>;
+			#size-cells = <1>;
+
 			partition@0 {
 				label = "ubi";
 				reg = <0x00000000 0x08000000>;
@@ -54,12 +57,4 @@
 			gpios = <&chipcommon 7 GPIO_ACTIVE_LOW>;
 		};
 	};
-};
-
-&uart0 {
-	status = "okay";
-};
-
-&spi_nor {
-	status = "okay";
 };

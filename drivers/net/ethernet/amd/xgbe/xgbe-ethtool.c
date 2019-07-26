@@ -6,7 +6,7 @@
  *
  * License 1: GPLv2
  *
- * Copyright (c) 2014-2016 Advanced Micro Devices, Inc.
+ * Copyright (c) 2014 Advanced Micro Devices, Inc.
  *
  * This file is free software; you may copy, redistribute and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -56,7 +56,7 @@
  *
  * License 2: Modified BSD
  *
- * Copyright (c) 2014-2016 Advanced Micro Devices, Inc.
+ * Copyright (c) 2014 Advanced Micro Devices, Inc.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -133,12 +133,6 @@ struct xgbe_stats {
 	  offsetof(struct xgbe_prv_data, mmc_stats._var),	\
 	}
 
-#define XGMAC_EXT_STAT(_string, _var)				\
-	{ _string,						\
-	  FIELD_SIZEOF(struct xgbe_ext_stats, _var),		\
-	  offsetof(struct xgbe_prv_data, ext_stats._var),	\
-	}
-
 static const struct xgbe_stats xgbe_gstring_stats[] = {
 	XGMAC_MMC_STAT("tx_bytes", txoctetcount_gb),
 	XGMAC_MMC_STAT("tx_packets", txframecount_gb),
@@ -146,7 +140,6 @@ static const struct xgbe_stats xgbe_gstring_stats[] = {
 	XGMAC_MMC_STAT("tx_broadcast_packets", txbroadcastframes_gb),
 	XGMAC_MMC_STAT("tx_multicast_packets", txmulticastframes_gb),
 	XGMAC_MMC_STAT("tx_vlan_packets", txvlanframes_g),
-	XGMAC_EXT_STAT("tx_tso_packets", tx_tso_packets),
 	XGMAC_MMC_STAT("tx_64_byte_packets", tx64octets_gb),
 	XGMAC_MMC_STAT("tx_65_to_127_byte_packets", tx65to127octets_gb),
 	XGMAC_MMC_STAT("tx_128_to_255_byte_packets", tx128to255octets_gb),
@@ -178,8 +171,6 @@ static const struct xgbe_stats xgbe_gstring_stats[] = {
 	XGMAC_MMC_STAT("rx_fifo_overflow_errors", rxfifooverflow),
 	XGMAC_MMC_STAT("rx_watchdog_errors", rxwatchdogerror),
 	XGMAC_MMC_STAT("rx_pause_frames", rxpauseframes),
-	XGMAC_EXT_STAT("rx_split_header_packets", rx_split_header_packets),
-	XGMAC_EXT_STAT("rx_buffer_unavailable", rx_buffer_unavailable),
 };
 
 #define XGBE_STATS_COUNT	ARRAY_SIZE(xgbe_gstring_stats)
@@ -187,6 +178,8 @@ static const struct xgbe_stats xgbe_gstring_stats[] = {
 static void xgbe_get_strings(struct net_device *netdev, u32 stringset, u8 *data)
 {
 	int i;
+
+	DBGPR("-->%s\n", __func__);
 
 	switch (stringset) {
 	case ETH_SS_STATS:
@@ -197,6 +190,8 @@ static void xgbe_get_strings(struct net_device *netdev, u32 stringset, u8 *data)
 		}
 		break;
 	}
+
+	DBGPR("<--%s\n", __func__);
 }
 
 static void xgbe_get_ethtool_stats(struct net_device *netdev,
@@ -206,16 +201,22 @@ static void xgbe_get_ethtool_stats(struct net_device *netdev,
 	u8 *stat;
 	int i;
 
+	DBGPR("-->%s\n", __func__);
+
 	pdata->hw_if.read_mmc_stats(pdata);
 	for (i = 0; i < XGBE_STATS_COUNT; i++) {
 		stat = (u8 *)pdata + xgbe_gstring_stats[i].stat_offset;
 		*data++ = *(u64 *)stat;
 	}
+
+	DBGPR("<--%s\n", __func__);
 }
 
 static int xgbe_get_sset_count(struct net_device *netdev, int stringset)
 {
 	int ret;
+
+	DBGPR("-->%s\n", __func__);
 
 	switch (stringset) {
 	case ETH_SS_STATS:
@@ -226,6 +227,8 @@ static int xgbe_get_sset_count(struct net_device *netdev, int stringset)
 		ret = -EOPNOTSUPP;
 	}
 
+	DBGPR("<--%s\n", __func__);
+
 	return ret;
 }
 
@@ -234,40 +237,44 @@ static void xgbe_get_pauseparam(struct net_device *netdev,
 {
 	struct xgbe_prv_data *pdata = netdev_priv(netdev);
 
-	pause->autoneg = pdata->phy.pause_autoneg;
-	pause->tx_pause = pdata->phy.tx_pause;
-	pause->rx_pause = pdata->phy.rx_pause;
+	DBGPR("-->xgbe_get_pauseparam\n");
+
+	pause->autoneg = pdata->pause_autoneg;
+	pause->tx_pause = pdata->tx_pause;
+	pause->rx_pause = pdata->rx_pause;
+
+	DBGPR("<--xgbe_get_pauseparam\n");
 }
 
 static int xgbe_set_pauseparam(struct net_device *netdev,
 			       struct ethtool_pauseparam *pause)
 {
 	struct xgbe_prv_data *pdata = netdev_priv(netdev);
+	struct phy_device *phydev = pdata->phydev;
 	int ret = 0;
 
-	if (pause->autoneg && (pdata->phy.autoneg != AUTONEG_ENABLE)) {
-		netdev_err(netdev,
-			   "autoneg disabled, pause autoneg not avialable\n");
-		return -EINVAL;
+	DBGPR("-->xgbe_set_pauseparam\n");
+
+	DBGPR("  autoneg = %d, tx_pause = %d, rx_pause = %d\n",
+	      pause->autoneg, pause->tx_pause, pause->rx_pause);
+
+	pdata->pause_autoneg = pause->autoneg;
+	if (pause->autoneg) {
+		phydev->advertising |= ADVERTISED_Pause;
+		phydev->advertising |= ADVERTISED_Asym_Pause;
+
+	} else {
+		phydev->advertising &= ~ADVERTISED_Pause;
+		phydev->advertising &= ~ADVERTISED_Asym_Pause;
+
+		pdata->tx_pause = pause->tx_pause;
+		pdata->rx_pause = pause->rx_pause;
 	}
-
-	pdata->phy.pause_autoneg = pause->autoneg;
-	pdata->phy.tx_pause = pause->tx_pause;
-	pdata->phy.rx_pause = pause->rx_pause;
-
-	pdata->phy.advertising &= ~ADVERTISED_Pause;
-	pdata->phy.advertising &= ~ADVERTISED_Asym_Pause;
-
-	if (pause->rx_pause) {
-		pdata->phy.advertising |= ADVERTISED_Pause;
-		pdata->phy.advertising |= ADVERTISED_Asym_Pause;
-	}
-
-	if (pause->tx_pause)
-		pdata->phy.advertising ^= ADVERTISED_Asym_Pause;
 
 	if (netif_running(netdev))
-		ret = pdata->phy_if.phy_config_aneg(pdata);
+		ret = phy_start_aneg(phydev);
+
+	DBGPR("<--xgbe_set_pauseparam\n");
 
 	return ret;
 }
@@ -276,99 +283,75 @@ static int xgbe_get_settings(struct net_device *netdev,
 			     struct ethtool_cmd *cmd)
 {
 	struct xgbe_prv_data *pdata = netdev_priv(netdev);
+	int ret;
 
-	cmd->phy_address = pdata->phy.address;
+	DBGPR("-->xgbe_get_settings\n");
 
-	cmd->supported = pdata->phy.supported;
-	cmd->advertising = pdata->phy.advertising;
-	cmd->lp_advertising = pdata->phy.lp_advertising;
+	if (!pdata->phydev)
+		return -ENODEV;
 
-	cmd->autoneg = pdata->phy.autoneg;
-	ethtool_cmd_speed_set(cmd, pdata->phy.speed);
-	cmd->duplex = pdata->phy.duplex;
+	ret = phy_ethtool_gset(pdata->phydev, cmd);
 
-	cmd->port = PORT_NONE;
-	cmd->transceiver = XCVR_INTERNAL;
+	DBGPR("<--xgbe_get_settings\n");
 
-	return 0;
+	return ret;
 }
 
 static int xgbe_set_settings(struct net_device *netdev,
 			     struct ethtool_cmd *cmd)
 {
 	struct xgbe_prv_data *pdata = netdev_priv(netdev);
+	struct phy_device *phydev = pdata->phydev;
 	u32 speed;
 	int ret;
 
+	DBGPR("-->xgbe_set_settings\n");
+
+	if (!pdata->phydev)
+		return -ENODEV;
+
 	speed = ethtool_cmd_speed(cmd);
 
-	if (cmd->phy_address != pdata->phy.address) {
-		netdev_err(netdev, "invalid phy address %hhu\n",
-			   cmd->phy_address);
+	if (cmd->phy_address != phydev->addr)
 		return -EINVAL;
-	}
 
 	if ((cmd->autoneg != AUTONEG_ENABLE) &&
-	    (cmd->autoneg != AUTONEG_DISABLE)) {
-		netdev_err(netdev, "unsupported autoneg %hhu\n",
-			   cmd->autoneg);
+	    (cmd->autoneg != AUTONEG_DISABLE))
 		return -EINVAL;
-	}
 
 	if (cmd->autoneg == AUTONEG_DISABLE) {
 		switch (speed) {
 		case SPEED_10000:
-			break;
 		case SPEED_2500:
-			if (pdata->speed_set != XGBE_SPEEDSET_2500_10000) {
-				netdev_err(netdev, "unsupported speed %u\n",
-					   speed);
-				return -EINVAL;
-			}
-			break;
 		case SPEED_1000:
-			if (pdata->speed_set != XGBE_SPEEDSET_1000_10000) {
-				netdev_err(netdev, "unsupported speed %u\n",
-					   speed);
-				return -EINVAL;
-			}
 			break;
 		default:
-			netdev_err(netdev, "unsupported speed %u\n", speed);
 			return -EINVAL;
 		}
 
-		if (cmd->duplex != DUPLEX_FULL) {
-			netdev_err(netdev, "unsupported duplex %hhu\n",
-				   cmd->duplex);
+		if (cmd->duplex != DUPLEX_FULL)
 			return -EINVAL;
-		}
 	}
 
-	netif_dbg(pdata, link, netdev,
-		  "requested advertisement %#x, phy supported %#x\n",
-		  cmd->advertising, pdata->phy.supported);
-
-	cmd->advertising &= pdata->phy.supported;
-	if ((cmd->autoneg == AUTONEG_ENABLE) && !cmd->advertising) {
-		netdev_err(netdev,
-			   "unsupported requested advertisement\n");
+	cmd->advertising &= phydev->supported;
+	if ((cmd->autoneg == AUTONEG_ENABLE) && !cmd->advertising)
 		return -EINVAL;
-	}
 
 	ret = 0;
-	pdata->phy.autoneg = cmd->autoneg;
-	pdata->phy.speed = speed;
-	pdata->phy.duplex = cmd->duplex;
-	pdata->phy.advertising = cmd->advertising;
+	phydev->autoneg = cmd->autoneg;
+	phydev->speed = speed;
+	phydev->duplex = cmd->duplex;
+	phydev->advertising = cmd->advertising;
 
 	if (cmd->autoneg == AUTONEG_ENABLE)
-		pdata->phy.advertising |= ADVERTISED_Autoneg;
+		phydev->advertising |= ADVERTISED_Autoneg;
 	else
-		pdata->phy.advertising &= ~ADVERTISED_Autoneg;
+		phydev->advertising &= ~ADVERTISED_Autoneg;
 
 	if (netif_running(netdev))
-		ret = pdata->phy_if.phy_config_aneg(pdata);
+		ret = phy_start_aneg(phydev);
+
+	DBGPR("<--xgbe_set_settings\n");
 
 	return ret;
 }
@@ -387,20 +370,7 @@ static void xgbe_get_drvinfo(struct net_device *netdev,
 		 XGMAC_GET_BITS(hw_feat->version, MAC_VR, USERVER),
 		 XGMAC_GET_BITS(hw_feat->version, MAC_VR, DEVID),
 		 XGMAC_GET_BITS(hw_feat->version, MAC_VR, SNPSVER));
-}
-
-static u32 xgbe_get_msglevel(struct net_device *netdev)
-{
-	struct xgbe_prv_data *pdata = netdev_priv(netdev);
-
-	return pdata->msg_enable;
-}
-
-static void xgbe_set_msglevel(struct net_device *netdev, u32 msglevel)
-{
-	struct xgbe_prv_data *pdata = netdev_priv(netdev);
-
-	pdata->msg_enable = msglevel;
+	drvinfo->n_stats = XGBE_STATS_COUNT;
 }
 
 static int xgbe_get_coalesce(struct net_device *netdev,
@@ -408,12 +378,16 @@ static int xgbe_get_coalesce(struct net_device *netdev,
 {
 	struct xgbe_prv_data *pdata = netdev_priv(netdev);
 
+	DBGPR("-->xgbe_get_coalesce\n");
+
 	memset(ec, 0, sizeof(struct ethtool_coalesce));
 
 	ec->rx_coalesce_usecs = pdata->rx_usecs;
 	ec->rx_max_coalesced_frames = pdata->rx_frames;
 
 	ec->tx_max_coalesced_frames = pdata->tx_frames;
+
+	DBGPR("<--xgbe_get_coalesce\n");
 
 	return 0;
 }
@@ -425,6 +399,8 @@ static int xgbe_set_coalesce(struct net_device *netdev,
 	struct xgbe_hw_if *hw_if = &pdata->hw_if;
 	unsigned int rx_frames, rx_riwt, rx_usecs;
 	unsigned int tx_frames;
+
+	DBGPR("-->xgbe_set_coalesce\n");
 
 	/* Check for not supported parameters  */
 	if ((ec->rx_coalesce_usecs_irq) ||
@@ -445,10 +421,8 @@ static int xgbe_set_coalesce(struct net_device *netdev,
 	    (ec->rx_max_coalesced_frames_high) ||
 	    (ec->tx_coalesce_usecs_high) ||
 	    (ec->tx_max_coalesced_frames_high) ||
-	    (ec->rate_sample_interval)) {
-		netdev_err(netdev, "unsupported coalescing parameter\n");
+	    (ec->rate_sample_interval))
 		return -EOPNOTSUPP;
-	}
 
 	rx_riwt = hw_if->usec_to_riwt(pdata, ec->rx_coalesce_usecs);
 	rx_usecs = ec->rx_coalesce_usecs;
@@ -460,13 +434,13 @@ static int xgbe_set_coalesce(struct net_device *netdev,
 
 	/* Check the bounds of values for Rx */
 	if (rx_riwt > XGMAC_MAX_DMA_RIWT) {
-		netdev_err(netdev, "rx-usec is limited to %d usecs\n",
-			   hw_if->riwt_to_usec(pdata, XGMAC_MAX_DMA_RIWT));
+		netdev_alert(netdev, "rx-usec is limited to %d usecs\n",
+			     hw_if->riwt_to_usec(pdata, XGMAC_MAX_DMA_RIWT));
 		return -EINVAL;
 	}
 	if (rx_frames > pdata->rx_desc_count) {
-		netdev_err(netdev, "rx-frames is limited to %d frames\n",
-			   pdata->rx_desc_count);
+		netdev_alert(netdev, "rx-frames is limited to %d frames\n",
+			     pdata->rx_desc_count);
 		return -EINVAL;
 	}
 
@@ -474,8 +448,8 @@ static int xgbe_set_coalesce(struct net_device *netdev,
 
 	/* Check the bounds of values for Tx */
 	if (tx_frames > pdata->tx_desc_count) {
-		netdev_err(netdev, "tx-frames is limited to %d frames\n",
-			   pdata->tx_desc_count);
+		netdev_alert(netdev, "tx-frames is limited to %d frames\n",
+			     pdata->tx_desc_count);
 		return -EINVAL;
 	}
 
@@ -486,6 +460,8 @@ static int xgbe_set_coalesce(struct net_device *netdev,
 
 	pdata->tx_frames = tx_frames;
 	hw_if->config_tx_coalesce(pdata);
+
+	DBGPR("<--xgbe_set_coalesce\n");
 
 	return 0;
 }
@@ -548,10 +524,8 @@ static int xgbe_set_rxfh(struct net_device *netdev, const u32 *indir,
 	struct xgbe_hw_if *hw_if = &pdata->hw_if;
 	unsigned int ret;
 
-	if (hfunc != ETH_RSS_HASH_NO_CHANGE && hfunc != ETH_RSS_HASH_TOP) {
-		netdev_err(netdev, "unsupported hash function\n");
+	if (hfunc != ETH_RSS_HASH_NO_CHANGE && hfunc != ETH_RSS_HASH_TOP)
 		return -EOPNOTSUPP;
-	}
 
 	if (indir) {
 		ret = hw_if->set_rss_lookup_table(pdata, indir);
@@ -605,8 +579,6 @@ static const struct ethtool_ops xgbe_ethtool_ops = {
 	.get_settings = xgbe_get_settings,
 	.set_settings = xgbe_set_settings,
 	.get_drvinfo = xgbe_get_drvinfo,
-	.get_msglevel = xgbe_get_msglevel,
-	.set_msglevel = xgbe_set_msglevel,
 	.get_link = ethtool_op_get_link,
 	.get_coalesce = xgbe_get_coalesce,
 	.set_coalesce = xgbe_set_coalesce,
@@ -623,7 +595,7 @@ static const struct ethtool_ops xgbe_ethtool_ops = {
 	.get_ts_info = xgbe_get_ts_info,
 };
 
-const struct ethtool_ops *xgbe_get_ethtool_ops(void)
+struct ethtool_ops *xgbe_get_ethtool_ops(void)
 {
-	return &xgbe_ethtool_ops;
+	return (struct ethtool_ops *)&xgbe_ethtool_ops;
 }

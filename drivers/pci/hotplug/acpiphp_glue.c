@@ -632,14 +632,15 @@ static void trim_stale_devices(struct pci_dev *dev)
 {
 	struct acpi_device *adev = ACPI_COMPANION(&dev->dev);
 	struct pci_bus *bus = dev->subordinate;
-	bool alive = dev->ignore_hotplug;
+	bool alive = false;
 
 	if (adev) {
 		acpi_status status;
 		unsigned long long sta;
 
 		status = acpi_evaluate_integer(adev->handle, "_STA", NULL, &sta);
-		alive = alive || (ACPI_SUCCESS(status) && device_status_valid(sta));
+		alive = (ACPI_SUCCESS(status) && device_status_valid(sta))
+			|| dev->ignore_hotplug;
 	}
 	if (!alive)
 		alive = pci_device_is_present(dev);
@@ -675,9 +676,6 @@ static void acpiphp_check_bridge(struct acpiphp_bridge *bridge)
 	if (bridge->is_going_away)
 		return;
 
-	if (bridge->pci_dev)
-		pm_runtime_get_sync(&bridge->pci_dev->dev);
-
 	list_for_each_entry(slot, &bridge->slots, node) {
 		struct pci_bus *bus = slot->bus;
 		struct pci_dev *dev, *tmp;
@@ -697,9 +695,6 @@ static void acpiphp_check_bridge(struct acpiphp_bridge *bridge)
 			disable_slot(slot);
 		}
 	}
-
-	if (bridge->pci_dev)
-		pm_runtime_put(&bridge->pci_dev->dev);
 }
 
 /*
@@ -713,7 +708,7 @@ static void acpiphp_sanitize_bus(struct pci_bus *bus)
 	unsigned long type_mask = IORESOURCE_IO | IORESOURCE_MEM;
 
 	list_for_each_entry_safe_reverse(dev, tmp, &bus->devices, bus_list) {
-		for (i = 0; i < PCI_BRIDGE_RESOURCES; i++) {
+		for (i=0; i<PCI_BRIDGE_RESOURCES; i++) {
 			struct resource *res = &dev->resource[i];
 			if ((res->flags & type_mask) && !res->start &&
 					res->end) {
@@ -959,10 +954,8 @@ int acpiphp_enable_slot(struct acpiphp_slot *slot)
 {
 	pci_lock_rescan_remove();
 
-	if (slot->flags & SLOT_IS_GOING_AWAY) {
-		pci_unlock_rescan_remove();
+	if (slot->flags & SLOT_IS_GOING_AWAY)
 		return -ENODEV;
-	}
 
 	/* configure all functions */
 	if (!(slot->flags & SLOT_ENABLED))

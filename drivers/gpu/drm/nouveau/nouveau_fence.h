@@ -57,8 +57,7 @@ struct nouveau_fence_priv {
 	int  (*context_new)(struct nouveau_channel *);
 	void (*context_del)(struct nouveau_channel *);
 
-	u32 contexts;
-	u64 context_base;
+	u32 contexts, context_base;
 	bool uevent;
 };
 
@@ -86,7 +85,7 @@ int nv50_fence_create(struct nouveau_drm *);
 int nv84_fence_create(struct nouveau_drm *);
 int nvc0_fence_create(struct nouveau_drm *);
 
-int nouveau_flip_complete(struct nvif_notify *);
+int nouveau_flip_complete(void *chan);
 
 struct nv84_fence_chan {
 	struct nouveau_fence_chan base;
@@ -100,7 +99,6 @@ struct nv84_fence_priv {
 	struct nouveau_bo *bo;
 	struct nouveau_bo *bo_gart;
 	u32 *suspend;
-	struct mutex mutex;
 };
 
 u64  nv84_fence_crtc(struct nouveau_channel *, int);

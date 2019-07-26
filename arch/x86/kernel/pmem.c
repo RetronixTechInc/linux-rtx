@@ -1,31 +1,53 @@
 /*
  * Copyright (c) 2015, Christoph Hellwig.
- * Copyright (c) 2015, Intel Corporation.
  */
+#include <linux/memblock.h>
 #include <linux/platform_device.h>
-#include <linux/init.h>
-#include <linux/ioport.h>
+#include <linux/slab.h>
+#include <asm/e820.h>
+#include <asm/page_types.h>
+#include <asm/setup.h>
 
-static int found(u64 start, u64 end, void *data)
-{
-	return 1;
-}
-
-static __init int register_e820_pmem(void)
+static __init void register_pmem_device(struct resource *res)
 {
 	struct platform_device *pdev;
-	int rc;
+	int error;
 
-	rc = walk_iomem_res_desc(IORES_DESC_PERSISTENT_MEMORY_LEGACY,
-				 IORESOURCE_MEM, 0, -1, NULL, found);
-	if (rc <= 0)
-		return 0;
+	pdev = platform_device_alloc("pmem", PLATFORM_DEVID_AUTO);
+	if (!pdev)
+		return;
 
-	/*
-	 * See drivers/nvdimm/e820.c for the implementation, this is
-	 * simply here to trigger the module to load on demand.
-	 */
-	pdev = platform_device_alloc("e820_pmem", -1);
-	return platform_device_add(pdev);
+	error = platform_device_add_resources(pdev, res, 1);
+	if (error)
+		goto out_put_pdev;
+
+	error = platform_device_add(pdev);
+	if (error)
+		goto out_put_pdev;
+	return;
+
+out_put_pdev:
+	dev_warn(&pdev->dev, "failed to add 'pmem' (persistent memory) device!\n");
+	platform_device_put(pdev);
 }
-device_initcall(register_e820_pmem);
+
+static __init int register_pmem_devices(void)
+{
+	int i;
+
+	for (i = 0; i < e820.nr_map; i++) {
+		struct e820entry *ei = &e820.map[i];
+
+		if (ei->type == E820_PRAM) {
+			struct resource res = {
+				.flags	= IORESOURCE_MEM,
+				.start	= ei->addr,
+				.end	= ei->addr + ei->size - 1,
+			};
+			register_pmem_device(&res);
+		}
+	}
+
+	return 0;
+}
+device_initcall(register_pmem_devices);

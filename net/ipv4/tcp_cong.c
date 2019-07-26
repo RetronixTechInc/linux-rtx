@@ -69,7 +69,7 @@ int tcp_register_congestion_control(struct tcp_congestion_ops *ca)
 	int ret = 0;
 
 	/* all algorithms must implement ssthresh and cong_avoid ops */
-	if (!ca->ssthresh || !(ca->cong_avoid || ca->cong_control)) {
+	if (!ca->ssthresh || !ca->cong_avoid) {
 		pr_err("%s does not implement required ops\n", ca->name);
 		return -EINVAL;
 	}
@@ -114,19 +114,16 @@ void tcp_unregister_congestion_control(struct tcp_congestion_ops *ca)
 }
 EXPORT_SYMBOL_GPL(tcp_unregister_congestion_control);
 
-u32 tcp_ca_get_key_by_name(const char *name, bool *ecn_ca)
+u32 tcp_ca_get_key_by_name(const char *name)
 {
 	const struct tcp_congestion_ops *ca;
-	u32 key = TCP_CA_UNSPEC;
+	u32 key;
 
 	might_sleep();
 
 	rcu_read_lock();
 	ca = __tcp_ca_find_autoload(name);
-	if (ca) {
-		key = ca->key;
-		*ecn_ca = ca->flags & TCP_CONG_NEEDS_ECN;
-	}
+	key = ca ? ca->key : TCP_CA_UNSPEC;
 	rcu_read_unlock();
 
 	return key;
@@ -167,25 +164,20 @@ void tcp_assign_congestion_control(struct sock *sk)
 	}
 out:
 	rcu_read_unlock();
-	memset(icsk->icsk_ca_priv, 0, sizeof(icsk->icsk_ca_priv));
 
-	if (ca->flags & TCP_CONG_NEEDS_ECN)
-		INET_ECN_xmit(sk);
-	else
-		INET_ECN_dontxmit(sk);
+	/* Clear out private data before diag gets it and
+	 * the ca has not been initialized.
+	 */
+	if (ca->get_info)
+		memset(icsk->icsk_ca_priv, 0, sizeof(icsk->icsk_ca_priv));
 }
 
 void tcp_init_congestion_control(struct sock *sk)
 {
 	const struct inet_connection_sock *icsk = inet_csk(sk);
 
-	tcp_sk(sk)->prior_ssthresh = 0;
 	if (icsk->icsk_ca_ops->init)
 		icsk->icsk_ca_ops->init(sk);
-	if (tcp_ca_needs_ecn(sk))
-		INET_ECN_xmit(sk);
-	else
-		INET_ECN_dontxmit(sk);
 }
 
 static void tcp_reinit_congestion_control(struct sock *sk,
@@ -196,10 +188,9 @@ static void tcp_reinit_congestion_control(struct sock *sk,
 	tcp_cleanup_congestion_control(sk);
 	icsk->icsk_ca_ops = ca;
 	icsk->icsk_ca_setsockopt = 1;
-	memset(icsk->icsk_ca_priv, 0, sizeof(icsk->icsk_ca_priv));
 
-	if (sk->sk_state != TCP_CLOSE)
-		tcp_init_congestion_control(sk);
+	if (sk->sk_state != TCP_CLOSE && icsk->icsk_ca_ops->init)
+		icsk->icsk_ca_ops->init(sk);
 }
 
 /* Manage refcounts on socket close. */
@@ -374,8 +365,10 @@ int tcp_set_congestion_control(struct sock *sk, const char *name)
  */
 u32 tcp_slow_start(struct tcp_sock *tp, u32 acked)
 {
-	u32 cwnd = min(tp->snd_cwnd + acked, tp->snd_ssthresh);
+	u32 cwnd = tp->snd_cwnd + acked;
 
+	if (cwnd > tp->snd_ssthresh)
+		cwnd = tp->snd_ssthresh + 1;
 	acked -= cwnd - tp->snd_cwnd;
 	tp->snd_cwnd = min(cwnd, tp->snd_cwnd_clamp);
 
@@ -420,7 +413,7 @@ void tcp_reno_cong_avoid(struct sock *sk, u32 ack, u32 acked)
 		return;
 
 	/* In "safe" area, increase. */
-	if (tcp_in_slow_start(tp)) {
+	if (tp->snd_cwnd <= tp->snd_ssthresh) {
 		acked = tcp_slow_start(tp, acked);
 		if (!acked)
 			return;

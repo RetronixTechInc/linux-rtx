@@ -1,7 +1,7 @@
 /*
  * bcm.c - Broadcast Manager to filter/send (cyclic) CAN content
  *
- * Copyright (c) 2002-2016 Volkswagen Group Electronic Research
+ * Copyright (c) 2002-2007 Volkswagen Group Electronic Research
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -67,31 +67,27 @@
  */
 #define MAX_NFRAMES 256
 
-/* use of last_frames[index].flags */
+/* use of last_frames[index].can_dlc */
 #define RX_RECV    0x40 /* received data for this element */
 #define RX_THR     0x80 /* element not been sent due to throttle feature */
-#define BCM_CAN_FLAGS_MASK 0x3F /* to clean private flags after usage */
+#define BCM_CAN_DLC_MASK 0x0F /* clean private flags in can_dlc by masking */
 
 /* get best masking value for can_rx_register() for a given single can_id */
 #define REGMASK(id) ((id & CAN_EFF_FLAG) ? \
 		     (CAN_EFF_MASK | CAN_EFF_FLAG | CAN_RTR_FLAG) : \
 		     (CAN_SFF_MASK | CAN_EFF_FLAG | CAN_RTR_FLAG))
 
-#define CAN_BCM_VERSION "20161123"
+#define CAN_BCM_VERSION CAN_VERSION
 
 MODULE_DESCRIPTION("PF_CAN broadcast manager protocol");
 MODULE_LICENSE("Dual BSD/GPL");
 MODULE_AUTHOR("Oliver Hartkopp <oliver.hartkopp@volkswagen.de>");
 MODULE_ALIAS("can-proto-2");
 
-/*
- * easy access to the first 64 bit of can(fd)_frame payload. cp->data is
- * 64 bit aligned so the offset has to be multiples of 8 which is ensured
- * by the only callers in bcm_rx_cmp_to_index() bcm_rx_handler().
- */
-static inline u64 get_u64(const struct canfd_frame *cp, int offset)
+/* easy access to can_frame payload */
+static inline u64 GET_U64(const struct can_frame *cp)
 {
-	return *(u64 *)(cp->data + offset);
+	return *(u64 *)cp->data;
 }
 
 struct bcm_op {
@@ -100,20 +96,18 @@ struct bcm_op {
 	canid_t can_id;
 	u32 flags;
 	unsigned long frames_abs, frames_filtered;
-	struct bcm_timeval ival1, ival2;
+	struct timeval ival1, ival2;
 	struct hrtimer timer, thrtimer;
 	struct tasklet_struct tsklet, thrtsklet;
 	ktime_t rx_stamp, kt_ival1, kt_ival2, kt_lastmsg;
 	int rx_ifindex;
-	int cfsiz;
 	u32 count;
 	u32 nframes;
 	u32 currframe;
-	/* void pointers to arrays of struct can[fd]_frame */
-	void *frames;
-	void *last_frames;
-	struct canfd_frame sframe;
-	struct canfd_frame last_sframe;
+	struct can_frame *frames;
+	struct can_frame *last_frames;
+	struct can_frame sframe;
+	struct can_frame last_sframe;
 	struct sock *sk;
 	struct net_device *rx_reg_dev;
 };
@@ -137,12 +131,7 @@ static inline struct bcm_sock *bcm_sk(const struct sock *sk)
 	return (struct bcm_sock *)sk;
 }
 
-static inline ktime_t bcm_timeval_to_ktime(struct bcm_timeval tv)
-{
-	return ktime_set(tv.tv_sec, tv.tv_usec * NSEC_PER_USEC);
-}
-
-#define CFSIZ(flags) ((flags & CAN_FD_FRAME) ? CANFD_MTU : CAN_MTU)
+#define CFSIZ sizeof(struct can_frame)
 #define OPSIZ sizeof(struct bcm_op)
 #define MHSIZ sizeof(struct bcm_msg_head)
 
@@ -189,50 +178,43 @@ static int bcm_proc_show(struct seq_file *m, void *v)
 		if (!op->frames_abs)
 			continue;
 
-		seq_printf(m, "rx_op: %03X %-5s ", op->can_id,
-			   bcm_proc_getifname(ifname, op->ifindex));
-
-		if (op->flags & CAN_FD_FRAME)
-			seq_printf(m, "(%u)", op->nframes);
-		else
-			seq_printf(m, "[%u]", op->nframes);
-
-		seq_printf(m, "%c ", (op->flags & RX_CHECK_DLC) ? 'd' : ' ');
-
+		seq_printf(m, "rx_op: %03X %-5s ",
+				op->can_id, bcm_proc_getifname(ifname, op->ifindex));
+		seq_printf(m, "[%u]%c ", op->nframes,
+				(op->flags & RX_CHECK_DLC)?'d':' ');
 		if (op->kt_ival1.tv64)
 			seq_printf(m, "timeo=%lld ",
-				   (long long)ktime_to_us(op->kt_ival1));
+					(long long)
+					ktime_to_us(op->kt_ival1));
 
 		if (op->kt_ival2.tv64)
 			seq_printf(m, "thr=%lld ",
-				   (long long)ktime_to_us(op->kt_ival2));
+					(long long)
+					ktime_to_us(op->kt_ival2));
 
 		seq_printf(m, "# recv %ld (%ld) => reduction: ",
-			   op->frames_filtered, op->frames_abs);
+				op->frames_filtered, op->frames_abs);
 
 		reduction = 100 - (op->frames_filtered * 100) / op->frames_abs;
 
 		seq_printf(m, "%s%ld%%\n",
-			   (reduction == 100) ? "near " : "", reduction);
+				(reduction == 100)?"near ":"", reduction);
 	}
 
 	list_for_each_entry(op, &bo->tx_ops, list) {
 
-		seq_printf(m, "tx_op: %03X %s ", op->can_id,
-			   bcm_proc_getifname(ifname, op->ifindex));
-
-		if (op->flags & CAN_FD_FRAME)
-			seq_printf(m, "(%u) ", op->nframes);
-		else
-			seq_printf(m, "[%u] ", op->nframes);
+		seq_printf(m, "tx_op: %03X %s [%u] ",
+				op->can_id,
+				bcm_proc_getifname(ifname, op->ifindex),
+				op->nframes);
 
 		if (op->kt_ival1.tv64)
 			seq_printf(m, "t1=%lld ",
-				   (long long)ktime_to_us(op->kt_ival1));
+					(long long) ktime_to_us(op->kt_ival1));
 
 		if (op->kt_ival2.tv64)
 			seq_printf(m, "t2=%lld ",
-				   (long long)ktime_to_us(op->kt_ival2));
+					(long long) ktime_to_us(op->kt_ival2));
 
 		seq_printf(m, "# sent %ld\n", op->frames_abs);
 	}
@@ -261,7 +243,7 @@ static void bcm_can_tx(struct bcm_op *op)
 {
 	struct sk_buff *skb;
 	struct net_device *dev;
-	struct canfd_frame *cf = op->frames + op->cfsiz * op->currframe;
+	struct can_frame *cf = &op->frames[op->currframe];
 
 	/* no target device? => exit */
 	if (!op->ifindex)
@@ -273,7 +255,7 @@ static void bcm_can_tx(struct bcm_op *op)
 		return;
 	}
 
-	skb = alloc_skb(op->cfsiz + sizeof(struct can_skb_priv), gfp_any());
+	skb = alloc_skb(CFSIZ + sizeof(struct can_skb_priv), gfp_any());
 	if (!skb)
 		goto out;
 
@@ -281,7 +263,7 @@ static void bcm_can_tx(struct bcm_op *op)
 	can_skb_prv(skb)->ifindex = dev->ifindex;
 	can_skb_prv(skb)->skbcnt = 0;
 
-	memcpy(skb_put(skb, op->cfsiz), cf, op->cfsiz);
+	memcpy(skb_put(skb, CFSIZ), cf, CFSIZ);
 
 	/* send with loopback */
 	skb->dev = dev;
@@ -295,7 +277,7 @@ static void bcm_can_tx(struct bcm_op *op)
 	/* reached last frame? */
 	if (op->currframe >= op->nframes)
 		op->currframe = 0;
-out:
+ out:
 	dev_put(dev);
 }
 
@@ -304,13 +286,13 @@ out:
  *                    (consisting of bcm_msg_head + x CAN frames)
  */
 static void bcm_send_to_user(struct bcm_op *op, struct bcm_msg_head *head,
-			     struct canfd_frame *frames, int has_timestamp)
+			     struct can_frame *frames, int has_timestamp)
 {
 	struct sk_buff *skb;
-	struct canfd_frame *firstframe;
+	struct can_frame *firstframe;
 	struct sockaddr_can *addr;
 	struct sock *sk = op->sk;
-	unsigned int datalen = head->nframes * op->cfsiz;
+	unsigned int datalen = head->nframes * CFSIZ;
 	int err;
 
 	skb = alloc_skb(sizeof(*head) + datalen, gfp_any());
@@ -320,19 +302,19 @@ static void bcm_send_to_user(struct bcm_op *op, struct bcm_msg_head *head,
 	memcpy(skb_put(skb, sizeof(*head)), head, sizeof(*head));
 
 	if (head->nframes) {
-		/* CAN frames starting here */
-		firstframe = (struct canfd_frame *)skb_tail_pointer(skb);
+		/* can_frames starting here */
+		firstframe = (struct can_frame *)skb_tail_pointer(skb);
 
 		memcpy(skb_put(skb, datalen), frames, datalen);
 
 		/*
-		 * the BCM uses the flags-element of the canfd_frame
+		 * the BCM uses the can_dlc-element of the can_frame
 		 * structure for internal purposes. This is only
 		 * relevant for updates that are generated by the
 		 * BCM, where nframes is 1
 		 */
 		if (head->nframes == 1)
-			firstframe->flags &= BCM_CAN_FLAGS_MASK;
+			firstframe->can_dlc &= BCM_CAN_DLC_MASK;
 	}
 
 	if (has_timestamp) {
@@ -419,7 +401,7 @@ static enum hrtimer_restart bcm_tx_timeout_handler(struct hrtimer *hrtimer)
 /*
  * bcm_rx_changed - create a RX_CHANGED notification due to changed content
  */
-static void bcm_rx_changed(struct bcm_op *op, struct canfd_frame *data)
+static void bcm_rx_changed(struct bcm_op *op, struct can_frame *data)
 {
 	struct bcm_msg_head head;
 
@@ -431,7 +413,7 @@ static void bcm_rx_changed(struct bcm_op *op, struct canfd_frame *data)
 		op->frames_filtered = op->frames_abs = 0;
 
 	/* this element is not throttled anymore */
-	data->flags &= (BCM_CAN_FLAGS_MASK|RX_RECV);
+	data->can_dlc &= (BCM_CAN_DLC_MASK|RX_RECV);
 
 	head.opcode  = RX_CHANGED;
 	head.flags   = op->flags;
@@ -450,13 +432,13 @@ static void bcm_rx_changed(struct bcm_op *op, struct canfd_frame *data)
  *                          2. send a notification to the user (if possible)
  */
 static void bcm_rx_update_and_send(struct bcm_op *op,
-				   struct canfd_frame *lastdata,
-				   const struct canfd_frame *rxdata)
+				   struct can_frame *lastdata,
+				   const struct can_frame *rxdata)
 {
-	memcpy(lastdata, rxdata, op->cfsiz);
+	memcpy(lastdata, rxdata, CFSIZ);
 
 	/* mark as used and throttled by default */
-	lastdata->flags |= (RX_RECV|RX_THR);
+	lastdata->can_dlc |= (RX_RECV|RX_THR);
 
 	/* throttling mode inactive ? */
 	if (!op->kt_ival2.tv64) {
@@ -494,36 +476,33 @@ rx_changed_settime:
  *                       received data stored in op->last_frames[]
  */
 static void bcm_rx_cmp_to_index(struct bcm_op *op, unsigned int index,
-				const struct canfd_frame *rxdata)
+				const struct can_frame *rxdata)
 {
-	struct canfd_frame *cf = op->frames + op->cfsiz * index;
-	struct canfd_frame *lcf = op->last_frames + op->cfsiz * index;
-	int i;
-
 	/*
-	 * no one uses the MSBs of flags for comparison,
+	 * no one uses the MSBs of can_dlc for comparison,
 	 * so we use it here to detect the first time of reception
 	 */
 
-	if (!(lcf->flags & RX_RECV)) {
+	if (!(op->last_frames[index].can_dlc & RX_RECV)) {
 		/* received data for the first time => send update to user */
-		bcm_rx_update_and_send(op, lcf, rxdata);
+		bcm_rx_update_and_send(op, &op->last_frames[index], rxdata);
 		return;
 	}
 
-	/* do a real check in CAN frame data section */
-	for (i = 0; i < rxdata->len; i += 8) {
-		if ((get_u64(cf, i) & get_u64(rxdata, i)) !=
-		    (get_u64(cf, i) & get_u64(lcf, i))) {
-			bcm_rx_update_and_send(op, lcf, rxdata);
-			return;
-		}
+	/* do a real check in can_frame data section */
+
+	if ((GET_U64(&op->frames[index]) & GET_U64(rxdata)) !=
+	    (GET_U64(&op->frames[index]) & GET_U64(&op->last_frames[index]))) {
+		bcm_rx_update_and_send(op, &op->last_frames[index], rxdata);
+		return;
 	}
 
 	if (op->flags & RX_CHECK_DLC) {
-		/* do a real check in CAN frame length */
-		if (rxdata->len != lcf->len) {
-			bcm_rx_update_and_send(op, lcf, rxdata);
+		/* do a real check in can_frame dlc */
+		if (rxdata->can_dlc != (op->last_frames[index].can_dlc &
+					BCM_CAN_DLC_MASK)) {
+			bcm_rx_update_and_send(op, &op->last_frames[index],
+					       rxdata);
 			return;
 		}
 	}
@@ -572,8 +551,8 @@ static enum hrtimer_restart bcm_rx_timeout_handler(struct hrtimer *hrtimer)
 
 	/* if user wants to be informed, when cyclic CAN-Messages come back */
 	if ((op->flags & RX_ANNOUNCE_RESUME) && op->last_frames) {
-		/* clear received CAN frames to indicate 'nothing received' */
-		memset(op->last_frames, 0, op->nframes * op->cfsiz);
+		/* clear received can_frames to indicate 'nothing received' */
+		memset(op->last_frames, 0, op->nframes * CFSIZ);
 	}
 
 	return HRTIMER_NORESTART;
@@ -585,11 +564,9 @@ static enum hrtimer_restart bcm_rx_timeout_handler(struct hrtimer *hrtimer)
 static inline int bcm_rx_do_flush(struct bcm_op *op, int update,
 				  unsigned int index)
 {
-	struct canfd_frame *lcf = op->last_frames + op->cfsiz * index;
-
-	if ((op->last_frames) && (lcf->flags & RX_THR)) {
+	if ((op->last_frames) && (op->last_frames[index].can_dlc & RX_THR)) {
 		if (update)
-			bcm_rx_changed(op, lcf);
+			bcm_rx_changed(op, &op->last_frames[index]);
 		return 1;
 	}
 	return 0;
@@ -654,18 +631,14 @@ static enum hrtimer_restart bcm_rx_thr_handler(struct hrtimer *hrtimer)
 static void bcm_rx_handler(struct sk_buff *skb, void *data)
 {
 	struct bcm_op *op = (struct bcm_op *)data;
-	const struct canfd_frame *rxframe = (struct canfd_frame *)skb->data;
+	const struct can_frame *rxframe = (struct can_frame *)skb->data;
 	unsigned int i;
-
-	if (op->can_id != rxframe->can_id)
-		return;
-
-	/* make sure to handle the correct frame type (CAN / CAN FD) */
-	if (skb->len != op->cfsiz)
-		return;
 
 	/* disable timeout */
 	hrtimer_cancel(&op->timer);
+
+	if (op->can_id != rxframe->can_id)
+		return;
 
 	/* save rx timestamp */
 	op->rx_stamp = skb->tstamp;
@@ -682,7 +655,7 @@ static void bcm_rx_handler(struct sk_buff *skb, void *data)
 
 	if (op->flags & RX_FILTER_ID) {
 		/* the easiest case */
-		bcm_rx_update_and_send(op, op->last_frames, rxframe);
+		bcm_rx_update_and_send(op, &op->last_frames[0], rxframe);
 		goto rx_starttimer;
 	}
 
@@ -697,14 +670,13 @@ static void bcm_rx_handler(struct sk_buff *skb, void *data)
 		 * multiplex compare
 		 *
 		 * find the first multiplex mask that fits.
-		 * Remark: The MUX-mask is stored in index 0 - but only the
-		 * first 64 bits of the frame data[] are relevant (CAN FD)
+		 * Remark: The MUX-mask is stored in index 0
 		 */
 
 		for (i = 1; i < op->nframes; i++) {
-			if ((get_u64(op->frames, 0) & get_u64(rxframe, 0)) ==
-			    (get_u64(op->frames, 0) &
-			     get_u64(op->frames + op->cfsiz * i, 0))) {
+			if ((GET_U64(&op->frames[0]) & GET_U64(rxframe)) ==
+			    (GET_U64(&op->frames[0]) &
+			     GET_U64(&op->frames[i]))) {
 				bcm_rx_cmp_to_index(op, i, rxframe);
 				break;
 			}
@@ -718,14 +690,13 @@ rx_starttimer:
 /*
  * helpers for bcm_op handling: find & delete bcm [rx|tx] op elements
  */
-static struct bcm_op *bcm_find_op(struct list_head *ops,
-				  struct bcm_msg_head *mh, int ifindex)
+static struct bcm_op *bcm_find_op(struct list_head *ops, canid_t can_id,
+				  int ifindex)
 {
 	struct bcm_op *op;
 
 	list_for_each_entry(op, ops, list) {
-		if ((op->can_id == mh->can_id) && (op->ifindex == ifindex) &&
-		    (op->flags & CAN_FD_FRAME) == (mh->flags & CAN_FD_FRAME))
+		if ((op->can_id == can_id) && (op->ifindex == ifindex))
 			return op;
 	}
 
@@ -734,23 +705,14 @@ static struct bcm_op *bcm_find_op(struct list_head *ops,
 
 static void bcm_remove_op(struct bcm_op *op)
 {
-	if (op->tsklet.func) {
-		while (test_bit(TASKLET_STATE_SCHED, &op->tsklet.state) ||
-		       test_bit(TASKLET_STATE_RUN, &op->tsklet.state) ||
-		       hrtimer_active(&op->timer)) {
-			hrtimer_cancel(&op->timer);
-			tasklet_kill(&op->tsklet);
-		}
-	}
+	hrtimer_cancel(&op->timer);
+	hrtimer_cancel(&op->thrtimer);
 
-	if (op->thrtsklet.func) {
-		while (test_bit(TASKLET_STATE_SCHED, &op->thrtsklet.state) ||
-		       test_bit(TASKLET_STATE_RUN, &op->thrtsklet.state) ||
-		       hrtimer_active(&op->thrtimer)) {
-			hrtimer_cancel(&op->thrtimer);
-			tasklet_kill(&op->thrtsklet);
-		}
-	}
+	if (op->tsklet.func)
+		tasklet_kill(&op->tsklet);
+
+	if (op->thrtsklet.func)
+		tasklet_kill(&op->thrtsklet);
 
 	if ((op->frames) && (op->frames != &op->sframe))
 		kfree(op->frames);
@@ -777,14 +739,12 @@ static void bcm_rx_unreg(struct net_device *dev, struct bcm_op *op)
 /*
  * bcm_delete_rx_op - find and remove a rx op (returns number of removed ops)
  */
-static int bcm_delete_rx_op(struct list_head *ops, struct bcm_msg_head *mh,
-			    int ifindex)
+static int bcm_delete_rx_op(struct list_head *ops, canid_t can_id, int ifindex)
 {
 	struct bcm_op *op, *n;
 
 	list_for_each_entry_safe(op, n, ops, list) {
-		if ((op->can_id == mh->can_id) && (op->ifindex == ifindex) &&
-		    (op->flags & CAN_FD_FRAME) == (mh->flags & CAN_FD_FRAME)) {
+		if ((op->can_id == can_id) && (op->ifindex == ifindex)) {
 
 			/*
 			 * Don't care if we're bound or not (due to netdev
@@ -824,14 +784,12 @@ static int bcm_delete_rx_op(struct list_head *ops, struct bcm_msg_head *mh,
 /*
  * bcm_delete_tx_op - find and remove a tx op (returns number of removed ops)
  */
-static int bcm_delete_tx_op(struct list_head *ops, struct bcm_msg_head *mh,
-			    int ifindex)
+static int bcm_delete_tx_op(struct list_head *ops, canid_t can_id, int ifindex)
 {
 	struct bcm_op *op, *n;
 
 	list_for_each_entry_safe(op, n, ops, list) {
-		if ((op->can_id == mh->can_id) && (op->ifindex == ifindex) &&
-		    (op->flags & CAN_FD_FRAME) == (mh->flags & CAN_FD_FRAME)) {
+		if ((op->can_id == can_id) && (op->ifindex == ifindex)) {
 			list_del(&op->list);
 			bcm_remove_op(op);
 			return 1; /* done */
@@ -847,7 +805,7 @@ static int bcm_delete_tx_op(struct list_head *ops, struct bcm_msg_head *mh,
 static int bcm_read_op(struct list_head *ops, struct bcm_msg_head *msg_head,
 		       int ifindex)
 {
-	struct bcm_op *op = bcm_find_op(ops, msg_head, ifindex);
+	struct bcm_op *op = bcm_find_op(ops, msg_head->can_id, ifindex);
 
 	if (!op)
 		return -EINVAL;
@@ -872,7 +830,6 @@ static int bcm_tx_setup(struct bcm_msg_head *msg_head, struct msghdr *msg,
 {
 	struct bcm_sock *bo = bcm_sk(sk);
 	struct bcm_op *op;
-	struct canfd_frame *cf;
 	unsigned int i;
 	int err;
 
@@ -880,46 +837,39 @@ static int bcm_tx_setup(struct bcm_msg_head *msg_head, struct msghdr *msg,
 	if (!ifindex)
 		return -ENODEV;
 
-	/* check nframes boundaries - we need at least one CAN frame */
+	/* check nframes boundaries - we need at least one can_frame */
 	if (msg_head->nframes < 1 || msg_head->nframes > MAX_NFRAMES)
 		return -EINVAL;
 
 	/* check the given can_id */
-	op = bcm_find_op(&bo->tx_ops, msg_head, ifindex);
+	op = bcm_find_op(&bo->tx_ops, msg_head->can_id, ifindex);
+
 	if (op) {
 		/* update existing BCM operation */
 
 		/*
-		 * Do we need more space for the CAN frames than currently
+		 * Do we need more space for the can_frames than currently
 		 * allocated? -> This is a _really_ unusual use-case and
 		 * therefore (complexity / locking) it is not supported.
 		 */
 		if (msg_head->nframes > op->nframes)
 			return -E2BIG;
 
-		/* update CAN frames content */
+		/* update can_frames content */
 		for (i = 0; i < msg_head->nframes; i++) {
+			err = memcpy_from_msg((u8 *)&op->frames[i], msg, CFSIZ);
 
-			cf = op->frames + op->cfsiz * i;
-			err = memcpy_from_msg((u8 *)cf, msg, op->cfsiz);
-
-			if (op->flags & CAN_FD_FRAME) {
-				if (cf->len > 64)
-					err = -EINVAL;
-			} else {
-				if (cf->len > 8)
-					err = -EINVAL;
-			}
+			if (op->frames[i].can_dlc > 8)
+				err = -EINVAL;
 
 			if (err < 0)
 				return err;
 
 			if (msg_head->flags & TX_CP_CAN_ID) {
 				/* copy can_id into frame */
-				cf->can_id = msg_head->can_id;
+				op->frames[i].can_id = msg_head->can_id;
 			}
 		}
-		op->flags = msg_head->flags;
 
 	} else {
 		/* insert new BCM operation for the given can_id */
@@ -928,13 +878,11 @@ static int bcm_tx_setup(struct bcm_msg_head *msg_head, struct msghdr *msg,
 		if (!op)
 			return -ENOMEM;
 
-		op->can_id = msg_head->can_id;
-		op->cfsiz = CFSIZ(msg_head->flags);
-		op->flags = msg_head->flags;
+		op->can_id    = msg_head->can_id;
 
-		/* create array for CAN frames and copy the data */
+		/* create array for can_frames and copy the data */
 		if (msg_head->nframes > 1) {
-			op->frames = kmalloc(msg_head->nframes * op->cfsiz,
+			op->frames = kmalloc(msg_head->nframes * CFSIZ,
 					     GFP_KERNEL);
 			if (!op->frames) {
 				kfree(op);
@@ -944,17 +892,10 @@ static int bcm_tx_setup(struct bcm_msg_head *msg_head, struct msghdr *msg,
 			op->frames = &op->sframe;
 
 		for (i = 0; i < msg_head->nframes; i++) {
+			err = memcpy_from_msg((u8 *)&op->frames[i], msg, CFSIZ);
 
-			cf = op->frames + op->cfsiz * i;
-			err = memcpy_from_msg((u8 *)cf, msg, op->cfsiz);
-
-			if (op->flags & CAN_FD_FRAME) {
-				if (cf->len > 64)
-					err = -EINVAL;
-			} else {
-				if (cf->len > 8)
-					err = -EINVAL;
-			}
+			if (op->frames[i].can_dlc > 8)
+				err = -EINVAL;
 
 			if (err < 0) {
 				if (op->frames != &op->sframe)
@@ -965,7 +906,7 @@ static int bcm_tx_setup(struct bcm_msg_head *msg_head, struct msghdr *msg,
 
 			if (msg_head->flags & TX_CP_CAN_ID) {
 				/* copy can_id into frame */
-				cf->can_id = msg_head->can_id;
+				op->frames[i].can_id = msg_head->can_id;
 			}
 		}
 
@@ -1000,6 +941,8 @@ static int bcm_tx_setup(struct bcm_msg_head *msg_head, struct msghdr *msg,
 
 	/* check flags */
 
+	op->flags = msg_head->flags;
+
 	if (op->flags & TX_RESET_MULTI_IDX) {
 		/* start multiple frame transmission with index 0 */
 		op->currframe = 0;
@@ -1010,8 +953,8 @@ static int bcm_tx_setup(struct bcm_msg_head *msg_head, struct msghdr *msg,
 		op->count = msg_head->count;
 		op->ival1 = msg_head->ival1;
 		op->ival2 = msg_head->ival2;
-		op->kt_ival1 = bcm_timeval_to_ktime(msg_head->ival1);
-		op->kt_ival2 = bcm_timeval_to_ktime(msg_head->ival2);
+		op->kt_ival1 = timeval_to_ktime(msg_head->ival1);
+		op->kt_ival2 = timeval_to_ktime(msg_head->ival2);
 
 		/* disable an active timer due to zero values? */
 		if (!op->kt_ival1.tv64 && !op->kt_ival2.tv64)
@@ -1020,7 +963,7 @@ static int bcm_tx_setup(struct bcm_msg_head *msg_head, struct msghdr *msg,
 
 	if (op->flags & STARTTIMER) {
 		hrtimer_cancel(&op->timer);
-		/* spec: send CAN frame when starting timer */
+		/* spec: send can_frame when starting timer */
 		op->flags |= TX_ANNOUNCE;
 	}
 
@@ -1033,7 +976,7 @@ static int bcm_tx_setup(struct bcm_msg_head *msg_head, struct msghdr *msg,
 	if (op->flags & STARTTIMER)
 		bcm_tx_start_timer(op);
 
-	return msg_head->nframes * op->cfsiz + MHSIZ;
+	return msg_head->nframes * CFSIZ + MHSIZ;
 }
 
 /*
@@ -1064,12 +1007,12 @@ static int bcm_rx_setup(struct bcm_msg_head *msg_head, struct msghdr *msg,
 		return -EINVAL;
 
 	/* check the given can_id */
-	op = bcm_find_op(&bo->rx_ops, msg_head, ifindex);
+	op = bcm_find_op(&bo->rx_ops, msg_head->can_id, ifindex);
 	if (op) {
 		/* update existing BCM operation */
 
 		/*
-		 * Do we need more space for the CAN frames than currently
+		 * Do we need more space for the can_frames than currently
 		 * allocated? -> This is a _really_ unusual use-case and
 		 * therefore (complexity / locking) it is not supported.
 		 */
@@ -1077,18 +1020,17 @@ static int bcm_rx_setup(struct bcm_msg_head *msg_head, struct msghdr *msg,
 			return -E2BIG;
 
 		if (msg_head->nframes) {
-			/* update CAN frames content */
-			err = memcpy_from_msg(op->frames, msg,
-					      msg_head->nframes * op->cfsiz);
+			/* update can_frames content */
+			err = memcpy_from_msg((u8 *)op->frames, msg,
+					      msg_head->nframes * CFSIZ);
 			if (err < 0)
 				return err;
 
 			/* clear last_frames to indicate 'nothing received' */
-			memset(op->last_frames, 0, msg_head->nframes * op->cfsiz);
+			memset(op->last_frames, 0, msg_head->nframes * CFSIZ);
 		}
 
 		op->nframes = msg_head->nframes;
-		op->flags = msg_head->flags;
 
 		/* Only an update -> do not call can_rx_register() */
 		do_rx_register = 0;
@@ -1099,22 +1041,20 @@ static int bcm_rx_setup(struct bcm_msg_head *msg_head, struct msghdr *msg,
 		if (!op)
 			return -ENOMEM;
 
-		op->can_id = msg_head->can_id;
-		op->nframes = msg_head->nframes;
-		op->cfsiz = CFSIZ(msg_head->flags);
-		op->flags = msg_head->flags;
+		op->can_id    = msg_head->can_id;
+		op->nframes   = msg_head->nframes;
 
 		if (msg_head->nframes > 1) {
-			/* create array for CAN frames and copy the data */
-			op->frames = kmalloc(msg_head->nframes * op->cfsiz,
+			/* create array for can_frames and copy the data */
+			op->frames = kmalloc(msg_head->nframes * CFSIZ,
 					     GFP_KERNEL);
 			if (!op->frames) {
 				kfree(op);
 				return -ENOMEM;
 			}
 
-			/* create and init array for received CAN frames */
-			op->last_frames = kzalloc(msg_head->nframes * op->cfsiz,
+			/* create and init array for received can_frames */
+			op->last_frames = kzalloc(msg_head->nframes * CFSIZ,
 						  GFP_KERNEL);
 			if (!op->last_frames) {
 				kfree(op->frames);
@@ -1128,8 +1068,8 @@ static int bcm_rx_setup(struct bcm_msg_head *msg_head, struct msghdr *msg,
 		}
 
 		if (msg_head->nframes) {
-			err = memcpy_from_msg(op->frames, msg,
-					      msg_head->nframes * op->cfsiz);
+			err = memcpy_from_msg((u8 *)op->frames, msg,
+					      msg_head->nframes * CFSIZ);
 			if (err < 0) {
 				if (op->frames != &op->sframe)
 					kfree(op->frames);
@@ -1171,9 +1111,9 @@ static int bcm_rx_setup(struct bcm_msg_head *msg_head, struct msghdr *msg,
 	} /* if ((op = bcm_find_op(&bo->rx_ops, msg_head->can_id, ifindex))) */
 
 	/* check flags */
+	op->flags = msg_head->flags;
 
 	if (op->flags & RX_RTR_FRAME) {
-		struct canfd_frame *frame0 = op->frames;
 
 		/* no timers in RTR-mode */
 		hrtimer_cancel(&op->thrtimer);
@@ -1185,8 +1125,8 @@ static int bcm_rx_setup(struct bcm_msg_head *msg_head, struct msghdr *msg,
 		 * prevent a full-load-loopback-test ... ;-]
 		 */
 		if ((op->flags & TX_CP_CAN_ID) ||
-		    (frame0->can_id == op->can_id))
-			frame0->can_id = op->can_id & ~CAN_RTR_FLAG;
+		    (op->frames[0].can_id == op->can_id))
+			op->frames[0].can_id = op->can_id & ~CAN_RTR_FLAG;
 
 	} else {
 		if (op->flags & SETTIMER) {
@@ -1194,8 +1134,8 @@ static int bcm_rx_setup(struct bcm_msg_head *msg_head, struct msghdr *msg,
 			/* set timer value */
 			op->ival1 = msg_head->ival1;
 			op->ival2 = msg_head->ival2;
-			op->kt_ival1 = bcm_timeval_to_ktime(msg_head->ival1);
-			op->kt_ival2 = bcm_timeval_to_ktime(msg_head->ival2);
+			op->kt_ival1 = timeval_to_ktime(msg_head->ival1);
+			op->kt_ival2 = timeval_to_ktime(msg_head->ival2);
 
 			/* disable an active timer due to zero value? */
 			if (!op->kt_ival1.tv64)
@@ -1225,7 +1165,7 @@ static int bcm_rx_setup(struct bcm_msg_head *msg_head, struct msghdr *msg,
 				err = can_rx_register(dev, op->can_id,
 						      REGMASK(op->can_id),
 						      bcm_rx_handler, op,
-						      "bcm", sk);
+						      "bcm");
 
 				op->rx_reg_dev = dev;
 				dev_put(dev);
@@ -1234,7 +1174,7 @@ static int bcm_rx_setup(struct bcm_msg_head *msg_head, struct msghdr *msg,
 		} else
 			err = can_rx_register(NULL, op->can_id,
 					      REGMASK(op->can_id),
-					      bcm_rx_handler, op, "bcm", sk);
+					      bcm_rx_handler, op, "bcm");
 		if (err) {
 			/* this bcm rx op is broken -> remove it */
 			list_del(&op->list);
@@ -1243,14 +1183,13 @@ static int bcm_rx_setup(struct bcm_msg_head *msg_head, struct msghdr *msg,
 		}
 	}
 
-	return msg_head->nframes * op->cfsiz + MHSIZ;
+	return msg_head->nframes * CFSIZ + MHSIZ;
 }
 
 /*
  * bcm_tx_send - send a single CAN frame to the CAN interface (for bcm_sendmsg)
  */
-static int bcm_tx_send(struct msghdr *msg, int ifindex, struct sock *sk,
-		       int cfsiz)
+static int bcm_tx_send(struct msghdr *msg, int ifindex, struct sock *sk)
 {
 	struct sk_buff *skb;
 	struct net_device *dev;
@@ -1260,13 +1199,13 @@ static int bcm_tx_send(struct msghdr *msg, int ifindex, struct sock *sk,
 	if (!ifindex)
 		return -ENODEV;
 
-	skb = alloc_skb(cfsiz + sizeof(struct can_skb_priv), GFP_KERNEL);
+	skb = alloc_skb(CFSIZ + sizeof(struct can_skb_priv), GFP_KERNEL);
 	if (!skb)
 		return -ENOMEM;
 
 	can_skb_reserve(skb);
 
-	err = memcpy_from_msg(skb_put(skb, cfsiz), msg, cfsiz);
+	err = memcpy_from_msg(skb_put(skb, CFSIZ), msg, CFSIZ);
 	if (err < 0) {
 		kfree_skb(skb);
 		return err;
@@ -1288,7 +1227,7 @@ static int bcm_tx_send(struct msghdr *msg, int ifindex, struct sock *sk,
 	if (err)
 		return err;
 
-	return cfsiz + MHSIZ;
+	return CFSIZ + MHSIZ;
 }
 
 /*
@@ -1300,23 +1239,13 @@ static int bcm_sendmsg(struct socket *sock, struct msghdr *msg, size_t size)
 	struct bcm_sock *bo = bcm_sk(sk);
 	int ifindex = bo->ifindex; /* default ifindex for this bcm_op */
 	struct bcm_msg_head msg_head;
-	int cfsiz;
 	int ret; /* read bytes or error codes as return value */
 
 	if (!bo->bound)
 		return -ENOTCONN;
 
 	/* check for valid message length from userspace */
-	if (size < MHSIZ)
-		return -EINVAL;
-
-	/* read message head information */
-	ret = memcpy_from_msg((u8 *)&msg_head, msg, MHSIZ);
-	if (ret < 0)
-		return ret;
-
-	cfsiz = CFSIZ(msg_head.flags);
-	if ((size - MHSIZ) % cfsiz)
+	if (size < MHSIZ || (size - MHSIZ) % CFSIZ)
 		return -EINVAL;
 
 	/* check for alternative ifindex for this bcm_op */
@@ -1350,6 +1279,12 @@ static int bcm_sendmsg(struct socket *sock, struct msghdr *msg, size_t size)
 		}
 	}
 
+	/* read message head information */
+
+	ret = memcpy_from_msg((u8 *)&msg_head, msg, MHSIZ);
+	if (ret < 0)
+		return ret;
+
 	lock_sock(sk);
 
 	switch (msg_head.opcode) {
@@ -1363,14 +1298,14 @@ static int bcm_sendmsg(struct socket *sock, struct msghdr *msg, size_t size)
 		break;
 
 	case TX_DELETE:
-		if (bcm_delete_tx_op(&bo->tx_ops, &msg_head, ifindex))
+		if (bcm_delete_tx_op(&bo->tx_ops, msg_head.can_id, ifindex))
 			ret = MHSIZ;
 		else
 			ret = -EINVAL;
 		break;
 
 	case RX_DELETE:
-		if (bcm_delete_rx_op(&bo->rx_ops, &msg_head, ifindex))
+		if (bcm_delete_rx_op(&bo->rx_ops, msg_head.can_id, ifindex))
 			ret = MHSIZ;
 		else
 			ret = -EINVAL;
@@ -1389,11 +1324,11 @@ static int bcm_sendmsg(struct socket *sock, struct msghdr *msg, size_t size)
 		break;
 
 	case TX_SEND:
-		/* we need exactly one CAN frame behind the msg head */
-		if ((msg_head.nframes != 1) || (size != cfsiz + MHSIZ))
+		/* we need exactly one can_frame behind the msg head */
+		if ((msg_head.nframes != 1) || (size != CFSIZ + MHSIZ))
 			ret = -EINVAL;
 		else
-			ret = bcm_tx_send(msg, ifindex, sk, cfsiz);
+			ret = bcm_tx_send(msg, ifindex, sk);
 		break;
 
 	default:
@@ -1560,31 +1495,24 @@ static int bcm_connect(struct socket *sock, struct sockaddr *uaddr, int len,
 	struct sockaddr_can *addr = (struct sockaddr_can *)uaddr;
 	struct sock *sk = sock->sk;
 	struct bcm_sock *bo = bcm_sk(sk);
-	int ret = 0;
 
 	if (len < sizeof(*addr))
 		return -EINVAL;
 
-	lock_sock(sk);
-
-	if (bo->bound) {
-		ret = -EISCONN;
-		goto fail;
-	}
+	if (bo->bound)
+		return -EISCONN;
 
 	/* bind a device to this socket */
 	if (addr->can_ifindex) {
 		struct net_device *dev;
 
 		dev = dev_get_by_index(&init_net, addr->can_ifindex);
-		if (!dev) {
-			ret = -ENODEV;
-			goto fail;
-		}
+		if (!dev)
+			return -ENODEV;
+
 		if (dev->type != ARPHRD_CAN) {
 			dev_put(dev);
-			ret = -ENODEV;
-			goto fail;
+			return -ENODEV;
 		}
 
 		bo->ifindex = dev->ifindex;
@@ -1595,24 +1523,17 @@ static int bcm_connect(struct socket *sock, struct sockaddr *uaddr, int len,
 		bo->ifindex = 0;
 	}
 
+	bo->bound = 1;
+
 	if (proc_dir) {
 		/* unique socket address as filename */
 		sprintf(bo->procname, "%lu", sock_i_ino(sk));
 		bo->bcm_proc_read = proc_create_data(bo->procname, 0644,
 						     proc_dir,
 						     &bcm_proc_fops, sk);
-		if (!bo->bcm_proc_read) {
-			ret = -ENOMEM;
-			goto fail;
-		}
 	}
 
-	bo->bound = 1;
-
-fail:
-	release_sock(sk);
-
-	return ret;
+	return 0;
 }
 
 static int bcm_recvmsg(struct socket *sock, struct msghdr *msg, size_t size,

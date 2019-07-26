@@ -36,68 +36,49 @@ struct mxc_lcdif_data {
 #define DISPDRV_LCD	"lcd"
 
 static struct fb_videomode lcdif_modedb[] = {
-	{
+	{ NULL, 60, 640, 480, 39721, 40, 24, 32, 11, 96, 2,	0,
+	FB_VMODE_NONINTERLACED,
+	0,},
 	/* 800x480 @ 57 Hz , pixel clk @ 27MHz */
-	"CLAA-WVGA", 57, 800, 480, 37037, 40, 60, 10, 10, 20, 10,
-	FB_SYNC_CLK_LAT_FALL,
+	{ NULL, 60, 800, 600, 25000, 88, 40, 23, 1, 128, 4,	0,
 	FB_VMODE_NONINTERLACED,
 	0,},
-	{
 	/* 800x480 @ 60 Hz , pixel clk @ 32MHz */
-	"SEIKO-WVGA", 60, 800, 480, 29850, 89, 164, 23, 10, 10, 10,
-	FB_SYNC_CLK_LAT_FALL,
+	{ NULL, 60, 1024, 768, 15384, 168, 8, 29, 3, 144, 6, 0,
 	FB_VMODE_NONINTERLACED,
 	0,},
-    {
-    "LDB-XGA", 60, 1024, 768, 15385, 220, 40, 21, 7, 60, 10,
-    0,
-    FB_VMODE_NONINTERLACED,
-    FB_MODE_IS_DETAILED,},
-    {
-    "LDB-WXGA", 60, 1360, 768, 14148, 158, 1, 14, 1, 1, 1,
-    0,
-    FB_VMODE_NONINTERLACED,
-    FB_MODE_IS_DETAILED,},
-    {
-    "LDB-1080P60", 60, 1920, 1080, 6734, 148, 88, 36, 4, 44, 5,
-    FB_SYNC_HOR_HIGH_ACT | FB_SYNC_VERT_HIGH_ACT,
-    FB_VMODE_NONINTERLACED,
-    FB_MODE_IS_VESA},
-    {
-    "LDB-WUXGA", 60, 1920, 1200, 6413, 120, 88, 4, 4, 16, 4,
-    FB_SYNC_HOR_HIGH_ACT | FB_SYNC_VERT_HIGH_ACT,
-    FB_VMODE_NONINTERLACED,
-    FB_MODE_IS_VESA},
-#ifdef CONFIG_MACH_ADVANTECH_GF08
-	{
-	"LDB-GRG", 60, 800, 480, 32122,
-	40, 40,
-	32, 13,
-	48, 3,
-	0,
+	/* 1024x768 @ 60 Hz, 48.4 kHz hsync */
+	{ NULL, 60, 1152, 864, 11123, 208, 64, 16, 4, 256, 8, 0,
 	FB_VMODE_NONINTERLACED,
-	FB_MODE_IS_DETAILED,},
+	0,},
+	
+	{ NULL, 60, 1280, 720, 13468, 220, 110, 20, 5, 40, 5, 0,
+	FB_VMODE_NONINTERLACED,
+	0,},
 
-	{
-	/* VGA 1280x1024 108M pixel clk output -yixuan add*/
-	"LDB-SXGA", 60, 1280, 1024, 9259,
-	358, 38,
-	38, 2,
-	12, 2,
-	0,
+	{ NULL, 60, 1280, 800, 12048, 200, 64, 24, 1, 136, 3, 0,
 	FB_VMODE_NONINTERLACED,
-	FB_MODE_IS_DETAILED,},
+	0,},
 
-	{
-	"LDB-SVGA", 60, 800, 600, 25132,
-	200, 36,
-	13, 10,
-	20, 5,
-	0,
+	{ NULL, 61, 1280, 1024, 9090, 200, 48, 26, 1, 184, 3, 0,
 	FB_VMODE_NONINTERLACED,
-	FB_MODE_IS_DETAILED,},
-#endif
-};
+	0,},
+	/* 1280x800, 60 Hz, 47.403 kHz hsync, WXGA 16:10 aspect ratio */
+	{ NULL, 60, 1400, 1050, 9259, 136, 40, 13, 1, 112, 3, 0,
+	FB_VMODE_NONINTERLACED,
+	0,},
+	/* 1366x768, 60 Hz, 47.403 kHz hsync, WXGA 16:9 aspect ratio */
+	{ NULL, 60, 1600, 1200, 6172, 304, 64, 46, 1, 192, 3, 0,
+	FB_VMODE_NONINTERLACED,
+	0,},
+	
+	{ NULL, 60, 1366, 768, 13806, 120, 10, 14, 3, 32, 5, 0,
+	FB_VMODE_NONINTERLACED,
+	0,},
+	
+	{ NULL, 60, 1920, 1080, 6734, 148, 88, 36, 4, 44, 5, 0,
+	FB_VMODE_NONINTERLACED,
+	0,},};
 static int lcdif_modedb_sz = ARRAY_SIZE(lcdif_modedb);
 
 static int lcdif_init(struct mxc_dispdrv_handle *disp,

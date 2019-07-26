@@ -56,6 +56,7 @@ void btrfs_set_lock_blocking_rw(struct extent_buffer *eb, int rw)
 		atomic_dec(&eb->spinning_readers);
 		read_unlock(&eb->lock);
 	}
+	return;
 }
 
 /*
@@ -78,9 +79,6 @@ void btrfs_clear_lock_blocking_rw(struct extent_buffer *eb, int rw)
 		write_lock(&eb->lock);
 		WARN_ON(atomic_read(&eb->spinning_writers));
 		atomic_inc(&eb->spinning_writers);
-		/*
-		 * atomic_dec_and_test implies a barrier for waitqueue_active
-		 */
 		if (atomic_dec_and_test(&eb->blocking_writers) &&
 		    waitqueue_active(&eb->write_lock_wq))
 			wake_up(&eb->write_lock_wq);
@@ -88,13 +86,11 @@ void btrfs_clear_lock_blocking_rw(struct extent_buffer *eb, int rw)
 		BUG_ON(atomic_read(&eb->blocking_readers) == 0);
 		read_lock(&eb->lock);
 		atomic_inc(&eb->spinning_readers);
-		/*
-		 * atomic_dec_and_test implies a barrier for waitqueue_active
-		 */
 		if (atomic_dec_and_test(&eb->blocking_readers) &&
 		    waitqueue_active(&eb->read_lock_wq))
 			wake_up(&eb->read_lock_wq);
 	}
+	return;
 }
 
 /*
@@ -233,9 +229,6 @@ void btrfs_tree_read_unlock_blocking(struct extent_buffer *eb)
 	}
 	btrfs_assert_tree_read_locked(eb);
 	WARN_ON(atomic_read(&eb->blocking_readers) == 0);
-	/*
-	 * atomic_dec_and_test implies a barrier for waitqueue_active
-	 */
 	if (atomic_dec_and_test(&eb->blocking_readers) &&
 	    waitqueue_active(&eb->read_lock_wq))
 		wake_up(&eb->read_lock_wq);
@@ -248,7 +241,6 @@ void btrfs_tree_read_unlock_blocking(struct extent_buffer *eb)
  */
 void btrfs_tree_lock(struct extent_buffer *eb)
 {
-	WARN_ON(eb->lock_owner == current->pid);
 again:
 	wait_event(eb->read_lock_wq, atomic_read(&eb->blocking_readers) == 0);
 	wait_event(eb->write_lock_wq, atomic_read(&eb->blocking_writers) == 0);
@@ -287,9 +279,6 @@ void btrfs_tree_unlock(struct extent_buffer *eb)
 	if (blockers) {
 		WARN_ON(atomic_read(&eb->spinning_writers));
 		atomic_dec(&eb->blocking_writers);
-		/*
-		 * Make sure counter is updated before we wake up waiters.
-		 */
 		smp_mb();
 		if (waitqueue_active(&eb->write_lock_wq))
 			wake_up(&eb->write_lock_wq);

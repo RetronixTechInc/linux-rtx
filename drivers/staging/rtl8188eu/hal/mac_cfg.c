@@ -11,6 +11,11 @@
 * FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for
 * more details.
 *
+* You should have received a copy of the GNU General Public License along with
+* this program; if not, write to the Free Software Foundation, Inc.,
+* 51 Franklin Street, Fifth Floor, Boston, MA 02110, USA
+*
+*
 ******************************************************************************/
 
 #include "odm_precomp.h"
@@ -118,10 +123,10 @@ bool rtl88eu_phy_mac_config(struct adapter *adapt)
 	u32 arraylength;
 	u32 *ptrarray;
 
-	arraylength = ARRAY_SIZE(array_MAC_REG_8188E);
+	arraylength = sizeof(array_MAC_REG_8188E)/sizeof(u32);
 	ptrarray = array_MAC_REG_8188E;
 
-	for (i = 0; i < arraylength; i += 2)
+	for (i = 0; i < arraylength; i = i + 2)
 		usb_write8(adapt, ptrarray[i], (u8)ptrarray[i + 1]);
 
 	usb_write8(adapt, REG_MAX_AGGR_NUM, MAX_AGGR_NUM);

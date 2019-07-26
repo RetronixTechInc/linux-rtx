@@ -257,7 +257,7 @@ static void moxart_dma_complete(void *param)
 static void moxart_transfer_dma(struct mmc_data *data, struct moxart_host *host)
 {
 	u32 len, dir_data, dir_slave;
-	long dma_time;
+	unsigned long dma_time;
 	struct dma_async_tx_descriptor *desc = NULL;
 	struct dma_chan *dma_chan;
 
@@ -397,8 +397,7 @@ static void moxart_prepare_data(struct moxart_host *host)
 static void moxart_request(struct mmc_host *mmc, struct mmc_request *mrq)
 {
 	struct moxart_host *host = mmc_priv(mmc);
-	long pio_time;
-	unsigned long flags;
+	unsigned long pio_time, flags;
 	u32 status;
 
 	spin_lock_irqsave(&host->lock, flags);
@@ -712,7 +711,6 @@ static const struct of_device_id moxart_mmc_match[] = {
 	{ .compatible = "faraday,ftsdc010" },
 	{ }
 };
-MODULE_DEVICE_TABLE(of, moxart_mmc_match);
 
 static struct platform_driver moxart_mmc_driver = {
 	.probe      = moxart_probe,

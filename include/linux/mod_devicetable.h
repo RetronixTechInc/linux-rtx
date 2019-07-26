@@ -189,8 +189,6 @@ struct css_device_id {
 struct acpi_device_id {
 	__u8 id[ACPI_ID_LEN];
 	kernel_ulong_t driver_data;
-	__u32 cls;
-	__u32 cls_msk;
 };
 
 #define PNP_ID_LEN	8
@@ -217,14 +215,6 @@ struct serio_device_id {
 	__u8 extra;
 	__u8 id;
 	__u8 proto;
-};
-
-struct hda_device_id {
-	__u32 vendor_id;
-	__u32 rev_id;
-	__u8 api_version;
-	const char *name;
-	unsigned long driver_data;
 };
 
 /*
@@ -261,7 +251,7 @@ struct pcmcia_device_id {
 
 	__u32 		prod_id_hash[4];
 
-	/* not matched against in kernelspace */
+	/* not matched against in kernelspace*/
 	const char *	prod_id[4];
 
 	/* not matched against */
@@ -404,7 +394,7 @@ struct virtio_device_id {
  * For Hyper-V devices we use the device guid as the id.
  */
 struct hv_vmbus_device_id {
-	uuid_le guid;
+	__u8 guid[16];
 	kernel_ulong_t driver_data;	/* Data private to the driver */
 };
 
@@ -609,21 +599,9 @@ struct ipack_device_id {
 
 #define MEI_CL_MODULE_PREFIX "mei:"
 #define MEI_CL_NAME_SIZE 32
-#define MEI_CL_VERSION_ANY 0xff
 
-/**
- * struct mei_cl_device_id - MEI client device identifier
- * @name: helper name
- * @uuid: client uuid
- * @version: client protocol version
- * @driver_info: information used by the driver.
- *
- * identifies mei client device by uuid and name
- */
 struct mei_cl_device_id {
 	char name[MEI_CL_NAME_SIZE];
-	uuid_le uuid;
-	__u8    version;
 	kernel_ulong_t driver_info;
 };
 
@@ -650,27 +628,5 @@ struct mcb_device_id {
 	__u16 device;
 	kernel_ulong_t driver_data;
 };
-
-struct ulpi_device_id {
-	__u16 vendor;
-	__u16 product;
-	kernel_ulong_t driver_data;
-};
-
-/**
- * struct fsl_mc_device_id - MC object device identifier
- * @vendor: vendor ID
- * @obj_type: MC object type
- * @ver_major: MC object version major number
- * @ver_minor: MC object version minor number
- *
- * Type of entries in the "device Id" table for MC object devices supported by
- * a MC object device driver. The last entry of the table has vendor set to 0x0
- */
-struct fsl_mc_device_id {
-	__u16 vendor;
-	const char obj_type[16];
-};
-
 
 #endif /* LINUX_MOD_DEVICETABLE_H */

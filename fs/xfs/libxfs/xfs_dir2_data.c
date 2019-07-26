@@ -31,7 +31,6 @@
 #include "xfs_trans.h"
 #include "xfs_buf_item.h"
 #include "xfs_cksum.h"
-#include "xfs_log.h"
 
 /*
  * Check the consistency of the data block.
@@ -221,11 +220,9 @@ xfs_dir3_data_verify(
 	if (xfs_sb_version_hascrc(&mp->m_sb)) {
 		if (hdr3->magic != cpu_to_be32(XFS_DIR3_DATA_MAGIC))
 			return false;
-		if (!uuid_equal(&hdr3->uuid, &mp->m_sb.sb_meta_uuid))
+		if (!uuid_equal(&hdr3->uuid, &mp->m_sb.sb_uuid))
 			return false;
 		if (be64_to_cpu(hdr3->blkno) != bp->b_bn)
-			return false;
-		if (!xfs_log_check_lsn(mp, be64_to_cpu(hdr3->lsn)))
 			return false;
 	} else {
 		if (hdr3->magic != cpu_to_be32(XFS_DIR2_DATA_MAGIC))
@@ -305,13 +302,11 @@ xfs_dir3_data_write_verify(
 }
 
 const struct xfs_buf_ops xfs_dir3_data_buf_ops = {
-	.name = "xfs_dir3_data",
 	.verify_read = xfs_dir3_data_read_verify,
 	.verify_write = xfs_dir3_data_write_verify,
 };
 
 static const struct xfs_buf_ops xfs_dir3_data_reada_buf_ops = {
-	.name = "xfs_dir3_data_reada",
 	.verify_read = xfs_dir3_data_reada_verify,
 	.verify_write = xfs_dir3_data_write_verify,
 };
@@ -329,7 +324,7 @@ xfs_dir3_data_read(
 
 	err = xfs_da_read_buf(tp, dp, bno, mapped_bno, bpp,
 				XFS_DATA_FORK, &xfs_dir3_data_buf_ops);
-	if (!err && tp && *bpp)
+	if (!err && tp)
 		xfs_trans_buf_set_type(tp, *bpp, XFS_BLFT_DIR_DATA_BUF);
 	return err;
 }
@@ -610,7 +605,7 @@ xfs_dir3_data_init(
 		hdr3->magic = cpu_to_be32(XFS_DIR3_DATA_MAGIC);
 		hdr3->blkno = cpu_to_be64(bp->b_bn);
 		hdr3->owner = cpu_to_be64(dp->i_ino);
-		uuid_copy(&hdr3->uuid, &mp->m_sb.sb_meta_uuid);
+		uuid_copy(&hdr3->uuid, &mp->m_sb.sb_uuid);
 
 	} else
 		hdr->magic = cpu_to_be32(XFS_DIR2_DATA_MAGIC);

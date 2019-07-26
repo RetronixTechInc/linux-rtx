@@ -1,14 +1,11 @@
 noarg:
 	$(MAKE) -C ../
 
-TEST_PROGS := hugetlb_vs_thp_test subpage_prot prot_sao
-TEST_FILES := tempfile
+TEST_PROGS := hugetlb_vs_thp_test subpage_prot
 
-all: $(TEST_PROGS) $(TEST_FILES)
+all: $(TEST_PROGS) tempfile
 
 $(TEST_PROGS): ../harness.c
-
-prot_sao: ../utils.c
 
 include ../../lib.mk
 

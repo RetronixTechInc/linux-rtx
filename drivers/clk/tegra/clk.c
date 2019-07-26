@@ -14,7 +14,6 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#include <linux/clkdev.h>
 #include <linux/clk.h>
 #include <linux/clk-provider.h>
 #include <linux/of.h>
@@ -50,6 +49,7 @@
 #define RST_DEVICES_L			0x004
 #define RST_DEVICES_H			0x008
 #define RST_DEVICES_U			0x00C
+#define RST_DFLL_DVCO			0x2F4
 #define RST_DEVICES_V			0x358
 #define RST_DEVICES_W			0x35C
 #define RST_DEVICES_X			0x28C
@@ -79,12 +79,7 @@ static struct clk **clks;
 static int clk_num;
 static struct clk_onecell_data clk_data;
 
-/* Handlers for SoC-specific reset lines */
-static int (*special_reset_assert)(unsigned long);
-static int (*special_reset_deassert)(unsigned long);
-static unsigned int num_special_reset;
-
-static const struct tegra_clk_periph_regs periph_regs[] = {
+static struct tegra_clk_periph_regs periph_regs[] = {
 	[0] = {
 		.enb_reg = CLK_OUT_ENB_L,
 		.enb_set_reg = CLK_OUT_ENB_SET_L,
@@ -157,32 +152,22 @@ static int tegra_clk_rst_assert(struct reset_controller_dev *rcdev,
 	 */
 	tegra_read_chipid();
 
-	if (id < periph_banks * 32) {
-		writel_relaxed(BIT(id % 32),
-			       clk_base + periph_regs[id / 32].rst_set_reg);
-		return 0;
-	} else if (id < periph_banks * 32 + num_special_reset) {
-		return special_reset_assert(id);
-	}
+	writel_relaxed(BIT(id % 32),
+			clk_base + periph_regs[id / 32].rst_set_reg);
 
-	return -EINVAL;
+	return 0;
 }
 
 static int tegra_clk_rst_deassert(struct reset_controller_dev *rcdev,
 		unsigned long id)
 {
-	if (id < periph_banks * 32) {
-		writel_relaxed(BIT(id % 32),
-			       clk_base + periph_regs[id / 32].rst_clr_reg);
-		return 0;
-	} else if (id < periph_banks * 32 + num_special_reset) {
-		return special_reset_deassert(id);
-	}
+	writel_relaxed(BIT(id % 32),
+			clk_base + periph_regs[id / 32].rst_clr_reg);
 
-	return -EINVAL;
+	return 0;
 }
 
-const struct tegra_clk_periph_regs *get_reg_bank(int clkid)
+struct tegra_clk_periph_regs *get_reg_bank(int clkid)
 {
 	int reg_bank = clkid / 32;
 
@@ -271,7 +256,7 @@ void __init tegra_init_from_table(struct tegra_clk_init_table *tbl,
 	}
 }
 
-static const struct reset_control_ops rst_ops = {
+static struct reset_control_ops rst_ops = {
 	.assert = tegra_clk_rst_assert,
 	.deassert = tegra_clk_rst_deassert,
 };
@@ -301,17 +286,8 @@ void __init tegra_add_of_provider(struct device_node *np)
 	of_clk_add_provider(np, of_clk_src_onecell_get, &clk_data);
 
 	rst_ctlr.of_node = np;
-	rst_ctlr.nr_resets = periph_banks * 32 + num_special_reset;
+	rst_ctlr.nr_resets = periph_banks * 32;
 	reset_controller_register(&rst_ctlr);
-}
-
-void __init tegra_init_special_resets(unsigned int num,
-				      int (*assert)(unsigned long),
-				      int (*deassert)(unsigned long))
-{
-	num_special_reset = num;
-	special_reset_assert = assert;
-	special_reset_deassert = deassert;
 }
 
 void __init tegra_register_devclks(struct tegra_devclk *dev_clks, int num)

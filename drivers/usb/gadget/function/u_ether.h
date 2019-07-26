@@ -20,6 +20,8 @@
 #include <linux/usb/cdc.h>
 #include <linux/netdevice.h>
 
+#include "gadget_chips.h"
+
 #define QMULT_DEFAULT 5
 
 /*
@@ -64,7 +66,6 @@ struct gether {
 	struct usb_ep			*out_ep;
 
 	bool				is_zlp_ok;
-	bool				no_skb_reserve;
 
 	u16				cdc_filter;
 
@@ -74,6 +75,9 @@ struct gether {
 	bool				is_fixed;
 	u32				fixed_out_len;
 	u32				fixed_in_len;
+	unsigned		ul_max_pkts_per_xfer;
+	unsigned		dl_max_pkts_per_xfer;
+	bool				multi_pkt_xfer;
 	bool				supports_multi_frame;
 	struct sk_buff			*(*wrap)(struct gether *port,
 						struct sk_buff *skb);
@@ -258,7 +262,7 @@ void gether_disconnect(struct gether *);
 /* Some controllers can't support CDC Ethernet (ECM) ... */
 static inline bool can_support_ecm(struct usb_gadget *gadget)
 {
-	if (!gadget_is_altset_supported(gadget))
+	if (!gadget_supports_altsettings(gadget))
 		return false;
 
 	/* Everything else is *presumably* fine ... but this is a bit

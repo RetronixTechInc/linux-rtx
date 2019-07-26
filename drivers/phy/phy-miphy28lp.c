@@ -367,7 +367,7 @@ static struct miphy28lp_pll_gen pcie_pll_gen[] = {
 
 static inline void miphy28lp_set_reset(struct miphy28lp_phy *miphy_phy)
 {
-	void __iomem *base = miphy_phy->base;
+	void *base = miphy_phy->base;
 	u8 val;
 
 	/* Putting Macro in reset */
@@ -391,7 +391,7 @@ static inline void miphy28lp_set_reset(struct miphy28lp_phy *miphy_phy)
 static inline void miphy28lp_pll_calibration(struct miphy28lp_phy *miphy_phy,
 		struct pll_ratio *pll_ratio)
 {
-	void __iomem *base = miphy_phy->base;
+	void *base = miphy_phy->base;
 	u8 val;
 
 	/* Applying PLL Settings */
@@ -1107,6 +1107,11 @@ static struct phy *miphy28lp_xlate(struct device *dev,
 	struct device_node *phynode = args->np;
 	int ret, index = 0;
 
+	if (!of_device_is_available(phynode)) {
+		dev_warn(dev, "Requested PHY is disabled\n");
+		return ERR_PTR(-ENODEV);
+	}
+
 	if (args->args_count != 1) {
 		dev_err(dev, "Invalid number of cells in 'phy' property\n");
 		return ERR_PTR(-EINVAL);
@@ -1132,7 +1137,7 @@ static struct phy *miphy28lp_xlate(struct device *dev,
 	return miphy_phy->phy;
 }
 
-static const struct phy_ops miphy28lp_ops = {
+static struct phy_ops miphy28lp_ops = {
 	.init = miphy28lp_init,
 	.owner = THIS_MODULE,
 };
@@ -1143,8 +1148,7 @@ static int miphy28lp_probe_resets(struct device_node *node,
 	struct miphy28lp_dev *miphy_dev = miphy_phy->phydev;
 	int err;
 
-	miphy_phy->miphy_rst =
-		of_reset_control_get_shared(node, "miphy-sw-rst");
+	miphy_phy->miphy_rst = of_reset_control_get(node, "miphy-sw-rst");
 
 	if (IS_ERR(miphy_phy->miphy_rst)) {
 		dev_err(miphy_dev->dev,
@@ -1227,18 +1231,15 @@ static int miphy28lp_probe(struct platform_device *pdev)
 
 		miphy_phy = devm_kzalloc(&pdev->dev, sizeof(*miphy_phy),
 					 GFP_KERNEL);
-		if (!miphy_phy) {
-			ret = -ENOMEM;
-			goto put_child;
-		}
+		if (!miphy_phy)
+			return -ENOMEM;
 
 		miphy_dev->phys[port] = miphy_phy;
 
 		phy = devm_phy_create(&pdev->dev, child, &miphy28lp_ops);
 		if (IS_ERR(phy)) {
 			dev_err(&pdev->dev, "failed to create PHY\n");
-			ret = PTR_ERR(phy);
-			goto put_child;
+			return PTR_ERR(phy);
 		}
 
 		miphy_dev->phys[port]->phy = phy;
@@ -1246,11 +1247,11 @@ static int miphy28lp_probe(struct platform_device *pdev)
 
 		ret = miphy28lp_of_probe(child, miphy_phy);
 		if (ret)
-			goto put_child;
+			return ret;
 
 		ret = miphy28lp_probe_resets(child, miphy_dev->phys[port]);
 		if (ret)
-			goto put_child;
+			return ret;
 
 		phy_set_drvdata(phy, miphy_dev->phys[port]);
 		port++;
@@ -1259,9 +1260,6 @@ static int miphy28lp_probe(struct platform_device *pdev)
 
 	provider = devm_of_phy_provider_register(&pdev->dev, miphy28lp_xlate);
 	return PTR_ERR_OR_ZERO(provider);
-put_child:
-	of_node_put(child);
-	return ret;
 }
 
 static const struct of_device_id miphy28lp_of_match[] = {
@@ -1275,6 +1273,7 @@ static struct platform_driver miphy28lp_driver = {
 	.probe = miphy28lp_probe,
 	.driver = {
 		.name = "miphy28lp-phy",
+		.owner = THIS_MODULE,
 		.of_match_table = miphy28lp_of_match,
 	}
 };

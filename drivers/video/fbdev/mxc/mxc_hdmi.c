@@ -46,6 +46,7 @@
 
 #include <linux/console.h>
 #include <linux/types.h>
+#include <linux/switch.h>
 
 #include "../edid.h"
 #include <video/mxc_edid.h>
@@ -169,7 +170,10 @@ struct mxc_hdmi {
 	struct fb_videomode default_mode;
 	struct fb_videomode previous_non_vga_mode;
 	bool requesting_vga_for_initialization;
-
+#ifdef CONFIG_SWITCH
+	struct switch_dev sdev_audio;
+	struct switch_dev sdev_display;
+#endif
 	int *gpr_base;
 	int *gpr_hdmi_base;
 	int *gpr_sdma_base;
@@ -178,6 +182,7 @@ struct mxc_hdmi {
 	struct hdmi_phy_reg_config phy_config;
 
 	struct pinctrl *pinctrl;
+	u32 yres_virtual;
 };
 
 static int hdmi_major;
@@ -188,7 +193,6 @@ struct mxc_hdmi *g_hdmi;
 
 static bool hdmi_inited;
 static bool hdcp_init;
-static struct regulator *hdmi_regulator;
 
 extern const struct fb_videomode mxc_cea_mode[64];
 extern void mxc_hdmi_cec_handle(u16 cec_stat);
@@ -222,7 +226,7 @@ static inline int cpu_is_imx6dl(struct mxc_hdmi *hdmi)
 	return hdmi->cpu_type == IMX6DL_HDMI;
 }
 #ifdef DEBUG
-static void dump_fb_videomode(const struct fb_videomode *m)
+static void dump_fb_videomode(struct fb_videomode *m)
 {
 	pr_debug("fb_videomode = %d %d %d %d %d %d %d %d %d %d %d %d %d\n",
 		m->refresh, m->xres, m->yres, m->pixclock, m->left_margin,
@@ -230,7 +234,7 @@ static void dump_fb_videomode(const struct fb_videomode *m)
 		m->hsync_len, m->vsync_len, m->sync, m->vmode, m->flag);
 }
 #else
-static void dump_fb_videomode(const struct fb_videomode *m)
+static void dump_fb_videomode(struct fb_videomode *m)
 {}
 #endif
 
@@ -1830,35 +1834,27 @@ static void  mxc_hdmi_default_edid_cfg(struct mxc_hdmi *hdmi)
 
 static void  mxc_hdmi_default_modelist(struct mxc_hdmi *hdmi)
 {
-	struct fb_modelist *modelist;
-	struct fb_videomode *m;
+	u32 i;
+	const struct fb_videomode *mode;
 
 	dev_dbg(&hdmi->pdev->dev, "%s\n", __func__);
 
-	/* If no EDID data read, set up default modelist; since we don't know
-	 * the supported modes of the current sink, we will use only one mode in
-	 * this modelist:
-	 * the default_mode set up at init (usually got from cmdline)
-	 */
+	/* If not EDID data read, set up default modelist  */
 	dev_info(&hdmi->pdev->dev, "create default modelist\n");
 
-	/* If the current modelist is already default, don't re-create it*/
-	if (list_is_singular(&hdmi->fbi->modelist)) {
-		modelist = list_entry((&hdmi->fbi->modelist)->next,
-				struct fb_modelist, list);
-		m = &modelist->mode;
-		if (fb_mode_is_equal(m, &hdmi->default_mode)) {
-			dev_info(&hdmi->pdev->dev,
-				"Modelist is already default, no need to re-create!\n");
-			return;
-		}
+	console_lock();
 
+	fb_destroy_modelist(&hdmi->fbi->modelist);
+
+	/*Add all no interlaced CEA mode to default modelist */
+	for (i = 0; i < ARRAY_SIZE(mxc_cea_mode); i++) {
+		mode = &mxc_cea_mode[i];
+		if (!(mode->vmode & FB_VMODE_INTERLACED) && (mode->xres != 0))
+			fb_add_videomode(mode, &hdmi->fbi->modelist);
 	}
 
-	console_lock();
-	fb_destroy_modelist(&hdmi->fbi->modelist);
-	fb_add_videomode(&hdmi->default_mode, &hdmi->fbi->modelist);
 	fb_new_modelist(hdmi->fbi);
+
 	console_unlock();
 }
 
@@ -1908,6 +1904,8 @@ static void mxc_hdmi_set_mode(struct mxc_hdmi *hdmi)
 		/* update fbi mode in case modelist is updated */
 		hdmi->fbi->mode = (struct fb_videomode *)mode;
 		fb_videomode_to_var(&hdmi->fbi->var, mode);
+		if (hdmi->yres_virtual > 0)
+			hdmi->fbi->var.yres_virtual = hdmi->yres_virtual;
 		/* update hdmi setting in case EDID data updated  */
 		mxc_hdmi_setup(hdmi, 0);
 	} else {
@@ -2029,7 +2027,11 @@ static void hotplug_worker(struct work_struct *work)
 			hdmi_writeb(val, HDMI_PHY_POL0);
 
 			hdmi_set_cable_state(1);
-
+#ifdef CONFIG_SWITCH
+			if (!hdmi->hdmi_data.video_mode.mDVI)
+				switch_set_state(&hdmi->sdev_audio, 1);
+			switch_set_state(&hdmi->sdev_display, 1);
+#endif
 			sprintf(event_string, "EVENT=plugin");
 			kobject_uevent_env(&hdmi->pdev->dev.kobj, KOBJ_CHANGE, envp);
 #ifdef CONFIG_MXC_HDMI_CEC
@@ -2037,6 +2039,10 @@ static void hotplug_worker(struct work_struct *work)
 #endif
 		} else if (!(phy_int_pol & HDMI_PHY_HPD)) {
 			/* Plugout event */
+#ifdef CONFIG_SWITCH
+			switch_set_state(&hdmi->sdev_audio, 0);
+			switch_set_state(&hdmi->sdev_display, 0);
+#endif
 			dev_dbg(&hdmi->pdev->dev, "EVENT=plugout\n");
 			hdmi_set_cable_state(0);
 			mxc_hdmi_abort_stream();
@@ -2304,6 +2310,7 @@ static int mxc_hdmi_fb_event(struct notifier_block *nb,
 {
 	struct fb_event *event = v;
 	struct mxc_hdmi *hdmi = container_of(nb, struct mxc_hdmi, nb);
+	struct fb_videomode *mode;
 
 	if (strcmp(event->info->fix.id, hdmi->fbi->fix.id))
 		return 0;
@@ -2323,7 +2330,11 @@ static int mxc_hdmi_fb_event(struct notifier_block *nb,
 
 	case FB_EVENT_MODE_CHANGE:
 		dev_dbg(&hdmi->pdev->dev, "event=FB_EVENT_MODE_CHANGE\n");
-		if (hdmi->fb_reg)
+		mode = (struct fb_videomode *)event->data;
+		if (hdmi->fbi != NULL)
+			hdmi->yres_virtual = hdmi->fbi->var.yres_virtual;
+		if ((hdmi->fb_reg) && (mode != NULL) &&
+			!fb_mode_is_equal(&hdmi->previous_non_vga_mode, mode))
 			mxc_hdmi_setup(hdmi, val);
 		break;
 
@@ -2598,16 +2609,17 @@ static int mxc_hdmi_disp_init(struct mxc_dispdrv_handle *disp,
 
 	/* Find a nearest mode in default modelist */
 	fb_var_to_videomode(&m, &hdmi->fbi->var);
+	dump_fb_videomode(&m);
 
 	hdmi->dft_mode_set = false;
+	/* Save default video mode */
+	memcpy(&hdmi->default_mode, &m, sizeof(struct fb_videomode));
+
 	mode = fb_find_nearest_mode(&m, &hdmi->fbi->modelist);
 	if (!mode) {
 		pr_err("%s: could not find mode in modelist\n", __func__);
 		return -1;
 	}
-	dump_fb_videomode(mode);
-	/* Save default video mode */
-	memcpy(&hdmi->default_mode, mode, sizeof(struct fb_videomode));
 
 	fb_videomode_to_var(&hdmi->fbi->var, mode);
 
@@ -2740,14 +2752,13 @@ static long mxc_hdmi_ioctl(struct file *file,
 				sizeof(g_hdmi->hdmi_data)) ? -EFAULT : 0;
 		break;
 	case HDMI_IOC_GET_CPU_TYPE:
-		ret = put_user(g_hdmi->cpu_type, argp);
+		*argp = g_hdmi->cpu_type;
 		break;
 	default:
 		pr_debug("Unsupport cmd %d\n", cmd);
 		break;
-	}
-
-	return ret;
+     }
+     return ret;
 }
 
 static int mxc_hdmi_release(struct inode *inode, struct file *file)
@@ -2839,21 +2850,16 @@ static int mxc_hdmi_probe(struct platform_device *pdev)
 		ret = (int)hdmi->disp_mxc_hdmi;
 		goto edispdrv;
 	}
+#ifdef CONFIG_SWITCH
+	hdmi->sdev_audio.name = "hdmi_audio";
+	hdmi->sdev_display.name = "hdmi";
+	switch_dev_register(&hdmi->sdev_audio);
+	switch_dev_register(&hdmi->sdev_display);
+#endif
 	mxc_dispdrv_setdata(hdmi->disp_mxc_hdmi, hdmi);
 
 	platform_set_drvdata(pdev, hdmi);
-
-	hdmi_regulator = devm_regulator_get(&pdev->dev, "HDMI");
-	if (!IS_ERR(hdmi_regulator)) {
-		ret = regulator_enable(hdmi_regulator);
-		if (ret) {
-			dev_err(&pdev->dev, "enable 5v hdmi regulator failed\n");
-			goto edispdrv;
-		}
-	} else {
-		hdmi_regulator = NULL;
-		dev_warn(&pdev->dev, "No hdmi 5v supply\n");
-	}
+	mxc_dispdrv_setdev(hdmi->disp_mxc_hdmi, &pdev->dev);
 
 	return 0;
 edispdrv:
@@ -2877,17 +2883,16 @@ static int mxc_hdmi_remove(struct platform_device *pdev)
 	int irq = platform_get_irq(pdev, 0);
 
 	fb_unregister_client(&hdmi->nb);
-
+#ifdef CONFIG_SWITCH
+	switch_dev_unregister(&hdmi->sdev_audio);
+	switch_dev_unregister(&hdmi->sdev_display);
+#endif
 	mxc_dispdrv_puthandle(hdmi->disp_mxc_hdmi);
 	mxc_dispdrv_unregister(hdmi->disp_mxc_hdmi);
 	iounmap(hdmi->gpr_base);
 	/* No new work will be scheduled, wait for running ISR */
 	free_irq(irq, hdmi);
 	kfree(hdmi);
-
-	if (hdmi_regulator)
-		regulator_disable(hdmi_regulator);
-
 	g_hdmi = NULL;
 
 	return 0;

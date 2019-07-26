@@ -11,7 +11,6 @@
    for the semaphore.  */
 
 #define __PA_LDCW_ALIGNMENT	16
-#define __PA_LDCW_ALIGN_ORDER	4
 #define __ldcw_align(a) ({					\
 	unsigned long __ret = (unsigned long) &(a)->lock[0];	\
 	__ret = (__ret + __PA_LDCW_ALIGNMENT - 1)		\
@@ -29,7 +28,6 @@
    ldcd). */
 
 #define __PA_LDCW_ALIGNMENT	4
-#define __PA_LDCW_ALIGN_ORDER	2
 #define __ldcw_align(a) (&(a)->slock)
 #define __LDCW	"ldcw,co"
 
@@ -42,7 +40,7 @@
    memory to indicate to the compiler that the assembly code reads
    or writes to items other than those listed in the input and output
    operands.  This may pessimize the code somewhat but __ldcw is
-   usually used within code blocks surrounded by memory barriers.  */
+   usually used within code blocks surrounded by memory barriors.  */
 #define __ldcw(a) ({						\
 	unsigned __ret;						\
 	__asm__ __volatile__(__LDCW " 0(%1),%0"			\

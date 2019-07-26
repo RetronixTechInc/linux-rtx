@@ -21,7 +21,6 @@
 #include <linux/fs.h>
 #include "irq.h"
 #include "assigned-dev.h"
-#include "trace/events/kvm.h"
 
 struct kvm_assigned_dev_kernel {
 	struct kvm_irq_ack_notifier ack_notifier;
@@ -51,9 +50,11 @@ struct kvm_assigned_dev_kernel {
 static struct kvm_assigned_dev_kernel *kvm_find_assigned_dev(struct list_head *head,
 						      int assigned_dev_id)
 {
+	struct list_head *ptr;
 	struct kvm_assigned_dev_kernel *match;
 
-	list_for_each_entry(match, head, list) {
+	list_for_each(ptr, head) {
+		match = list_entry(ptr, struct kvm_assigned_dev_kernel, list);
 		if (match->assigned_dev_id == assigned_dev_id)
 			return match;
 	}
@@ -130,42 +131,7 @@ static irqreturn_t kvm_assigned_dev_thread_intx(int irq, void *dev_id)
 	return IRQ_HANDLED;
 }
 
-/*
- * Deliver an IRQ in an atomic context if we can, or return a failure,
- * user can retry in a process context.
- * Return value:
- *  -EWOULDBLOCK - Can't deliver in atomic context: retry in a process context.
- *  Other values - No need to retry.
- */
-static int kvm_set_irq_inatomic(struct kvm *kvm, int irq_source_id, u32 irq,
-				int level)
-{
-	struct kvm_kernel_irq_routing_entry entries[KVM_NR_IRQCHIPS];
-	struct kvm_kernel_irq_routing_entry *e;
-	int ret = -EINVAL;
-	int idx;
-
-	trace_kvm_set_irq(irq, level, irq_source_id);
-
-	/*
-	 * Injection into either PIC or IOAPIC might need to scan all CPUs,
-	 * which would need to be retried from thread context;  when same GSI
-	 * is connected to both PIC and IOAPIC, we'd have to report a
-	 * partial failure here.
-	 * Since there's no easy way to do this, we only support injecting MSI
-	 * which is limited to 1:1 GSI mapping.
-	 */
-	idx = srcu_read_lock(&kvm->irq_srcu);
-	if (kvm_irq_map_gsi(kvm, entries, irq) > 0) {
-		e = &entries[0];
-		ret = kvm_arch_set_irq_inatomic(e, kvm, irq_source_id,
-						irq, level);
-	}
-	srcu_read_unlock(&kvm->irq_srcu, idx);
-	return ret;
-}
-
-
+#ifdef __KVM_HAVE_MSI
 static irqreturn_t kvm_assigned_dev_msi(int irq, void *dev_id)
 {
 	struct kvm_assigned_dev_kernel *assigned_dev = dev_id;
@@ -184,7 +150,9 @@ static irqreturn_t kvm_assigned_dev_thread_msi(int irq, void *dev_id)
 
 	return IRQ_HANDLED;
 }
+#endif
 
+#ifdef __KVM_HAVE_MSIX
 static irqreturn_t kvm_assigned_dev_msix(int irq, void *dev_id)
 {
 	struct kvm_assigned_dev_kernel *assigned_dev = dev_id;
@@ -215,6 +183,7 @@ static irqreturn_t kvm_assigned_dev_thread_msix(int irq, void *dev_id)
 
 	return IRQ_HANDLED;
 }
+#endif
 
 /* Ack the irq line for an assigned device */
 static void kvm_assigned_dev_ack_irq(struct kvm_irq_ack_notifier *kian)
@@ -371,10 +340,14 @@ static void kvm_free_assigned_device(struct kvm *kvm,
 
 void kvm_free_all_assigned_devices(struct kvm *kvm)
 {
-	struct kvm_assigned_dev_kernel *assigned_dev, *tmp;
+	struct list_head *ptr, *ptr2;
+	struct kvm_assigned_dev_kernel *assigned_dev;
 
-	list_for_each_entry_safe(assigned_dev, tmp,
-				 &kvm->arch.assigned_dev_head, list) {
+	list_for_each_safe(ptr, ptr2, &kvm->arch.assigned_dev_head) {
+		assigned_dev = list_entry(ptr,
+					  struct kvm_assigned_dev_kernel,
+					  list);
+
 		kvm_free_assigned_device(kvm, assigned_dev);
 	}
 }
@@ -413,6 +386,7 @@ static int assigned_device_enable_host_intx(struct kvm *kvm,
 	return 0;
 }
 
+#ifdef __KVM_HAVE_MSI
 static int assigned_device_enable_host_msi(struct kvm *kvm,
 					   struct kvm_assigned_dev_kernel *dev)
 {
@@ -434,7 +408,9 @@ static int assigned_device_enable_host_msi(struct kvm *kvm,
 
 	return 0;
 }
+#endif
 
+#ifdef __KVM_HAVE_MSIX
 static int assigned_device_enable_host_msix(struct kvm *kvm,
 					    struct kvm_assigned_dev_kernel *dev)
 {
@@ -467,6 +443,8 @@ err:
 	return r;
 }
 
+#endif
+
 static int assigned_device_enable_guest_intx(struct kvm *kvm,
 				struct kvm_assigned_dev_kernel *dev,
 				struct kvm_assigned_irq *irq)
@@ -476,6 +454,7 @@ static int assigned_device_enable_guest_intx(struct kvm *kvm,
 	return 0;
 }
 
+#ifdef __KVM_HAVE_MSI
 static int assigned_device_enable_guest_msi(struct kvm *kvm,
 			struct kvm_assigned_dev_kernel *dev,
 			struct kvm_assigned_irq *irq)
@@ -484,7 +463,9 @@ static int assigned_device_enable_guest_msi(struct kvm *kvm,
 	dev->ack_notifier.gsi = -1;
 	return 0;
 }
+#endif
 
+#ifdef __KVM_HAVE_MSIX
 static int assigned_device_enable_guest_msix(struct kvm *kvm,
 			struct kvm_assigned_dev_kernel *dev,
 			struct kvm_assigned_irq *irq)
@@ -493,6 +474,7 @@ static int assigned_device_enable_guest_msix(struct kvm *kvm,
 	dev->ack_notifier.gsi = -1;
 	return 0;
 }
+#endif
 
 static int assign_host_irq(struct kvm *kvm,
 			   struct kvm_assigned_dev_kernel *dev,
@@ -510,12 +492,16 @@ static int assign_host_irq(struct kvm *kvm,
 	case KVM_DEV_IRQ_HOST_INTX:
 		r = assigned_device_enable_host_intx(kvm, dev);
 		break;
+#ifdef __KVM_HAVE_MSI
 	case KVM_DEV_IRQ_HOST_MSI:
 		r = assigned_device_enable_host_msi(kvm, dev);
 		break;
+#endif
+#ifdef __KVM_HAVE_MSIX
 	case KVM_DEV_IRQ_HOST_MSIX:
 		r = assigned_device_enable_host_msix(kvm, dev);
 		break;
+#endif
 	default:
 		r = -EINVAL;
 	}
@@ -548,12 +534,16 @@ static int assign_guest_irq(struct kvm *kvm,
 	case KVM_DEV_IRQ_GUEST_INTX:
 		r = assigned_device_enable_guest_intx(kvm, dev, irq);
 		break;
+#ifdef __KVM_HAVE_MSI
 	case KVM_DEV_IRQ_GUEST_MSI:
 		r = assigned_device_enable_guest_msi(kvm, dev, irq);
 		break;
+#endif
+#ifdef __KVM_HAVE_MSIX
 	case KVM_DEV_IRQ_GUEST_MSIX:
 		r = assigned_device_enable_guest_msix(kvm, dev, irq);
 		break;
+#endif
 	default:
 		r = -EINVAL;
 	}
@@ -836,6 +826,7 @@ out:
 }
 
 
+#ifdef __KVM_HAVE_MSIX
 static int kvm_vm_ioctl_set_msix_nr(struct kvm *kvm,
 				    struct kvm_assigned_msix_nr *entry_nr)
 {
@@ -915,6 +906,7 @@ msix_entry_out:
 
 	return r;
 }
+#endif
 
 static int kvm_vm_ioctl_set_pci_irq_mask(struct kvm *kvm,
 		struct kvm_assigned_pci_dev *assigned_dev)
@@ -1020,6 +1012,7 @@ long kvm_vm_ioctl_assigned_device(struct kvm *kvm, unsigned ioctl,
 			goto out;
 		break;
 	}
+#ifdef __KVM_HAVE_MSIX
 	case KVM_ASSIGN_SET_MSIX_NR: {
 		struct kvm_assigned_msix_nr entry_nr;
 		r = -EFAULT;
@@ -1040,6 +1033,7 @@ long kvm_vm_ioctl_assigned_device(struct kvm *kvm, unsigned ioctl,
 			goto out;
 		break;
 	}
+#endif
 	case KVM_ASSIGN_SET_INTX_MASK: {
 		struct kvm_assigned_pci_dev assigned_dev;
 

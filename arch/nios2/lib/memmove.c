@@ -10,6 +10,7 @@
 #include <linux/types.h>
 #include <linux/string.h>
 
+#ifdef __HAVE_ARCH_MEMMOVE
 void *memmove(void *d, const void *s, size_t count)
 {
 	unsigned long dst, src;
@@ -78,3 +79,4 @@ restdown:
 
 	return d;
 }
+#endif /* __HAVE_ARCH_MEMMOVE */

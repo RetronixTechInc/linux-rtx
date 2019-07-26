@@ -39,6 +39,7 @@
 
 #include <asm/addrspace.h>
 #include <asm/mach-ar7/ar7.h>
+#include <asm/mach-ar7/gpio.h>
 #include <asm/mach-ar7/prom.h>
 
 /*****************************************************************************
@@ -576,7 +577,6 @@ static int __init ar7_register_uarts(void)
 	uart_port.type		= PORT_AR7;
 	uart_port.uartclk	= clk_get_rate(bus_clk) / 2;
 	uart_port.iotype	= UPIO_MEM32;
-	uart_port.flags		= UPF_FIXED_TYPE | UPF_BOOT_AUTOCONF;
 	uart_port.regshift	= 2;
 
 	uart_port.line		= 0;
@@ -655,10 +655,6 @@ static int __init ar7_register_devices(void)
 	u32 val;
 	int res;
 
-	res = ar7_gpio_init();
-	if (res)
-		pr_warn("unable to register gpios: %d\n", res);
-
 	res = ar7_register_uarts();
 	if (res)
 		pr_err("unable to setup uart(s): %d\n", res);
@@ -683,8 +679,7 @@ static int __init ar7_register_devices(void)
 	}
 
 	if (ar7_has_high_cpmac()) {
-		res = fixed_phy_add(PHY_POLL, cpmac_high.id,
-				    &fixed_phy_status, -1);
+		res = fixed_phy_add(PHY_POLL, cpmac_high.id, &fixed_phy_status);
 		if (!res) {
 			cpmac_get_mac(1, cpmac_high_data.dev_addr);
 
@@ -697,7 +692,7 @@ static int __init ar7_register_devices(void)
 	} else
 		cpmac_low_data.phy_mask = 0xffffffff;
 
-	res = fixed_phy_add(PHY_POLL, cpmac_low.id, &fixed_phy_status, -1);
+	res = fixed_phy_add(PHY_POLL, cpmac_low.id, &fixed_phy_status);
 	if (!res) {
 		cpmac_get_mac(0, cpmac_low_data.dev_addr);
 		res = platform_device_register(&cpmac_low);

@@ -526,6 +526,11 @@ static void option_instat_callback(struct urb *urb);
 #define VIATELECOM_VENDOR_ID			0x15eb
 #define VIATELECOM_PRODUCT_CDS7			0x0001
 
+/* SIMCOM modem */
+#define SIMCOM_SIM7100_VID          0x1E0E
+#define SIMCOM_SIM7100_PID          0x9001
+
+
 struct option_blacklist_info {
 	/* bitmask of interface numbers blacklisted for send_setup */
 	const unsigned long sendsetup;
@@ -634,6 +639,11 @@ static const struct option_blacklist_info telit_le920_blacklist = {
 static const struct option_blacklist_info sierra_mc73xx_blacklist = {
 	.sendsetup = BIT(0) | BIT(2),
 	.reserved = BIT(8) | BIT(10) | BIT(11),
+};
+
+//for SIM7100 modem for NDIS
+static const struct option_blacklist_info simcom_sim7100_blacklist = {
+.reserved = BIT(5),
 };
 
 static const struct usb_device_id option_ids[] = {
@@ -1830,6 +1840,10 @@ static const struct usb_device_id option_ids[] = {
 	{ USB_DEVICE_INTERFACE_CLASS(0x2020, 0x4000, 0xff) },                /* OLICARD300 - MT6225 */
 	{ USB_DEVICE(INOVIA_VENDOR_ID, INOVIA_SEW858) },
 	{ USB_DEVICE(VIATELECOM_VENDOR_ID, VIATELECOM_PRODUCT_CDS7) },
+    //for SIM7100 modem for NDIS
+    { USB_DEVICE(SIMCOM_SIM7100_VID, SIMCOM_SIM7100_PID),
+    .driver_info = (kernel_ulong_t)& simcom_sim7100_blacklist
+    },
 	{ } /* Terminating entry */
 };
 MODULE_DEVICE_TABLE(usb, option_ids);

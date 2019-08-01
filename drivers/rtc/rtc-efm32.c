@@ -524,6 +524,121 @@ static int efm32_wdog_get( struct device *dev , unsigned char* val )
 	return -ENOIOCTLCMD;
 }
 
+/* -------------------------------------------------------------------------------------------------------------------------------------- */
+static ssize_t mcu_version_show( struct device *dev , struct device_attribute *attr , char *buf )
+{
+	unsigned char ucWrite[64] ;
+	unsigned char ucRead[64]  ;
+	unsigned char WriteLength = u8EFM32CmdvMaxLen[(EFM32_BWVER_GET&0x7F)].WriteLen ;
+	unsigned char ReadLength  = u8EFM32CmdvMaxLen[(EFM32_BWVER_GET&0x7F)].ReadLen  ;
+	int error, i;
+
+	memset( ucWrite , 0 , 64 ) ;
+	memset( ucRead  , 0 , 64 ) ;
+
+	pr_info_efm32( "%s start\n" , __func__ ) ;
+
+	//i2c write command setting
+	ucWrite[0] = WriteLength ;
+	ucWrite[1] = EFM32_BWVER_GET ;
+	if ( ucWrite[0] >= 63 )
+	{
+		return -EINVAL ;
+	}
+	
+	for( i = 0 ; i < ucWrite[0]-1 ; i++ )
+	{
+		ucWrite[ucWrite[0]-1] += ucWrite[i] ;
+	}
+
+	error = efm32_read( dev , ucWrite , WriteLength , ucRead , ReadLength ) ;
+	if ( error )
+	{
+		return error;
+	}
+	
+	if( ucRead[0] != ReadLength )
+	{
+		return -EINVAL;
+	}
+	
+	if ( efm32_check_checksum( ucRead ) )
+	{
+		switch ( ucRead[1] ) 
+		{
+			case DEF_EFM32CMD_SLAVE_ACK :
+			case DEF_EFM32CMD_SLAVE_NACK :
+				printk(KERN_INFO "%s Command is error\n" , __func__ ) ;
+			case DEF_EFM32CMD_SLAVE_SENT_DATA :
+				return sprintf(buf, "version:%02d%02d%02d\n", ucRead[3], ucRead[4], ucRead[5]);
+			default :
+				printk(KERN_INFO "%s Unknow command\n" , __func__  ) ;
+				break ;
+		}
+	}
+	return -ENOIOCTLCMD ;
+}
+static DEVICE_ATTR_RO( mcu_version ) ;
+//static DEVICE_ATTR( mcu_version , S_IRUGO , mcu_version_show , NULL ) ;
+
+static ssize_t ac_plug_high_show( struct device *dev , struct device_attribute *attr , char *buf )
+{
+	struct i2c_client *i2cclient = to_i2c_client( dev ) ;
+	struct efm32_a6_data *efm32data = i2c_get_clientdata( i2cclient ) ;
+	
+	efm32_reset( efm32data , 1 ) ;
+	
+	return sprintf(buf, "set_ac_plug:high\n");
+}
+static DEVICE_ATTR_RO( ac_plug_high ) ;
+//static DEVICE_ATTR(ac_plug_high, S_IRUGO, ac_plug_high_show, NULL);
+
+static ssize_t startup_finish_store( struct device *dev , struct device_attribute *attr , const char *buf , size_t count )
+{
+	int loop ;
+	struct i2c_client *i2cclient = to_i2c_client( dev ) ;
+	struct efm32_a6_data *efm32data = i2c_get_clientdata( i2cclient ) ;
+
+	if ( strstr(buf, "finish") != NULL )
+	{
+		for ( loop = 0 ; loop < 5 ; loop++ )
+		{
+			if ( efm32_wdog_set( dev , 0 ) == 0 )
+			{
+				printk(KERN_INFO "startup_finish: %d\n", count);
+				return count;
+			}
+		}
+	}
+	return count;
+}
+static DEVICE_ATTR_WO(startup_finish) ;
+//static DEVICE_ATTR(startup_finish, S_IRUGO|S_IWUGO, NULL, startup_finish_store);
+
+/* -------------------------------------------------------------------------------------------------------------------------------------- */
+/* Open EFM32 device */
+static int efm32_rtc_open( struct device *dev )
+{
+	struct i2c_client *i2cclient = to_i2c_client( dev ) ;
+	struct efm32_a6_data *efm32data = i2c_get_clientdata( i2cclient ) ;
+	
+	if ( test_and_set_bit( 1 , (void *)&efm32data->rtc_status ) )
+	{
+		return -EBUSY ;
+	}
+
+	return 0;
+}
+
+/* Release EFM32 device */
+static void efm32_rtc_release( struct device *dev )
+{
+	struct i2c_client *i2cclient = to_i2c_client( dev ) ;
+	struct efm32_a6_data *efm32data = i2c_get_clientdata( i2cclient ) ;
+	
+	clear_bit( 1 , (void *)&efm32data->rtc_status ) ;
+}
+
 static int efm32_get_time( struct device *dev , struct rtc_time *tm )
 {
 	unsigned char ucWrite[64] ;
@@ -664,119 +779,37 @@ static int efm32_set_time( struct device *dev, struct rtc_time *tm )
 	return -ENOIOCTLCMD;
 }
 
-/* -------------------------------------------------------------------------------------------------------------------------------------- */
-static ssize_t mcu_version_show( struct device *dev , struct device_attribute *attr , char *buf )
+static int efm32_get_alarm(struct device *dev, struct rtc_wkalrm *alrm)
 {
-	unsigned char ucWrite[64] ;
-	unsigned char ucRead[64]  ;
-	unsigned char WriteLength = u8EFM32CmdvMaxLen[(EFM32_BWVER_GET&0x7F)].WriteLen ;
-	unsigned char ReadLength  = u8EFM32CmdvMaxLen[(EFM32_BWVER_GET&0x7F)].ReadLen  ;
 	int error, i;
+	int days;
+	unsigned char WriteLength = u8EFM32CmdvMaxLen[(EFM32_RTC_GETALARM&0x7F)].WriteLen ;
+	unsigned char ReadLength = u8EFM32CmdvMaxLen[(EFM32_RTC_GETALARM&0x7F)].ReadLen ;
+	unsigned char ucWrite[WriteLength];
+	unsigned char ucRead[ReadLength];
+	struct rtc_time *tm = &alrm->time;
 
-	memset( ucWrite , 0 , 64 ) ;
-	memset( ucRead  , 0 , 64 ) ;
-
-	pr_info_efm32( "%s start\n" , __func__ ) ;
-
-	//i2c write command setting
-	ucWrite[0] = WriteLength ;
-	ucWrite[1] = EFM32_BWVER_GET ;
-	if ( ucWrite[0] >= 63 )
-	{
-		return -EINVAL ;
-	}
-	
-	for( i = 0 ; i < ucWrite[0]-1 ; i++ )
-	{
-		ucWrite[ucWrite[0]-1] += ucWrite[i] ;
-	}
-
-	error = efm32_read( dev , ucWrite , WriteLength , ucRead , ReadLength ) ;
-	if ( error )
-	{
-		return error;
-	}
-	
-	if( ucRead[0] != ReadLength )
-	{
-		return -EINVAL;
-	}
-	
-	if ( efm32_check_checksum( ucRead ) )
-	{
-		switch ( ucRead[1] ) 
-		{
-			case DEF_EFM32CMD_SLAVE_ACK :
-			case DEF_EFM32CMD_SLAVE_NACK :
-				printk(KERN_INFO "%s Command is error\n" , __func__ ) ;
-			case DEF_EFM32CMD_SLAVE_SENT_DATA :
-				return sprintf(buf, "version:%02d%02d%02d\n", ucRead[3], ucRead[4], ucRead[5]);
-			default :
-				printk(KERN_INFO "%s Unknow command\n" , __func__  ) ;
-				break ;
-		}
-	}
-	return -ENOIOCTLCMD ;
-}
-static DEVICE_ATTR_RO( mcu_version ) ;
-//static DEVICE_ATTR( mcu_version , S_IRUGO , mcu_version_show , NULL ) ;
-
-static ssize_t ac_plug_high_show( struct device *dev , struct device_attribute *attr , char *buf )
-{
-	struct i2c_client *i2cclient = to_i2c_client( dev ) ;
-	struct efm32_a6_data *efm32data = i2c_get_clientdata( i2cclient ) ;
-	
-	efm32_reset( efm32data , 1 ) ;
-	
-	return sprintf(buf, "set_ac_plug:high\n");
-}
-static DEVICE_ATTR_RO( ac_plug_high ) ;
-//static DEVICE_ATTR(ac_plug_high, S_IRUGO, ac_plug_high_show, NULL);
-
-static ssize_t startup_finish_store( struct device *dev , struct device_attribute *attr , const char *buf , size_t count )
-{
-	int loop ;
-	struct i2c_client *i2cclient = to_i2c_client( dev ) ;
-	struct efm32_a6_data *efm32data = i2c_get_clientdata( i2cclient ) ;
-
-	if ( strstr(buf, "finish") != NULL )
-	{
-		for ( loop = 0 ; loop < 5 ; loop++ )
-		{
-			if ( efm32_wdog_set( dev , 0 ) == 0 )
-			{
-				printk(KERN_INFO "startup_finish: %d\n", count);
-				return count;
-			}
-		}
-	}
-	return count;
-}
-static DEVICE_ATTR_WO(startup_finish) ;
-//static DEVICE_ATTR(startup_finish, S_IRUGO|S_IWUGO, NULL, startup_finish_store);
-
-/* -------------------------------------------------------------------------------------------------------------------------------------- */
-/* Open EFM32 device */
-static int efm32_rtc_open( struct device *dev )
-{
-	struct i2c_client *i2cclient = to_i2c_client( dev ) ;
-	struct efm32_a6_data *efm32data = i2c_get_clientdata( i2cclient ) ;
-	
-	if ( test_and_set_bit( 1 , (void *)&efm32data->rtc_status ) )
-	{
-		return -EBUSY ;
-	}
+	pr_info_efm32("%s start\n",__func__);
 
 	return 0;
 }
 
-/* Release EFM32 device */
-static void efm32_rtc_release( struct device *dev )
+static int efm32_set_alarm(struct device *dev, struct rtc_wkalrm *alrm)
 {
-	struct i2c_client *i2cclient = to_i2c_client( dev ) ;
-	struct efm32_a6_data *efm32data = i2c_get_clientdata( i2cclient ) ;
-	
-	clear_bit( 1 , (void *)&efm32data->rtc_status ) ;
+	int error, i;
+	unsigned char WriteLength = u8EFM32CmdvMaxLen[(EFM32_RTC_SETALARM&0x7F)].WriteLen ;
+	unsigned char ReadLength = u8EFM32CmdvMaxLen[(EFM32_RTC_SETALARM&0x7F)].ReadLen ;
+	unsigned char ucWrite[WriteLength];
+	unsigned char ucRead[ReadLength];
+	struct rtc_time *tm = &alrm->time;
+
+	memset(ucWrite, 0, WriteLength);
+	memset(ucRead, 0, ReadLength);
+
+	pr_info_efm32("%s start\n",__func__);
+
+
+	return 0;
 }
 
 /* -------------------------------------------------------------------------------------------------------------------------------------- */
@@ -908,9 +941,11 @@ static int efm32_rtc_ioctl( struct device *dev , unsigned int cmd , unsigned lon
 static const struct rtc_class_ops efm32_rtc_ops = {
 	.open 		= efm32_rtc_open,
 	.release 	= efm32_rtc_release,
-	.ioctl 		= efm32_rtc_ioctl,
 	.read_time	= efm32_get_time,
 	.set_time	= efm32_set_time,
+    .read_alarm	= efm32_get_alarm,
+	.set_alarm	= efm32_set_alarm,
+	.ioctl 		= efm32_rtc_ioctl,
 };
 
 /* -------------------------------------------------------------------------------------------------------------------------------------- */
@@ -945,6 +980,8 @@ static int efm32_probe(struct i2c_client *client, const struct i2c_device_id *id
 	{
 		return -ENOMEM ;
 	}
+
+    device_init_wakeup(&client->dev, true);
 
 	efm32data->client = client ;
 	mutex_init( &efm32data->lock ) ;
@@ -1078,6 +1115,9 @@ static const struct i2c_device_id efm32_id[] = {
 MODULE_DEVICE_TABLE(i2c, efm32_id);
 
 static const struct of_device_id efm32_dt_ids[] = {
+	{ .compatible = "fsl,efm32", },
+	{ .compatible = "rtx,efm32-a6", },
+	{ .compatible = "rtx,efm32-a6plus", },
 	{ .compatible = "rtx,efm32-pitx", },
 	{ /* sentinel */ }
 };

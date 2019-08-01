@@ -157,9 +157,5 @@ obj-$(CONFIG_RTC_DRV_SIRFSOC)	+= rtc-sirfsoc.o
 obj-$(CONFIG_RTC_DRV_MOXART)	+= rtc-moxart.o
 
 # Retronix EFM32 MCU
-obj-$(CONFIG_RTC_DRV_EFM32_BISHOP)	+= rtc-efm32-bishop.o
-obj-$(CONFIG_RTC_DRV_EFM32_A6)	+= rtc-efm32-a6.o
-obj-$(CONFIG_RTC_DRV_EFM32_A6PLUS)	+= rtc-efm32-a6plus.o
-obj-$(CONFIG_RTC_DRV_EFM32_PITX)	+= rtc-efm32-pitx.o
-obj-$(CONFIG_RTC_DRV_EFM32_Q7)	+= rtc-efm32-q7.o
-obj-$(CONFIG_RTC_DRV_EFM32_ADLINK)	+= rtc-efm32-adlink.o
+obj-$(CONFIG_RTC_DRV_EFM32)	+= rtc-efm32.o
+

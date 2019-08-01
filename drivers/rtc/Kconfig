@@ -596,41 +596,11 @@ config RTC_DRV_S5M
 	  This driver can also be built as a module. If so, the module
 	  will be called rtc-s5m.
 
-config RTC_DRV_EFM32_BISHOP
-	tristate "FEM32 for BISHOP"
+config RTC_DRV_EFM32
+	tristate "FEM32 for RTC"
 	help
       If you say yes here you will get support for the
-      RTC of EFM32 BISHOP series.
-
-config RTC_DRV_EFM32_A6
-	tristate "FEM32 for A6"
-	help
-      If you say yes here you will get support for the
-      RTC of EFM32 A6 series.
-
-config RTC_DRV_EFM32_A6PLUS
-	tristate "FEM32 for A6PLUS"
-	help
-      If you say yes here you will get support for the
-      RTC of EFM32 A6PLUS series.
-
-config RTC_DRV_EFM32_PITX
-	tristate "FEM32 for PITX"
-	help
-      If you say yes here you will get support for the
-      RTC of EFM32 PITX series.
-
-config RTC_DRV_EFM32_Q7
-	tristate "FEM32 for Q7"
-	help
-      If you say yes here you will get support for the
-      RTC of EFM32 Q7 series.
-
-config RTC_DRV_EFM32_ADLINK
-	tristate "FEM32 for ADLINK"
-	help
-      If you say yes here you will get support for the
-      RTC of EFM32 ADLINK series.
+      RTC of EFM32 series.
       
 endif # I2C
 

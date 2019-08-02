@@ -3,6 +3,7 @@ Build uboot use the build.sh
 Step 1: 
 Download toolchain tool and extract to the fold.
 Define CROSS_COMPILE_PATH to extract fold at build.sh.
+https://drive.google.com/drive/folders/183Me7tEWx8NbZA9SSSy5UBg80MqBo1gb?usp=sharing
 
 Step 2:
 Define the CROSS_COMPILE_TOOL at build.sh

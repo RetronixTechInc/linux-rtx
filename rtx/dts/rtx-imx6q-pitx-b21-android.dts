@@ -120,7 +120,7 @@
 
 		/* current_gpio1 = <&gpio5 2 0>; 130 */
 		current_gpio1 {
-			/*gpio-export,name = "current_gpio1";*/
+			gpio-export,name = "current_gpio1";
 			gpio-export,output = <0>;
 			gpio-export,direction_may_change ;
 			gpios = <&gpio5 2 1>;
@@ -128,57 +128,18 @@
 
 		/* current_gpio2 = <&gpio3 18 0>; 82 */
 		current_gpio2 {
-			/*gpio-export,name = "current_gpio2";*/
+			gpio-export,name = "current_gpio2";
 			gpio-export,output = <1>;
 			gpio-export,direction_may_change ;
 			gpios = <&gpio3 18 1>;
 		};
-
-		/* 3234_en = <&gpio3 22 1>; 86 */
-		3234_en {
-			/*gpio-export,name = "3234_en";*/
-			gpio-export,output = <1>;
-			gpio-export,direction_may_change ;
-			gpios = <&gpio3 22 1>;
-		};
-
-		/* UR1_M1 = <&gpio6 8 0>; 168
-		UR1_M1 {
-			gpio-export,name = "UR1_M1";
-			gpio-export,output = <0>;
-			gpio-export,direction_may_change ;
-			gpios = <&gpio6 8 0>;
-		}; */
-		
-		/* UR1_M0 = <&gpio6 7 1>; 167
-		UR1_M0 {
-			gpio-export,name = "UR1_M0";
-			gpio-export,output = <1>;
-			gpio-export,direction_may_change ;
-			gpios = <&gpio6 7 1>;
-		}; */
-		
-		/* UR1_TM = <&gpio6 16 0>; 176
-		UR1_TM {
-			gpio-export,name = "UR1_TM";
-			gpio-export,output = <0>;
-			gpio-export,direction_may_change ;
-			gpios = <&gpio6 16 0>;
-		};	 */
-				
-		/* amp_standby = <&gpio4 10 0>; 106
-		amp_standby {
-			gpio-export,output = <1>;
-			gpio-export,direction_may_change ;
-			gpios = <&gpio4 10 1>;
-		}; */
 
 	};
 
 	sound {
 		compatible = "fsl,imx6q-rtx-pitx-sgtl5000",
 			     "fsl,imx-audio-sgtl5000";
-		model = "imx6q-rtx-pitx-sgtl5000";
+		model = "sgtl5000-audio";
 		ssi-controller = <&ssi1>;
 		audio-codec = <&codec>;
 		audio-routing =

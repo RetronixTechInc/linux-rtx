@@ -9,6 +9,9 @@
 #
 # Normal rules
 #
+
+imx6-libs/
+
 .*
 *.o
 *.o.*

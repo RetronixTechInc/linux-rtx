@@ -300,13 +300,30 @@ function build_dtb()
 	fi
 }
 
+
+function check_rtx_imx6libs()
+{
+    cd ${TOP}/rtx
+    if [ ! -d imx6-libs ] ; then
+        filename="libs.zip"
+        file_id="1kHhPFVZb8cjVK-nJqWT8I40RvxQz9nhb"
+        query=`curl -c ./cookie.txt -s -L "https://drive.google.com/uc?export=download&id=${file_id}" \
+        | perl -nE'say/uc-download-link.*? href="(.*?)\">/' \
+        | sed -e 's/amp;//g' | sed -n 2p`
+        url="https://drive.google.com$query"
+        curl -b ./cookie.txt -L -o ${filename} $url
+        unzip ${filename}
+        rm ${filename}
+        rm cookie.txt
+    fi
+    cd ${TOP}
+}
+
 function build_imx_firmware()
 {
 	case "${TARGET_SOC}" in
 		"imx6q")
-			if [ ! -d rtx/imx6-libs ] ; then
-				break ;
-			fi
+			check_rtx_imx6libs
 			if [ ! -f rtx/imx6-libs/firmware-imx-5.4.bin ] ; then
 				break ;
 			fi
@@ -332,11 +349,7 @@ function build_gpu_viv_module()
 	if [ ${BUILD_GPU_VIV_DRIVER_MODULE} == "yes" ] ; then
 		case "${TARGET_SOC}" in
 			"imx6q")
-				cd ${TOP}
-
-				if [ ! -d rtx/imx6-libs ] ; then
-					break ;
-				fi
+				check_rtx_imx6libs
 				if [ ! -f rtx/imx6-libs/kernel-module-imx-gpu-viv-6.2.2.p0.tar.gz ] ; then
 					break ;
 				fi

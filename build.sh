@@ -57,7 +57,7 @@ export CROSS_COMPILE=${CROSS_COMPILE}
 
 #### Default Define ####################################################
 IS_ANDROID_BUILD="no"
-BUILD_GPU_VIV_DRIVER_MODULE="yes"
+BUILD_GPU_VIV_DRIVER_MODULE="no"
 
 if [ "${IS_ANDROID_BUILD}" == "yes" ] ; then
     BUILD_GPU_VIV_DRIVER_MODULE="no"

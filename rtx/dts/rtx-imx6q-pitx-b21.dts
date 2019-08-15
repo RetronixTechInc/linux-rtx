@@ -701,5 +701,6 @@
 &wdog2 {
 	pinctrl-names = "default";
 	fsl,wdog_b;
+    fsl,ext-reset-output;
 	status = "okay";
 };

@@ -119,7 +119,7 @@
 
 		/* can1_standby = <&gpio1 5 0>; 5 */
 		can1_standby {
-			/*gpio-export,name = "can1_standby";*/
+			gpio-export,name = "can1_standby";
 			gpio-export,output = <1>;
 			gpio-export,direction_may_change ;
 			gpios = <&gpio1 5 GPIO_ACTIVE_HIGH>;
@@ -127,7 +127,7 @@
 
 		/* current_gpio1 = <&gpio5 2 0>; 130 */
 		current_gpio1 {
-			/*gpio-export,name = "current_gpio1";*/
+			gpio-export,name = "current_gpio1";
 			gpio-export,output = <0>;
 			gpio-export,direction_may_change ;
 			gpios = <&gpio5 2 1>;
@@ -135,19 +135,19 @@
 
 		/* current_gpio2 = <&gpio3 18 0>; 82 */
 		current_gpio2 {
-			/*gpio-export,name = "current_gpio2";*/
+			gpio-export,name = "current_gpio2";
 			gpio-export,output = <1>;
 			gpio-export,direction_may_change ;
 			gpios = <&gpio3 18 1>;
 		};
 
-		/* 3234_en = <&gpio3 22 1>; 86 */
+		/* 3234_en = <&gpio3 22 1>; 86
 		3234_en {
-			/*gpio-export,name = "3234_en";*/
+			gpio-export,name = "3234_en";
 			gpio-export,output = <1>;
 			gpio-export,direction_may_change ;
 			gpios = <&gpio3 22 1>;
-		};
+		}; */
 
 		/* UR1_M1 = <&gpio6 8 0>; 168
 		UR1_M1 {

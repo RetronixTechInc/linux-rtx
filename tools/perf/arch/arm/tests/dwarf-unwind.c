@@ -5,6 +5,8 @@
 #include "event.h"
 #include "debug.h"
 #include "tests/tests.h"
+#include "util/debug.h"
+#include "util/debug.h"
 
 #define STACK_SIZE 8192
 

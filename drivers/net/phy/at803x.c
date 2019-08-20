@@ -18,6 +18,7 @@
 #include <linux/etherdevice.h>
 #include <linux/of_gpio.h>
 #include <linux/gpio/consumer.h>
+#include <linux/phy.h>
 
 #define AT803X_INTR_ENABLE			0x12
 #define AT803X_INTR_ENABLE_AUTONEG_ERR		BIT(15)
@@ -39,11 +40,13 @@
 #define AT803X_LOC_MAC_ADDR_0_15_OFFSET		0x804C
 #define AT803X_LOC_MAC_ADDR_16_31_OFFSET	0x804B
 #define AT803X_LOC_MAC_ADDR_32_47_OFFSET	0x804A
+#define AT803X_SMARTEEE_CTL3_OFFSET		0x805D
 #define AT803X_MMD_ACCESS_CONTROL		0x0D
 #define AT803X_MMD_ACCESS_CONTROL_DATA		0x0E
 #define AT803X_FUNC_DATA			0x4003
 #define AT803X_REG_CHIP_CONFIG			0x1f
 #define AT803X_BT_BX_REG_SEL			0x8000
+#define AT803X_SMARTEEE_DISABLED_VAL		0x1000
 
 #define AT803X_DEBUG_ADDR			0x1D
 #define AT803X_DEBUG_DATA			0x1E
@@ -60,9 +63,21 @@
 #define AT803X_DEBUG_REG_5			0x05
 #define AT803X_DEBUG_TX_CLK_DLY_EN		BIT(8)
 
+#define AT803X_DEBUG_REG_31			0x1f
+#define AT803X_VDDIO_1P8V_EN			0x8
+
 #define ATH8030_PHY_ID 0x004dd076
 #define ATH8031_PHY_ID 0x004dd074
 #define ATH8035_PHY_ID 0x004dd072
+#define AT803X_PHY_ID_MASK			0xffffffef
+
+/* LED_ACT is busy on blinding even if no any frame transferring,
+ * it may cause by PHY/RJ45 power supply issue, the fixup flag just
+ * to do sw workaround for the issue.
+ */
+#define AT803X_LED_ACT_BLINDING_WORKAROUND	(1 << 0)
+#define AT803X_EEE_FEATURE_DISABLE		(1 << 1)
+#define AT803X_VDDIO_1P8V			(1 << 2)
 
 MODULE_DESCRIPTION("Atheros 803x PHY driver");
 MODULE_AUTHOR("Matus Ujhelyi");
@@ -71,6 +86,7 @@ MODULE_LICENSE("GPL");
 struct at803x_priv {
 	bool phy_reset:1;
 	struct gpio_desc *gpiod_reset;
+	u32 quirks;
 };
 
 struct at803x_context {
@@ -110,16 +126,57 @@ static int at803x_debug_reg_mask(struct phy_device *phydev, u16 reg,
 	return phy_write(phydev, AT803X_DEBUG_DATA, val);
 }
 
-static inline int at803x_enable_rx_delay(struct phy_device *phydev)
+static inline int at803x_set_rx_delay(struct phy_device *phydev, bool is_enabled)
 {
-	return at803x_debug_reg_mask(phydev, AT803X_DEBUG_REG_0, 0,
-					AT803X_DEBUG_RX_CLK_DLY_EN);
+	if (is_enabled)
+		return at803x_debug_reg_mask(phydev, AT803X_DEBUG_REG_0, 0,
+						AT803X_DEBUG_RX_CLK_DLY_EN);
+	else
+		return at803x_debug_reg_mask(phydev, AT803X_DEBUG_REG_0,
+						AT803X_DEBUG_RX_CLK_DLY_EN, 0);
 }
 
-static inline int at803x_enable_tx_delay(struct phy_device *phydev)
+static inline int at803x_set_tx_delay(struct phy_device *phydev, bool is_enabled)
 {
-	return at803x_debug_reg_mask(phydev, AT803X_DEBUG_REG_5, 0,
-					AT803X_DEBUG_TX_CLK_DLY_EN);
+	if (is_enabled)
+		return at803x_debug_reg_mask(phydev, AT803X_DEBUG_REG_5, 0,
+						AT803X_DEBUG_TX_CLK_DLY_EN);
+	else
+		return at803x_debug_reg_mask(phydev, AT803X_DEBUG_REG_5,
+						AT803X_DEBUG_TX_CLK_DLY_EN, 0);
+}
+
+static inline int at803x_set_vddio_1p8v(struct phy_device *phydev)
+{
+	return at803x_debug_reg_mask(phydev, AT803X_DEBUG_REG_31, 0,
+					AT803X_VDDIO_1P8V_EN);
+}
+
+static int at803x_disable_eee(struct phy_device *phydev)
+{
+	int ret;
+
+	ret = phy_write(phydev, AT803X_MMD_ACCESS_CONTROL,
+				  AT803X_DEVICE_ADDR);
+	if (ret < 0)
+		return ret;
+
+	ret = phy_write(phydev, AT803X_MMD_ACCESS_CONTROL_DATA,
+				  AT803X_SMARTEEE_CTL3_OFFSET);
+	if (ret < 0)
+		return ret;
+
+	ret = phy_write(phydev, AT803X_MMD_ACCESS_CONTROL,
+				  AT803X_FUNC_DATA);
+	if (ret < 0)
+		return ret;
+
+	ret = phy_write(phydev, AT803X_MMD_ACCESS_CONTROL_DATA,
+				  AT803X_SMARTEEE_DISABLED_VAL);
+	if (ret < 0)
+		return ret;
+
+	return 0;
 }
 
 /* save relevant PHY registers to private copy */
@@ -238,13 +295,9 @@ static int at803x_resume(struct phy_device *phydev)
 {
 	int value;
 
-	mutex_lock(&phydev->lock);
-
 	value = phy_read(phydev, MII_BMCR);
 	value &= ~(BMCR_PDOWN | BMCR_ISOLATE);
 	phy_write(phydev, MII_BMCR, value);
-
-	mutex_unlock(&phydev->lock);
 
 	return 0;
 }
@@ -258,6 +311,15 @@ static int at803x_probe(struct phy_device *phydev)
 	priv = devm_kzalloc(dev, sizeof(*priv), GFP_KERNEL);
 	if (!priv)
 		return -ENOMEM;
+
+	if (of_property_read_bool(dev->of_node, "at803x,led-act-blind-workaround"))
+		priv->quirks |= AT803X_LED_ACT_BLINDING_WORKAROUND;
+
+	if (of_property_read_bool(dev->of_node, "at803x,eee-disabled"))
+		priv->quirks |= AT803X_EEE_FEATURE_DISABLE;
+
+	if (of_property_read_bool(dev->of_node, "at803x,vddio-1p8v"))
+		priv->quirks |= AT803X_VDDIO_1P8V;
 
 	if (phydev->drv->phy_id != ATH8030_PHY_ID)
 		goto does_not_require_reset_workaround;
@@ -277,21 +339,44 @@ does_not_require_reset_workaround:
 static int at803x_config_init(struct phy_device *phydev)
 {
 	int ret;
+	struct at803x_priv *priv = phydev->priv;
 
 	ret = genphy_config_init(phydev);
 	if (ret < 0)
 		return ret;
 
+	/* Firstly clear the default status in HW reset or
+	 * the bits set by bootloader.
+	 */
+	ret = at803x_set_rx_delay(phydev, false);
+	if (ret < 0)
+		return ret;
+	ret = at803x_set_tx_delay(phydev, false);
+	if (ret < 0)
+		return ret;
+
 	if (phydev->interface == PHY_INTERFACE_MODE_RGMII_RXID ||
 			phydev->interface == PHY_INTERFACE_MODE_RGMII_ID) {
-		ret = at803x_enable_rx_delay(phydev);
+		ret = at803x_set_rx_delay(phydev, true);
 		if (ret < 0)
 			return ret;
 	}
 
 	if (phydev->interface == PHY_INTERFACE_MODE_RGMII_TXID ||
 			phydev->interface == PHY_INTERFACE_MODE_RGMII_ID) {
-		ret = at803x_enable_tx_delay(phydev);
+		ret = at803x_set_tx_delay(phydev, true);
+		if (ret < 0)
+			return ret;
+	}
+
+	if (priv->quirks & AT803X_VDDIO_1P8V) {
+		ret = at803x_set_vddio_1p8v(phydev);
+		if (ret < 0)
+			return ret;
+	}
+
+	if (priv->quirks & AT803X_EEE_FEATURE_DISABLE) {
+		ret = at803x_disable_eee(phydev);
 		if (ret < 0)
 			return ret;
 	}
@@ -363,6 +448,37 @@ static void at803x_link_change_notify(struct phy_device *phydev)
 	}
 }
 
+int at803x_config_aneg(struct phy_device *phydev)
+{
+	struct at803x_priv *priv = phydev->priv;
+	int result;
+
+	/* Only restart aneg if we are advertising something different
+	 * than we were before.
+	 */
+	result = genphy_config_aneg_check(phydev);
+	if (result > 0) {
+		/* do autonegotiation here */
+		result = phy_read(phydev, MII_BMCR);
+		if (result < 0)
+			return result;
+
+		/* firstly power down here */
+		if (priv->quirks & AT803X_LED_ACT_BLINDING_WORKAROUND) {
+			phy_write(phydev, MII_BMCR, BMCR_PDOWN);
+			msleep(1);
+		}
+
+		result |= BMCR_ANENABLE | BMCR_ANRESTART;
+		/* Don't isolate the PHY if we're negotiating */
+		result &= ~BMCR_ISOLATE;
+
+		result = phy_write(phydev, MII_BMCR, result);
+	}
+
+	return result;
+}
+
 static int at803x_aneg_done(struct phy_device *phydev)
 {
 	int ccr;
@@ -398,7 +514,7 @@ static struct phy_driver at803x_driver[] = {
 	/* ATHEROS 8035 */
 	.phy_id			= ATH8035_PHY_ID,
 	.name			= "Atheros 8035 ethernet",
-	.phy_id_mask		= 0xffffffef,
+	.phy_id_mask		= AT803X_PHY_ID_MASK,
 	.probe			= at803x_probe,
 	.config_init		= at803x_config_init,
 	.set_wol		= at803x_set_wol,
@@ -415,7 +531,7 @@ static struct phy_driver at803x_driver[] = {
 	/* ATHEROS 8030 */
 	.phy_id			= ATH8030_PHY_ID,
 	.name			= "Atheros 8030 ethernet",
-	.phy_id_mask		= 0xffffffef,
+	.phy_id_mask		= AT803X_PHY_ID_MASK,
 	.probe			= at803x_probe,
 	.config_init		= at803x_config_init,
 	.link_change_notify	= at803x_link_change_notify,
@@ -433,7 +549,7 @@ static struct phy_driver at803x_driver[] = {
 	/* ATHEROS 8031 */
 	.phy_id			= ATH8031_PHY_ID,
 	.name			= "Atheros 8031 ethernet",
-	.phy_id_mask		= 0xffffffef,
+	.phy_id_mask		= AT803X_PHY_ID_MASK,
 	.probe			= at803x_probe,
 	.config_init		= at803x_config_init,
 	.set_wol		= at803x_set_wol,
@@ -442,7 +558,7 @@ static struct phy_driver at803x_driver[] = {
 	.resume			= at803x_resume,
 	.features		= PHY_GBIT_FEATURES,
 	.flags			= PHY_HAS_INTERRUPT,
-	.config_aneg		= genphy_config_aneg,
+	.config_aneg		= at803x_config_aneg,
 	.read_status		= genphy_read_status,
 	.aneg_done		= at803x_aneg_done,
 	.ack_interrupt		= &at803x_ack_interrupt,
@@ -452,9 +568,9 @@ static struct phy_driver at803x_driver[] = {
 module_phy_driver(at803x_driver);
 
 static struct mdio_device_id __maybe_unused atheros_tbl[] = {
-	{ ATH8030_PHY_ID, 0xffffffef },
-	{ ATH8031_PHY_ID, 0xffffffef },
-	{ ATH8035_PHY_ID, 0xffffffef },
+	{ ATH8030_PHY_ID, AT803X_PHY_ID_MASK },
+	{ ATH8031_PHY_ID, AT803X_PHY_ID_MASK },
+	{ ATH8035_PHY_ID, AT803X_PHY_ID_MASK },
 	{ }
 };
 

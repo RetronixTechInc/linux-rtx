@@ -2,7 +2,7 @@
 *
 *    The MIT License (MIT)
 *
-*    Copyright (c) 2014 - 2017 Vivante Corporation
+*    Copyright (c) 2014 - 2018 Vivante Corporation
 *
 *    Permission is hereby granted, free of charge, to any person obtaining a
 *    copy of this software and associated documentation files (the "Software"),
@@ -26,7 +26,7 @@
 *
 *    The GPL License (GPL)
 *
-*    Copyright (C) 2014 - 2017 Vivante Corporation
+*    Copyright (C) 2014 - 2018 Vivante Corporation
 *
 *    This program is free software; you can redistribute it and/or
 *    modify it under the terms of the GNU General Public License
@@ -82,7 +82,7 @@ This define enables the use of VM for gckCommand and fence buffers.
 #if defined(UNDER_CE)
 #   define USE_KERNEL_VIRTUAL_BUFFERS           1
 #else
-#   define USE_KERNEL_VIRTUAL_BUFFERS           0
+#   define USE_KERNEL_VIRTUAL_BUFFERS           1
 #endif
 #endif
 
@@ -96,42 +96,21 @@ This define enables the use of VM for gckCommand and fence buffers.
 #endif
 
 /*
+    USE_LINUX_PCIE
+
+        This define enables galcore as a Linux PCIE driver.
+*/
+#ifndef USE_LINUX_PCIE
+#   define USE_LINUX_PCIE                       0
+#endif
+
+/*
     VIVANTE_PROFILER
 
         This define enables the profiler.
 */
 #ifndef VIVANTE_PROFILER
 #   define VIVANTE_PROFILER                     1
-#endif
-
-/*
-    VIVANTE_PROFILER_CONTEXT
-
-        This define enables the profiler according each context.
-*/
-#ifndef VIVANTE_PROFILER_CONTEXT
-#   define VIVANTE_PROFILER_CONTEXT             1
-#endif
-
-#ifndef VIVANTE_PROFILER_PERDRAW
-#   define VIVANTE_PROFILER_PERDRAW             0
-#endif
-
-#ifndef VIVANTE_PROFILER_PROBE
-#   define VIVANTE_PROFILER_PROBE_PERDRAW       0
-#   define VIVANTE_PROFILER_PROBE               0
-#endif
-
-#ifndef VIVANTE_PROFILER_MULTI_GPU
-#   define VIVANTE_PROFILER_MULTI_GPU           0
-#endif
-
-#ifndef VIVANTE_PROFILER_ALL_COUNTER
-#   define VIVANTE_PROFILER_ALL_COUNTER         0
-#endif
-
-#ifndef VIVANTE_PROFILER_PM
-#   define VIVANTE_PROFILER_PM                  1
 #endif
 
 /*
@@ -235,6 +214,10 @@ This define enables the use of VM for gckCommand and fence buffers.
 #   define gcdDUMP_API                          0
 #endif
 
+#ifndef gcdDUMP_2DVG
+#   define gcdDUMP_2DVG                         0
+#endif
+
 /*
     gcdDUMP_AHB_ACCESS
 
@@ -293,7 +276,7 @@ This define enables the use of VM for gckCommand and fence buffers.
 #       endif
 /*
     gcdDEBUG_OPTION_NONE_TEXTURE
-        When set to 1, the type of texture will be set to AQ_TEXTURE_SAMPLE_MODE_TYPE_NONE.
+        When set to 1, the type of texture will be set to 0x0.
 */
 #ifndef gcdDEBUG_OPTION_NONE_TEXTURE
 #           define gcdDEBUG_OPTION_NONE_TEXTURE                 0
@@ -403,7 +386,6 @@ This define enables the use of VM for gckCommand and fence buffers.
 
     Set to 1 for infinite speed hardware.
     Set to 2 for bypassing the HAL.
-    Set to 3 for bypassing the drivers.
 */
 #ifndef gcdNULL_DRIVER
 #   define gcdNULL_DRIVER  0
@@ -582,11 +564,7 @@ This define enables the use of VM for gckCommand and fence buffers.
         If the value is 0, no timeout will be checked for.
 */
 #ifndef gcdGPU_TIMEOUT
-#if gcdFPGA_BUILD
-#       define gcdGPU_TIMEOUT                   (3600 * 1000)
-#   else
-#       define gcdGPU_TIMEOUT                   20000
-#   endif
+#   define gcdGPU_TIMEOUT                   20000
 #endif
 
 /*
@@ -599,11 +577,7 @@ This define enables the use of VM for gckCommand and fence buffers.
         If the value is 0, no timeout will be checked for.
 */
 #ifndef gcdGPU_2D_TIMEOUT
-#if gcdFPGA_BUILD
-#       define gcdGPU_2D_TIMEOUT                (gcdGPU_TIMEOUT / 5)
-#   else
-#       define gcdGPU_2D_TIMEOUT                4000
-#   endif
+#   define gcdGPU_2D_TIMEOUT                4000
 #endif
 
 
@@ -767,28 +741,26 @@ This define enables the use of VM for gckCommand and fence buffers.
 #endif
 
 /*
-   gcdNONPAGED_MEMORY_CACHEABLE
+   gcdENABLE_CACHEABLE_COMMAND_BUFFER
 
-        When non-zero, non paged memory will be cacheable.
+        When non-zero, command buffer will be cacheable.
 */
-#ifndef gcdNONPAGED_MEMORY_CACHEABLE
-#   define gcdNONPAGED_MEMORY_CACHEABLE         0
+#ifndef gcdENABLE_CACHEABLE_COMMAND_BUFFER
+#   define gcdENABLE_CACHEABLE_COMMAND_BUFFER          0
 #endif
 
 /*
-   gcdNONPAGED_MEMORY_BUFFERABLE
+   gcdENABLE_BUFFERABLE_VIDEO_MEMORY
 
-        When non-zero, non paged memory will be bufferable.
-        gcdNONPAGED_MEMORY_BUFFERABLE and gcdNONPAGED_MEMORY_CACHEABLE
-        can't be set 1 at same time
+        When non-zero, all video memory will be bufferable by default.
 */
-#ifndef gcdNONPAGED_MEMORY_BUFFERABLE
-#   define gcdNONPAGED_MEMORY_BUFFERABLE        1
+#ifndef gcdENABLE_BUFFERABLE_VIDEO_MEMORY
+#   define gcdENABLE_BUFFERABLE_VIDEO_MEMORY           1
 #endif
 
 /*
     gcdENABLE_INFINITE_SPEED_HW
-            enable the Infinte HW , this is for 2D openVG
+            enable the Infinte HW, this is for 2D openVG
 */
 #ifndef gcdENABLE_INFINITE_SPEED_HW
 #   define gcdENABLE_INFINITE_SPEED_HW          0
@@ -899,6 +871,9 @@ This define enables the use of VM for gckCommand and fence buffers.
 #endif
 
 
+#ifndef gcdPRINT_SWAP_TIME
+#   define gcdPRINT_SWAP_TIME                   0
+#endif
 
 /*
     gcdDVFS
@@ -973,7 +948,7 @@ This define enables the use of VM for gckCommand and fence buffers.
         This will dynamically check if color compression is available.
 */
 #ifndef gcdENABLE_RENDER_INTO_WINDOW_WITH_FC
-#   define gcdENABLE_RENDER_INTO_WINDOW_WITH_FC 0
+#   define gcdENABLE_RENDER_INTO_WINDOW_WITH_FC 1
 #endif
 
 /*
@@ -1007,6 +982,10 @@ This define enables the use of VM for gckCommand and fence buffers.
  */
 #ifndef gcdANDROID_NATIVE_FENCE_SYNC
 #   define gcdANDROID_NATIVE_FENCE_SYNC         0
+#endif
+
+#ifndef gcdLINUX_SYNC_FILE
+#   define gcdLINUX_SYNC_FILE                   0
 #endif
 
 /*
@@ -1120,7 +1099,7 @@ This define enables the use of VM for gckCommand and fence buffers.
  */
 
 #ifndef gcdINTERRUPT_STATISTIC
-#if defined(LINUX) || defined(__QNXNTO__) || defined(UNDER_CE)
+#if defined(LINUX) || defined(__QNXNTO__) || defined(UNDER_CE) || defined(__VXWORKS__)
 #   define gcdINTERRUPT_STATISTIC               1
 #else
 #   define gcdINTERRUPT_STATISTIC               0
@@ -1237,7 +1216,7 @@ This define enables the use of VM for gckCommand and fence buffers.
 #endif
 
 #ifndef gcdENABLE_VG
-#   define gcdENABLE_VG                         1
+#   define gcdENABLE_VG                         0
 #endif
 
 #ifndef gcdVG_ONLY
@@ -1404,10 +1383,6 @@ VIV:gcdUSE_MMU_EXCEPTION
 #   define gcdDISABLE_GPU_VIRTUAL_ADDRESS       0
 #endif
 
-#ifndef gcdCOMPILER_DEBUGOUTPUT
-#   define gcdCOMPILER_DEBUGOUTPUT              0
-#endif
-
 /*
     gcd2D_COMPRESSION_DEC400_ALIGN_MODE
 
@@ -1416,7 +1391,18 @@ VIV:gcdUSE_MMU_EXCEPTION
         Default is 0 which means 32bytes aligned.
 */
 #ifndef gcd2D_COMPRESSION_DEC400_ALIGN_MODE
-#   define gcd2D_COMPRESSION_DEC400_ALIGN_MODE       1
+#   define gcd2D_COMPRESSION_DEC400_ALIGN_MODE  1
 #endif
 
+/*
+    gcdENABLE_KERNEL_FENCE
+        When enabled, use kernel fence to do resource tracking.
+*/
+#ifndef gcdENABLE_KENREL_FENCE
+#   define gcdENABLE_KERNEL_FENCE               0
+#endif
+
+
 #endif /* __gc_hal_options_h_ */
+
+

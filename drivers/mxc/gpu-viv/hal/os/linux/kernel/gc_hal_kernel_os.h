@@ -2,7 +2,7 @@
 *
 *    The MIT License (MIT)
 *
-*    Copyright (c) 2014 - 2017 Vivante Corporation
+*    Copyright (c) 2014 - 2018 Vivante Corporation
 *
 *    Permission is hereby granted, free of charge, to any person obtaining a
 *    copy of this software and associated documentation files (the "Software"),
@@ -26,7 +26,7 @@
 *
 *    The GPL License (GPL)
 *
-*    Copyright (C) 2014 - 2017 Vivante Corporation
+*    Copyright (C) 2014 - 2018 Vivante Corporation
 *
 *    This program is free software; you can redistribute it and/or
 *    modify it under the terms of the GNU General Public License
@@ -62,19 +62,34 @@ typedef struct _LINUX_MDL_MAP LINUX_MDL_MAP, *PLINUX_MDL_MAP;
 struct _LINUX_MDL_MAP
 {
     gctINT                  pid;
-    gctPOINTER              vmaAddr;
+
+    /* map references. */
     gctUINT32               count;
+
+    struct vm_area_struct * vma;
+    gctPOINTER              vmaAddr;
+    gctBOOL                 cacheable;
 
     struct list_head        link;
 };
 
 struct _LINUX_MDL
 {
+    gckOS                   os;
+
+    atomic_t                refs;
+
+    /* Kernel address. */
     char *                  addr;
 
+    /* Size and covered page count. */
+    size_t                  bytes;
     gctINT                  numPages;
+
     gctBOOL                 contiguous;
     dma_addr_t              dmaHandle;
+
+    gctBOOL                 cacheable;
 
     struct mutex            mapsMutex;
     struct list_head        mapsHead;

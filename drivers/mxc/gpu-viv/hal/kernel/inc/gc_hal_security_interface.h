@@ -2,7 +2,7 @@
 *
 *    The MIT License (MIT)
 *
-*    Copyright (c) 2014 - 2017 Vivante Corporation
+*    Copyright (c) 2014 - 2018 Vivante Corporation
 *
 *    Permission is hereby granted, free of charge, to any person obtaining a
 *    copy of this software and associated documentation files (the "Software"),
@@ -26,7 +26,7 @@
 *
 *    The GPL License (GPL)
 *
-*    Copyright (C) 2014 - 2017 Vivante Corporation
+*    Copyright (C) 2014 - 2018 Vivante Corporation
 *
 *    This program is free software; you can redistribute it and/or
 *    modify it under the terms of the GNU General Public License
@@ -64,11 +64,11 @@
 typedef enum kernel_packet_command {
     KERNEL_START_COMMAND,
     KERNEL_SUBMIT,
-    KERNEL_MAP_MEMORY,                    /* */
+    KERNEL_MAP_MEMORY, /* */
     KERNEL_UNMAP_MEMORY,
-    KERNEL_ALLOCATE_SECRUE_MEMORY,        /*! Security memory management. */
+    KERNEL_ALLOCATE_SECRUE_MEMORY, /*! Security memory management. */
     KERNEL_FREE_SECURE_MEMORY,
-    KERNEL_EXECUTE,                       /* Execute a command buffer. */
+    KERNEL_EXECUTE, /* Execute a command buffer. */
     KERNEL_DUMP_MMU_EXCEPTION,
     KERNEL_HANDLE_MMU_EXCEPTION,
     KERNEL_READ_MMU_EXCEPTION,
@@ -182,3 +182,5 @@ enum {
 };
 
 #endif
+
+

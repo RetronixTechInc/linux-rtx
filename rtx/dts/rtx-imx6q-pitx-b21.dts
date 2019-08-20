@@ -119,7 +119,7 @@
 
 		/* can1_standby = <&gpio1 5 0>; 5 */
 		can1_standby {
-			gpio-export,name = "can1_standby";
+			/*gpio-export,name = "can1_standby";*/
 			gpio-export,output = <1>;
 			gpio-export,direction_may_change ;
 			gpios = <&gpio1 5 GPIO_ACTIVE_HIGH>;
@@ -127,7 +127,7 @@
 
 		/* current_gpio1 = <&gpio5 2 0>; 130 */
 		current_gpio1 {
-			gpio-export,name = "current_gpio1";
+			/*gpio-export,name = "current_gpio1";*/
 			gpio-export,output = <0>;
 			gpio-export,direction_may_change ;
 			gpios = <&gpio5 2 1>;
@@ -135,19 +135,19 @@
 
 		/* current_gpio2 = <&gpio3 18 0>; 82 */
 		current_gpio2 {
-			gpio-export,name = "current_gpio2";
+			/*gpio-export,name = "current_gpio2";*/
 			gpio-export,output = <1>;
 			gpio-export,direction_may_change ;
 			gpios = <&gpio3 18 1>;
 		};
 
-		/* 3234_en = <&gpio3 22 1>; 86
+		/* 3234_en = <&gpio3 22 1>; 86 */
 		3234_en {
-			gpio-export,name = "3234_en";
+			/*gpio-export,name = "3234_en";*/
 			gpio-export,output = <1>;
 			gpio-export,direction_may_change ;
 			gpios = <&gpio3 22 1>;
-		}; */
+		};
 
 		/* UR1_M1 = <&gpio6 8 0>; 168
 		UR1_M1 {
@@ -238,8 +238,8 @@
 	mxcfb2: fb@1 {
 		compatible = "fsl,mxc_sdc_fb";
 		disp_dev = "ldb";
-		interface_pix_fmt = "RGB24";
-		default_bpp = <32>;
+		interface_pix_fmt = "RGB666";
+		default_bpp = <16>;
 		int_clk = <0>;
 		late_init = <0>;
 		status = "okay";
@@ -536,7 +536,7 @@
 
 &ldb {
 	status = "okay";
-	
+
 	lvds-channel@0 {
 		fsl,data-mapping = "spwg";
 		fsl,data-width = <24>;
@@ -548,15 +548,15 @@
 		display-timings {
 			native-mode = <&timing0>;
 			timing0: hsd100pxn1 {
-				clock-frequency = <71000000>;
-				hactive = <1280>;
-				hfront-porch = <48>;
-				hback-porch = <80>;
-				hsync-len = <32>;
-				vactive = <800>;
-				vfront-porch = <3>;
-				vback-porch = <14>;
-				vsync-len = <6>;
+				clock-frequency = <65000000>;
+				hactive = <1024>;
+				hfront-porch = <240>;
+				hback-porch = <0>;
+				hsync-len = <80>;
+				vactive = <768>;
+				vfront-porch = <28>;
+				vback-porch = <0>;
+				vsync-len = <7>;
 				mode-is-detailed ;
 				de-active = <1>;
 			};
@@ -574,22 +574,21 @@
 		display-timings {
 			native-mode = <&timing1>;
 			timing1: hsd100pxn2 {
-				clock-frequency = <71000000>;
-				hactive = <1280>;
-				hfront-porch = <48>;
-				hback-porch = <80>;
-				hsync-len = <32>;
-				vactive = <800>;
-				vfront-porch = <3>;
-				vback-porch = <14>;
-				vsync-len = <6>;
+				clock-frequency = <65000000>;
+				hactive = <1024>;
+				hfront-porch = <240>;
+				hback-porch = <0>;
+				hsync-len = <80>;
+				vactive = <768>;
+				vfront-porch = <28>;
+				vback-porch = <0>;
+				vsync-len = <7>;
 				mode-is-detailed ;
 				de-active = <1>;
 			};
 		};
 	};
 };
-
 
 &pcie {
 	pinctrl-names = "default";
@@ -701,6 +700,5 @@
 &wdog2 {
 	pinctrl-names = "default";
 	fsl,wdog_b;
-    fsl,ext-reset-output;
 	status = "okay";
 };

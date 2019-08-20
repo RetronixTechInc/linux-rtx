@@ -386,7 +386,6 @@ static int at25_remove(struct spi_device *spi)
 
 static const struct of_device_id at25_of_match[] = {
 	{ .compatible = "atmel,at25", },
-	{ .compatible = "mchip,25lc01a0", },
 	{ }
 };
 MODULE_DEVICE_TABLE(of, at25_of_match);

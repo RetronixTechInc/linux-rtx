@@ -1,9 +1,8 @@
+// SPDX-License-Identifier: GPL-2.0
 
 #include <errno.h>
 #include <libunwind.h>
 #include "perf_regs.h"
-#include "util/debug.h"
-#include "util/debug.h"
 #include "../../util/unwind.h"
 #include "../../util/debug.h"
 

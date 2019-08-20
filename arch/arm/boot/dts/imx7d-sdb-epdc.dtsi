@@ -11,10 +11,14 @@
 };
 
 &fec1 {
-	status = "disabled";
+	status = "okay";
 };
 
 &fec2 {
+	status = "disabled";
+};
+
+&reg_can2_3v3 {
 	status = "disabled";
 };
 

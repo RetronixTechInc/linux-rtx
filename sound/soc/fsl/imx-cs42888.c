@@ -32,12 +32,18 @@
 #define SUPPORT_RATE_NUM    10
 
 struct imx_priv {
+	struct clk *codec_clk;
+	struct clk *esai_clk;
 	unsigned int mclk_freq;
+	unsigned int esai_freq;
 	struct platform_device *pdev;
 	struct platform_device *asrc_pdev;
 	u32 asrc_rate;
 	u32 asrc_format;
 	bool is_codec_master;
+	bool is_codec_rpmsg;
+	bool is_stream_in_use[2];
+	bool is_stream_tdm[2];
 };
 
 static struct imx_priv card_priv;
@@ -50,18 +56,32 @@ static int imx_cs42888_surround_hw_params(struct snd_pcm_substream *substream,
 	struct snd_soc_dai *codec_dai = rtd->codec_dai;
 	struct imx_priv *priv = &card_priv;
 	struct device *dev = &priv->pdev->dev;
+	bool tx = substream->stream == SNDRV_PCM_STREAM_PLAYBACK;
 	u32 channels = params_channels(params);
 	u32 max_tdm_rate;
-
-	bool enable_tdm = channels > 1 && channels % 2;
-	u32 dai_format = SND_SOC_DAIFMT_NB_NF |
-		(enable_tdm ? SND_SOC_DAIFMT_DSP_A : SND_SOC_DAIFMT_LEFT_J);
-
+	u32 dai_format;
 	int ret = 0;
+
+	priv->is_stream_tdm[tx] = channels > 1 && channels % 2;
+	dai_format = SND_SOC_DAIFMT_NB_NF |
+		(priv->is_stream_tdm[tx] ? SND_SOC_DAIFMT_DSP_A :
+					SND_SOC_DAIFMT_LEFT_J);
+
+	priv->is_stream_in_use[tx] = true;
+
+	if (priv->is_stream_in_use[!tx] &&
+		(priv->is_stream_tdm[tx] != priv->is_stream_tdm[!tx])) {
+
+		dev_err(dev, "Don't support different fmt for tx & rx\n");
+		return -EINVAL;
+	}
+
+	priv->mclk_freq = clk_get_rate(priv->codec_clk);
+	priv->esai_freq = clk_get_rate(priv->esai_clk);
 
 	if (priv->is_codec_master) {
 		/* TDM is not supported by codec in master mode */
-		if (enable_tdm) {
+		if (priv->is_stream_tdm[tx]) {
 			dev_err(dev, "%d channels are not supported in codec master mode\n",
 				channels);
 			return -EINVAL;
@@ -113,9 +133,12 @@ static int imx_cs42888_surround_hw_params(struct snd_pcm_substream *substream,
 		return ret;
 	}
 	/* set i.MX active slot mask */
-	if (enable_tdm) {
+	if (priv->is_stream_tdm[tx]) {
 		/* 2 required by ESAI BCLK divisors, 8 slots, 32 width */
-		max_tdm_rate = priv->mclk_freq / (2*8*32);
+		if (priv->is_codec_master)
+			max_tdm_rate = priv->mclk_freq / (8*32);
+		else
+			max_tdm_rate = priv->esai_freq / (2*8*32);
 		if (params_rate(params) > max_tdm_rate) {
 			dev_err(dev,
 				"maximum supported sampling rate for %d channels is %dKHz\n",
@@ -142,6 +165,16 @@ static int imx_cs42888_surround_hw_params(struct snd_pcm_substream *substream,
 	return 0;
 }
 
+static int imx_cs42888_surround_hw_free(struct snd_pcm_substream *substream)
+{
+	struct imx_priv *priv = &card_priv;
+	bool tx = substream->stream == SNDRV_PCM_STREAM_PLAYBACK;
+
+	priv->is_stream_in_use[tx] = false;
+
+	return 0;
+}
+
 static int imx_cs42888_surround_startup(struct snd_pcm_substream *substream)
 {
 	struct snd_pcm_runtime *runtime = substream->runtime;
@@ -151,7 +184,9 @@ static int imx_cs42888_surround_startup(struct snd_pcm_substream *substream)
 	static u32 support_rates[SUPPORT_RATE_NUM];
 	int ret;
 
-	if (priv->mclk_freq == 24576000) {
+	priv->mclk_freq = clk_get_rate(priv->codec_clk);
+
+	if (priv->mclk_freq % 12288000 == 0) {
 		support_rates[0] = 48000;
 		support_rates[1] = 96000;
 		support_rates[2] = 192000;
@@ -171,6 +206,7 @@ static int imx_cs42888_surround_startup(struct snd_pcm_substream *substream)
 static struct snd_soc_ops imx_cs42888_surround_ops = {
 	.startup = imx_cs42888_surround_startup,
 	.hw_params = imx_cs42888_surround_hw_params,
+	.hw_free = imx_cs42888_surround_hw_free,
 };
 
 /**
@@ -180,6 +216,7 @@ static struct snd_soc_ops imx_cs42888_surround_ops = {
  */
 static struct snd_soc_ops imx_cs42888_surround_ops_be = {
 	.hw_params = imx_cs42888_surround_hw_params,
+	.hw_free = imx_cs42888_surround_hw_free,
 };
 
 
@@ -202,10 +239,10 @@ static const struct snd_soc_dapm_route audio_map[] = {
 	{"AIN1R", NULL, "Line In Jack"},
 	{"AIN2L", NULL, "Line In Jack"},
 	{"AIN2R", NULL, "Line In Jack"},
-	{"CPU-Playback",  NULL, "ASRC-Playback"},
 	{"Playback",  NULL, "CPU-Playback"},/* dai route for be and fe */
-	{"ASRC-Capture",  NULL, "CPU-Capture"},
 	{"CPU-Capture",  NULL, "Capture"},
+	{"CPU-Playback",  NULL, "ASRC-Playback"},
+	{"ASRC-Capture",  NULL, "CPU-Capture"},
 };
 
 static int be_hw_params_fixup(struct snd_soc_pcm_runtime *rtd,
@@ -280,14 +317,15 @@ static int imx_cs42888_probe(struct platform_device *pdev)
 	struct device_node *asrc_np = NULL;
 	struct platform_device *esai_pdev;
 	struct platform_device *asrc_pdev = NULL;
-	struct i2c_client *codec_dev;
 	struct imx_priv *priv = &card_priv;
-	struct clk *codec_clk = NULL;
 	int ret;
 	u32 width;
 
 	priv->pdev = pdev;
 	priv->asrc_pdev = NULL;
+
+	if (of_property_read_bool(pdev->dev.of_node, "codec-rpmsg"))
+		priv->is_codec_rpmsg = true;
 
 	esai_np = of_parse_phandle(pdev->dev.of_node, "esai-controller", 0);
 	codec_np = of_parse_phandle(pdev->dev.of_node, "audio-codec", 0);
@@ -309,28 +347,70 @@ static int imx_cs42888_probe(struct platform_device *pdev)
 		ret = -EINVAL;
 		goto fail;
 	}
-	codec_dev = of_find_i2c_device_by_node(codec_np);
-	if (!codec_dev || !codec_dev->dev.driver) {
-		dev_err(&pdev->dev, "failed to find codec platform device\n");
-		ret = -EINVAL;
-		goto fail;
+
+	if (priv->is_codec_rpmsg) {
+		struct platform_device *codec_dev;
+
+		codec_dev = of_find_device_by_node(codec_np);
+		if (!codec_dev || !codec_dev->dev.driver) {
+			dev_err(&pdev->dev, "failed to find codec platform device\n");
+			ret = -EINVAL;
+			goto fail;
+		}
+
+		priv->codec_clk = devm_clk_get(&codec_dev->dev, NULL);
+		if (IS_ERR(priv->codec_clk)) {
+			ret = PTR_ERR(priv->codec_clk);
+			dev_err(&codec_dev->dev, "failed to get codec clk: %d\n", ret);
+			goto fail;
+		}
+
+	} else {
+		struct i2c_client *codec_dev;
+
+		codec_dev = of_find_i2c_device_by_node(codec_np);
+		if (!codec_dev || !codec_dev->dev.driver) {
+			dev_err(&pdev->dev, "failed to find codec platform device\n");
+			ret = -EINVAL;
+			goto fail;
+		}
+
+		priv->codec_clk = devm_clk_get(&codec_dev->dev, NULL);
+		if (IS_ERR(priv->codec_clk)) {
+			ret = PTR_ERR(priv->codec_clk);
+			dev_err(&codec_dev->dev, "failed to get codec clk: %d\n", ret);
+			goto fail;
+		}
+	}
+
+	if (priv->is_codec_rpmsg) {
+		imx_cs42888_dai[0].codec_name     = "rpmsg-audio-codec-cs42888";
+		imx_cs42888_dai[0].codec_dai_name = "cs42888";
+	} else {
+		imx_cs42888_dai[0].codec_of_node   = codec_np;
 	}
 
 	/*if there is no asrc controller, we only enable one device*/
 	if (!asrc_pdev) {
-		imx_cs42888_dai[0].codec_of_node   = codec_np;
 		imx_cs42888_dai[0].cpu_dai_name    = dev_name(&esai_pdev->dev);
 		imx_cs42888_dai[0].platform_of_node = esai_np;
 		snd_soc_card_imx_cs42888.num_links = 1;
+		snd_soc_card_imx_cs42888.num_dapm_routes =
+			ARRAY_SIZE(audio_map) - 2;
 	} else {
-		imx_cs42888_dai[0].codec_of_node   = codec_np;
 		imx_cs42888_dai[0].cpu_dai_name    = dev_name(&esai_pdev->dev);
 		imx_cs42888_dai[0].platform_of_node = esai_np;
 		imx_cs42888_dai[1].cpu_of_node    = asrc_np;
 		imx_cs42888_dai[1].platform_of_node   = asrc_np;
-		imx_cs42888_dai[2].codec_of_node   = codec_np;
 		imx_cs42888_dai[2].cpu_dai_name    = dev_name(&esai_pdev->dev);
 		snd_soc_card_imx_cs42888.num_links = 3;
+
+		if (priv->is_codec_rpmsg) {
+			imx_cs42888_dai[2].codec_name     = "rpmsg-audio-codec-cs42888";
+			imx_cs42888_dai[2].codec_dai_name = "cs42888";
+		} else {
+			imx_cs42888_dai[2].codec_of_node   = codec_np;
+		}
 
 		ret = of_property_read_u32(asrc_np, "fsl,asrc-rate",
 						&priv->asrc_rate);
@@ -353,13 +433,12 @@ static int imx_cs42888_probe(struct platform_device *pdev)
 			priv->asrc_format = SNDRV_PCM_FORMAT_S16_LE;
 	}
 
-	codec_clk = devm_clk_get(&codec_dev->dev, NULL);
-	if (IS_ERR(codec_clk)) {
-		ret = PTR_ERR(codec_clk);
-		dev_err(&codec_dev->dev, "failed to get codec clk: %d\n", ret);
+	priv->esai_clk = devm_clk_get(&esai_pdev->dev, "extal");
+	if (IS_ERR(priv->esai_clk)) {
+		ret = PTR_ERR(priv->esai_clk);
+		dev_err(&esai_pdev->dev, "failed to get cpu clk: %d\n", ret);
 		goto fail;
 	}
-	priv->mclk_freq = clk_get_rate(codec_clk);
 
 	priv->is_codec_master = false;
 	if (of_property_read_bool(pdev->dev.of_node, "codec-master"))

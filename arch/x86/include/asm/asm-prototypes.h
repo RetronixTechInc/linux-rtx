@@ -1,5 +1,6 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #include <asm/ftrace.h>
-#include <asm/uaccess.h>
+#include <linux/uaccess.h>
 #include <asm/string.h>
 #include <asm/page.h>
 #include <asm/checksum.h>
@@ -37,7 +38,4 @@ INDIRECT_THUNK(dx)
 INDIRECT_THUNK(si)
 INDIRECT_THUNK(di)
 INDIRECT_THUNK(bp)
-asmlinkage void __fill_rsb(void);
-asmlinkage void __clear_rsb(void);
-
 #endif /* CONFIG_RETPOLINE */

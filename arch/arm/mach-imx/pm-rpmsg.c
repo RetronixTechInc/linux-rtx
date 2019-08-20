@@ -1,5 +1,5 @@
 /*
- * Copyright 2017 NXP
+ * Copyright 2017-2018 NXP
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -25,6 +25,7 @@
 #include <linux/rpmsg.h>
 #include <linux/uaccess.h>
 #include <linux/virtio.h>
+#include "common.h"
 
 #define RPMSG_TIMEOUT 1000
 
@@ -145,9 +146,10 @@ void pm_shutdown_notify_m4(void)
 	msg.header.type = PM_RPMSG_TYPE;
 	msg.header.cmd = PM_RPMSG_MODE;
 	msg.data = PM_RPMSG_SHUTDOWN;
+	/* No ACK from M4 */
+	pm_send_message(&msg, &pm_rpmsg, false);
 
-	pm_send_message(&msg, &pm_rpmsg, true);
-
+	imx7ulp_poweroff();
 }
 
 void pm_reboot_notify_m4(void)
@@ -206,6 +208,12 @@ static void pm_heart_beat_work_handler(struct work_struct *work)
 	}
 }
 
+static void pm_poweroff_rpmsg(void)
+{
+	pm_shutdown_notify_m4();
+	pr_emerg("Unable to poweroff system\n");
+}
+
 static int pm_restart_handler(struct notifier_block *this, unsigned long mode,
 				void *cmd)
 {
@@ -230,14 +238,15 @@ static int pm_rpmsg_probe(struct rpmsg_device *rpdev)
 		pm_heart_beat_work_handler);
 
 	pm_rpmsg.first_flag = true;
-	schedule_delayed_work(&heart_beat_work,
-			msecs_to_jiffies(100));
+	schedule_delayed_work(&heart_beat_work, 0);
 
 	pm_rpmsg.restart_handler.notifier_call = pm_restart_handler;
 	pm_rpmsg.restart_handler.priority = 128;
 	ret = register_restart_handler(&pm_rpmsg.restart_handler);
 	if (ret)
 		dev_err(&rpdev->dev, "cannot register restart handler\n");
+
+	pm_power_off = pm_poweroff_rpmsg;
 
 	return 0;
 }
@@ -315,8 +324,10 @@ static const struct of_device_id pm_heartbeat_id[] = {
 };
 MODULE_DEVICE_TABLE(of, pm_heartbeat_id);
 
-static SIMPLE_DEV_PM_OPS(pm_heartbeat_ops, pm_heartbeat_suspend,
-			 pm_heartbeat_resume);
+static const struct dev_pm_ops pm_heartbeat_ops = {
+	 SET_LATE_SYSTEM_SLEEP_PM_OPS(pm_heartbeat_suspend,
+				      pm_heartbeat_resume)
+};
 
 static struct platform_driver pm_heartbeat_driver = {
 	.driver = {

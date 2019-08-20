@@ -38,6 +38,23 @@ menuconfig FB
 	  (e.g. an accelerated X server) and that are not frame buffer
 	  device-aware may cause unexpected results. If unsure, say N.
 
+config FB_IMX64
+	bool "Enable framebuffer support for 64 bit platforms"
+	depends on FB && ARM64
+	default n
+	---help---
+	  Add framebuffer device support for 64 bit platforms. This is needed
+	  only if you specifically need FBDEV support on your 64bit platform,
+	  since it will soon become deprecated.
+
+config FB_IMX64_DEBUG
+	bool "Enable debug messages and operations for 64bit framebuffer devices"
+	depends on FB_IMX64
+	default n
+	---help---
+	  Select this option if you need to debug 64bit platforms specific
+	  operations.
+
 config FIRMWARE_EDID
        bool "Enable firmware EDID"
        depends on FB
@@ -137,6 +154,14 @@ config FB_SYS_IMAGEBLIT
 	  Include the sys_imageblit function for generic software image
 	  blitting. This is used by drivers that don't provide their own
 	  (accelerated) version and the framebuffer is in system RAM.
+
+config FB_PROVIDE_GET_FB_UNMAPPED_AREA
+	bool
+	depends on FB
+	default n
+	---help---
+	  Allow generic frame-buffer to provide get_fb_unmapped_area
+	  function.
 
 menuconfig FB_FOREIGN_ENDIAN
 	bool "Framebuffer foreign endianness support"
@@ -681,8 +706,6 @@ config FB_STI
 	select FB_CFB_FILLRECT
 	select FB_CFB_COPYAREA
 	select FB_CFB_IMAGEBLIT
-	select STI_CONSOLE
-	select VT
 	default y
 	---help---
 	  STI refers to the HP "Standard Text Interface" which is a set of
@@ -2167,7 +2190,7 @@ config FB_PS3_DEFAULT_SIZE_M
 
 config FB_XILINX
 	tristate "Xilinx frame buffer support"
-	depends on FB && (XILINX_VIRTEX || MICROBLAZE || ARCH_ZYNQ)
+	depends on FB && (XILINX_VIRTEX || MICROBLAZE || ARCH_ZYNQ || ARCH_ZYNQMP)
 	select FB_CFB_FILLRECT
 	select FB_CFB_COPYAREA
 	select FB_CFB_IMAGEBLIT
@@ -2400,7 +2423,9 @@ config FB_JZ4740
 
 config FB_MXS
 	tristate "MXS LCD framebuffer support"
-	depends on FB && (ARCH_MXS || ARCH_MXC)
+	depends on (FB && (ARCH_MXS || ARCH_MXC)) || \
+		   (FB_IMX64 && (ARCH_FSL_IMX8QM || ARCH_FSL_IMX8QXP || ARCH_FSL_IMX8MQ))
+	select FB_MXC_DISP_FRAMEWORK
 	select FB_CFB_FILLRECT
 	select FB_CFB_COPYAREA
 	select FB_CFB_IMAGEBLIT
@@ -2449,7 +2474,8 @@ source "drivers/video/fbdev/omap/Kconfig"
 source "drivers/video/fbdev/omap2/Kconfig"
 source "drivers/video/fbdev/mmp/Kconfig"
 
-if ARCH_MXC
+if ARCH_MXC || \
+	(FB_IMX64 && (ARCH_FSL_IMX8QM || ARCH_FSL_IMX8QXP || ARCH_FSL_IMX8MQ))
 source "drivers/video/fbdev/mxc/Kconfig"
 endif
 

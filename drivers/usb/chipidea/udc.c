@@ -365,7 +365,7 @@ static int add_td_to_list(struct ci_hw_ep *hwep, struct ci_hw_req *hwreq,
 		if (hwreq->req.length == 0
 				|| hwreq->req.length % hwep->ep.maxpacket)
 			mul++;
-		node->ptr->token |= mul << __ffs(TD_MULTO);
+		node->ptr->token |= cpu_to_le32(mul << __ffs(TD_MULTO));
 	}
 
 	temp = (u32) (hwreq->req.dma + hwreq->req.actual);
@@ -423,7 +423,8 @@ static int _hardware_enqueue(struct ci_hw_ep *hwep, struct ci_hw_req *hwreq)
 
 	hwreq->req.status = -EALREADY;
 
-	ret = usb_gadget_map_request(&ci->gadget, &hwreq->req, hwep->dir);
+	ret = usb_gadget_map_request_by_dev(ci->dev->parent,
+					    &hwreq->req, hwep->dir);
 	if (ret)
 		return ret;
 
@@ -504,7 +505,7 @@ static int _hardware_enqueue(struct ci_hw_ep *hwep, struct ci_hw_req *hwreq)
 		if (hwreq->req.length == 0
 				|| hwreq->req.length % hwep->ep.maxpacket)
 			mul++;
-		hwep->qh.ptr->cap |= mul << __ffs(QH_MULT);
+		hwep->qh.ptr->cap |= cpu_to_le32(mul << __ffs(QH_MULT));
 	}
 
 	ret = hw_ep_prime(ci, hwep->num, hwep->dir,
@@ -529,7 +530,7 @@ static void free_pending_td(struct ci_hw_ep *hwep)
 static int reprime_dtd(struct ci_hdrc *ci, struct ci_hw_ep *hwep,
 					   struct td_node *node)
 {
-	hwep->qh.ptr->td.next = node->dma;
+	hwep->qh.ptr->td.next = cpu_to_le32(node->dma);
 	hwep->qh.ptr->td.token &=
 		cpu_to_le32(~(TD_STATUS_HALTED | TD_STATUS_ACTIVE));
 
@@ -603,7 +604,8 @@ static int _hardware_dequeue(struct ci_hw_ep *hwep, struct ci_hw_req *hwreq)
 		list_del_init(&node->td);
 	}
 
-	usb_gadget_unmap_request(&hwep->ci->gadget, &hwreq->req, hwep->dir);
+	usb_gadget_unmap_request_by_dev(hwep->ci->dev->parent,
+					&hwreq->req, hwep->dir);
 
 	hwreq->req.actual += actual;
 
@@ -826,7 +828,7 @@ static int _ep_queue(struct usb_ep *ep, struct usb_request *req,
 	}
 
 	if (usb_endpoint_xfer_isoc(hwep->ep.desc) &&
-	    hwreq->req.length > (1 + hwep->ep.mult) * hwep->ep.maxpacket) {
+	    hwreq->req.length > hwep->ep.mult * hwep->ep.maxpacket) {
 		dev_err(hwep->ci->dev, "request length too big for isochronous\n");
 		return -EMSGSIZE;
 	}
@@ -958,7 +960,6 @@ isr_setup_status_complete(struct usb_ep *ep, struct usb_request *req)
  */
 static int isr_setup_status_phase(struct ci_hdrc *ci)
 {
-	int retval;
 	struct ci_hw_ep *hwep;
 
 	/*
@@ -974,9 +975,7 @@ static int isr_setup_status_phase(struct ci_hdrc *ci)
 	ci->status->context = ci;
 	ci->status->complete = isr_setup_status_complete;
 
-	retval = _ep_queue(&hwep->ep, ci->status, GFP_ATOMIC);
-
-	return retval;
+	return _ep_queue(&hwep->ep, ci->status, GFP_ATOMIC);
 }
 
 /**
@@ -1298,8 +1297,8 @@ static int ep_enable(struct usb_ep *ep,
 	hwep->num  = usb_endpoint_num(desc);
 	hwep->type = usb_endpoint_type(desc);
 
-	hwep->ep.maxpacket = usb_endpoint_maxp(desc) & 0x07ff;
-	hwep->ep.mult = QH_ISO_MULT(usb_endpoint_maxp(desc));
+	hwep->ep.maxpacket = usb_endpoint_maxp(desc);
+	hwep->ep.mult = usb_endpoint_maxp_mult(desc);
 
 	if (hwep->type == USB_ENDPOINT_XFER_CONTROL)
 		cap |= QH_IOS;
@@ -1584,10 +1583,10 @@ static int ci_udc_vbus_session(struct usb_gadget *_gadget, int is_active)
 		gadget_ready = 1;
 	spin_unlock_irqrestore(&ci->lock, flags);
 
-	/* Charger Detection */
-	ci_usb_charger_connect(ci, is_active);
-
 	if (ci->usb_phy) {
+		/* Charger Detection */
+		ci_usb_charger_connect(ci, is_active);
+
 		if (is_active)
 			usb_phy_set_event(ci->usb_phy, USB_EVENT_VBUS);
 		else
@@ -1661,12 +1660,12 @@ static int ci_udc_pullup(struct usb_gadget *_gadget, int is_on)
 	if (ci_otg_is_fsm_mode(ci) || ci->role == CI_ROLE_HOST)
 		return 0;
 
-	pm_runtime_get_sync(&ci->gadget.dev);
+	pm_runtime_get_sync(ci->dev);
 	if (is_on)
 		hw_write(ci, OP_USBCMD, USBCMD_RS, USBCMD_RS);
 	else
 		hw_write(ci, OP_USBCMD, USBCMD_RS, 0);
-	pm_runtime_put_sync(&ci->gadget.dev);
+	pm_runtime_put_sync(ci->dev);
 
 	return 0;
 }
@@ -1837,13 +1836,13 @@ static int ci_udc_stop(struct usb_gadget *gadget)
 
 	if (ci->vbus_active) {
 		hw_device_state(ci, 0);
+		spin_unlock_irqrestore(&ci->lock, flags);
 		if (ci->platdata->notify_event)
 			ci->platdata->notify_event(ci,
 			CI_HDRC_CONTROLLER_STOPPED_EVENT);
-		spin_unlock_irqrestore(&ci->lock, flags);
 		_gadget_stop_activity(&ci->gadget);
 		spin_lock_irqsave(&ci->lock, flags);
-		pm_runtime_put(&ci->gadget.dev);
+		pm_runtime_put(ci->dev);
 	}
 
 	ci->driver = NULL;
@@ -1944,6 +1943,9 @@ static int udc_start(struct ci_hdrc *ci)
 	ci->gadget.name         = ci->platdata->name;
 	ci->gadget.otg_caps	= otg_caps;
 
+	if (ci->platdata->flags & CI_HDRC_REQUIRES_ALIGNED_DMA)
+		ci->gadget.quirk_avoids_skb_reserve = 1;
+
 	if (ci->is_otg && (otg_caps->hnp_support || otg_caps->srp_support ||
 						otg_caps->adp_support))
 		ci->gadget.is_otg = 1;
@@ -1951,13 +1953,13 @@ static int udc_start(struct ci_hdrc *ci)
 	INIT_LIST_HEAD(&ci->gadget.ep_list);
 
 	/* alloc resources */
-	ci->qh_pool = dma_pool_create("ci_hw_qh", dev,
+	ci->qh_pool = dma_pool_create("ci_hw_qh", dev->parent,
 				       sizeof(struct ci_hw_qh),
 				       64, CI_HDRC_PAGE_SIZE);
 	if (ci->qh_pool == NULL)
 		return -ENOMEM;
 
-	ci->td_pool = dma_pool_create("ci_hw_td", dev,
+	ci->td_pool = dma_pool_create("ci_hw_td", dev->parent,
 				       sizeof(struct ci_hw_td),
 				       64, CI_HDRC_PAGE_SIZE);
 	if (ci->td_pool == NULL) {
@@ -1974,9 +1976,6 @@ static int udc_start(struct ci_hdrc *ci)
 	retval = usb_add_gadget_udc(dev, &ci->gadget);
 	if (retval)
 		goto destroy_eps;
-
-	pm_runtime_no_callbacks(&ci->gadget.dev);
-	pm_runtime_enable(&ci->gadget.dev);
 
 	return retval;
 
@@ -2011,28 +2010,21 @@ int ci_usb_charger_connect(struct ci_hdrc *ci, int is_active)
 {
 	int ret = 0;
 
-	if (is_active)
-		pm_runtime_get_sync(ci->dev);
+	if (!(ci->platdata->flags & CI_HDRC_PHY_CHARGER_DETECTION))
+		return 0;
 
-	if (ci->platdata->notify_event) {
-		if (is_active)
-			hw_write(ci, OP_USBCMD, USBCMD_RS, 0);
+	pm_runtime_get_sync(ci->dev);
 
+	if (ci->usb_phy->charger_detect) {
+		usb_phy_set_charger_state(ci->usb_phy, is_active ?
+			USB_CHARGER_PRESENT : USB_CHARGER_ABSENT);
+	} else if (ci->platdata->notify_event) {
 		ret = ci->platdata->notify_event(ci,
 				CI_HDRC_CONTROLLER_VBUS_EVENT);
-		if (ret == CI_HDRC_NOTIFY_RET_DEFER_EVENT) {
-			hw_device_reset(ci);
-			/* Pull up dp */
-			hw_write(ci, OP_USBCMD, USBCMD_RS, USBCMD_RS);
-			ci->platdata->notify_event(ci,
-				CI_HDRC_CONTROLLER_CHARGER_POST_EVENT);
-			/* Pull down dp */
-			hw_write(ci, OP_USBCMD, USBCMD_RS, 0);
-		}
+		schedule_work(&ci->usb_phy->chg_work);
 	}
 
-	if (!is_active)
-		pm_runtime_put_sync(ci->dev);
+	pm_runtime_put_sync(ci->dev);
 
 	return ret;
 }
@@ -2045,7 +2037,7 @@ void ci_hdrc_gadget_connect(struct usb_gadget *gadget, int is_active)
 	struct ci_hdrc *ci = container_of(gadget, struct ci_hdrc, gadget);
 
 	if (is_active) {
-		pm_runtime_get_sync(&gadget->dev);
+		pm_runtime_get_sync(ci->dev);
 		hw_device_reset(ci);
 		hw_device_state(ci, ci->ep0out->qh.dma);
 		usb_gadget_set_state(gadget, USB_STATE_POWERED);
@@ -2059,7 +2051,7 @@ void ci_hdrc_gadget_connect(struct usb_gadget *gadget, int is_active)
 			ci->platdata->notify_event(ci,
 			CI_HDRC_CONTROLLER_STOPPED_EVENT);
 		_gadget_stop_activity(gadget);
-		pm_runtime_put_sync(&gadget->dev);
+		pm_runtime_put_sync(ci->dev);
 		usb_gadget_set_state(gadget, USB_STATE_NOTATTACHED);
 	}
 }
@@ -2094,6 +2086,8 @@ static void udc_id_switch_for_host(struct ci_hdrc *ci)
 			ci->fsm.otg->state == OTG_STATE_B_IDLE ||
 			ci->fsm.otg->state == OTG_STATE_UNDEFINED)
 		hw_write_otgsc(ci, OTGSC_BSVIE | OTGSC_BSVIS, OTGSC_BSVIS);
+
+	ci->vbus_active = 0;
 }
 
 static void udc_suspend_for_power_lost(struct ci_hdrc *ci)

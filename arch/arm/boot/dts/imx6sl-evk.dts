@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2013 Freescale Semiconductor, Inc.
+ * Copyright 2017 NXP.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 as
@@ -27,6 +28,10 @@
 		fsl,dc_valid;
 		fsl,adc_disable;
 		status = "okay";
+	};
+
+	chosen {
+		stdout-path = &uart1;
 	};
 
 	memory {
@@ -175,7 +180,6 @@
 };
 
 &ecspi1 {
-	fsl,spi-num-chipselects = <1>;
 	cs-gpios = <&gpio4 11 0>;
 	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl_ecspi1>;
@@ -262,6 +266,7 @@
 			sw4_reg: sw4 {
 				regulator-min-microvolt = <800000>;
 				regulator-max-microvolt = <3300000>;
+				regulator-always-on;
 			};
 
 			swbst_reg: swbst {
@@ -928,11 +933,11 @@
 };
 
 &usbphy1 {
-	tx-d-cal = <0x5>;
+	fsl,tx-d-cal = <106>;
 };
 
 &usbphy2 {
-	tx-d-cal = <0x5>;
+	fsl,tx-d-cal = <106>;
 };
 
 &usdhc1 {

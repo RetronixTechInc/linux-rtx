@@ -40,10 +40,9 @@
 #include <linux/of_device.h>
 #include <linux/io.h>
 #include <linux/dma-mapping.h>
-#include <linux/gpio.h>
-#include <linux/of_gpio.h>
 
 #include <asm/irq.h>
+#include <linux/busfreq-imx.h>
 #include <linux/platform_data/serial-imx.h>
 #include <linux/platform_data/dma-imx.h>
 
@@ -228,10 +227,8 @@ struct imx_port {
 	struct timer_list	timer;
 	unsigned int		old_status;
 	unsigned int		have_rtscts:1;
+	unsigned int		have_rtsgpio:1;
 	unsigned int		dte_mode:1;
-	unsigned int		irda_inv_rx:1;
-	unsigned int		irda_inv_tx:1;
-	unsigned short		trcv_delay; /* transceiver delay */
 	struct clk		*clk_ipg;
 	struct clk		*clk_per;
 	const struct imx_uart_data *devdata;
@@ -254,24 +251,6 @@ struct imx_port {
 	bool			context_saved;
 #define DMA_TX_IS_WORKING 1
 	unsigned long		flags;
-
-	unsigned int		have_sp339e:1;
-	int			sp339e_mode ;
-	int			sp339e_gpio_dir ;
-	int			sp339e_gpio_enable ;
-	int			sp339e_gpio_m0 ;
-	int			sp339e_gpio_m1 ;
-	int			sp339e_gpio_tm ;
-	int			sp339e_gpio_slew ;
-
-	struct pinctrl		*pinctrl;
-	struct pinctrl_state	*pins_rs232;
-	struct pinctrl_state	*pins_rs422;
-
-	unsigned int		have_azrs3080:1;
-	int			azrs3080_mode ;
-	int			azrs3080_gpio_rts_dir ;
-	int			azrs3080_gpio_cts_dir ;
 };
 
 struct imx_port_ucrs {
@@ -376,17 +355,19 @@ static void imx_port_ucrs_restore(struct uart_port *port,
 
 static void imx_port_rts_active(struct imx_port *sport, unsigned long *ucr2)
 {
-	*ucr2 &= ~UCR2_CTSC;
-	*ucr2 |= UCR2_CTS;
+	*ucr2 &= ~(UCR2_CTSC | UCR2_CTS);
 
-	mctrl_gpio_set(sport->gpios, sport->port.mctrl | TIOCM_RTS);
+	sport->port.mctrl |= TIOCM_RTS;
+	mctrl_gpio_set(sport->gpios, sport->port.mctrl);
 }
 
 static void imx_port_rts_inactive(struct imx_port *sport, unsigned long *ucr2)
 {
-	*ucr2 &= ~(UCR2_CTSC | UCR2_CTS);
+	*ucr2 &= ~UCR2_CTSC;
+	*ucr2 |= UCR2_CTS;
 
-	mctrl_gpio_set(sport->gpios, sport->port.mctrl & ~TIOCM_RTS);
+	sport->port.mctrl &= ~TIOCM_RTS;
+	mctrl_gpio_set(sport->gpios, sport->port.mctrl);
 }
 
 static void imx_port_rts_auto(struct imx_port *sport, unsigned long *ucr2)
@@ -413,41 +394,14 @@ static void imx_stop_tx(struct uart_port *port)
 	writel(temp & ~UCR1_TXMPTYEN, port->membase + UCR1);
 
 	/* in rs485 mode disable transmitter if shifter is empty */
-	if ( ( port->rs485.flags & SER_RS485_ENABLED || sport->have_sp339e || sport->have_azrs3080 ) &&
-	    readl(port->membase + USR2) & USR2_TXDC ) {
+	if (port->rs485.flags & SER_RS485_ENABLED &&
+	    readl(port->membase + USR2) & USR2_TXDC) {
 		temp = readl(port->membase + UCR2);
 		if (port->rs485.flags & SER_RS485_RTS_AFTER_SEND)
-			imx_port_rts_inactive(sport, &temp);
-		else
 			imx_port_rts_active(sport, &temp);
+		else
+			imx_port_rts_inactive(sport, &temp);
 		temp |= UCR2_RXEN;
-
-		if ( sport->have_sp339e )
-		{
-			gpio_set_value( sport->sp339e_gpio_dir , 1 ) ;
-		}
-
-		if ( sport->have_azrs3080 )
-		{
-			if ( sport->azrs3080_mode == 0 )
-			{
-				if ( sport->azrs3080_gpio_rts_dir )
-				{
-					gpio_set_value( sport->azrs3080_gpio_rts_dir , 0 ) ;
-				}
-			}
-
-			if ( sport->azrs3080_mode == 1 )
-			{
-				if ( sport->azrs3080_gpio_cts_dir )
-				{
-					gpio_set_value( sport->azrs3080_gpio_cts_dir , 0 ) ;
-				}
-			}
-		}
-
-		temp |= UCR2_RXEN;
-
 		writel(temp, port->membase + UCR2);
 
 		temp = readl(port->membase + UCR4);
@@ -529,6 +483,9 @@ static inline void imx_transmit_buffer(struct imx_port *sport)
 		}
 	}
 
+	if (sport->dma_is_txing)
+		return;
+
 	while (!uart_circ_empty(xmit) &&
 	       !(readl(sport->port.membase + uts_reg(sport)) & UTS_TXFULL)) {
 		/* send xmit->buf[xmit->tail]
@@ -552,15 +509,20 @@ static void dma_tx_callback(void *data)
 	struct circ_buf *xmit = &sport->port.state->xmit;
 	unsigned long flags;
 
-	dma_unmap_sg(sport->port.dev, sgl, sport->dma_tx_nents, DMA_TO_DEVICE);
-
-	sport->dma_is_txing = 0;
-
 	/* update the stat */
 	spin_lock_irqsave(&sport->port.lock, flags);
+	/* user call .flush() before the code slice coming */
+	if (!sport->dma_is_txing) {
+		spin_unlock_irqrestore(&sport->port.lock, flags);
+		return;
+	}
+	sport->dma_is_txing = 0;
+
 	xmit->tail = (xmit->tail + sport->tx_bytes) & (UART_XMIT_SIZE - 1);
 	sport->port.icount.tx += sport->tx_bytes;
 	spin_unlock_irqrestore(&sport->port.lock, flags);
+
+	dma_unmap_sg(sport->port.dev, sgl, sport->dma_tx_nents, DMA_TO_DEVICE);
 
 	dev_dbg(sport->port.dev, "we finish the TX DMA.\n");
 
@@ -587,6 +549,7 @@ static void dma_tx_work(struct work_struct *w)
 	struct dma_chan	*chan = sport->dma_chan_tx;
 	struct device *dev = sport->port.dev;
 	unsigned long flags;
+	unsigned long temp;
 	int ret;
 
 	if (test_and_set_bit(DMA_TX_IS_WORKING, &sport->flags))
@@ -628,6 +591,10 @@ static void dma_tx_work(struct work_struct *w)
 		sport->dma_is_txing = 1;
 		dmaengine_submit(desc);
 		dma_async_issue_pending(chan);
+
+		temp = readl(sport->port.membase + UCR1);
+		temp |= UCR1_TDMAEN;
+		writel(temp, sport->port.membase + UCR1);
 		return;
 	}
 	spin_unlock_irqrestore(&sport->port.lock, flags);
@@ -644,42 +611,15 @@ static void imx_start_tx(struct uart_port *port)
 	struct imx_port *sport = (struct imx_port *)port;
 	unsigned long temp;
 
-	if (port->rs485.flags & SER_RS485_ENABLED || sport->have_sp339e || sport->have_azrs3080 ) {
+	if (port->rs485.flags & SER_RS485_ENABLED) {
 		temp = readl(port->membase + UCR2);
 		if (port->rs485.flags & SER_RS485_RTS_ON_SEND)
-			imx_port_rts_inactive(sport, &temp);
-		else
 			imx_port_rts_active(sport, &temp);
+		else
+			imx_port_rts_inactive(sport, &temp);
 		if (!(port->rs485.flags & SER_RS485_RX_DURING_TX))
 			temp &= ~UCR2_RXEN;
 		writel(temp, port->membase + UCR2);
-
-		if ( sport->have_sp339e )
-		{
-			gpio_set_value( sport->sp339e_gpio_dir , 0 ) ;
-		}
-
-		if ( sport->have_azrs3080 )
-		{
-			if ( sport->azrs3080_mode == 0 )
-			{
-				if ( sport->azrs3080_gpio_rts_dir )
-				{
-					gpio_set_value( sport->azrs3080_gpio_rts_dir , 1 ) ;
-				}
-			}
-
-			if ( sport->azrs3080_mode == 1 )
-			{
-				if ( sport->azrs3080_gpio_cts_dir )
-				{
-					gpio_set_value( sport->azrs3080_gpio_cts_dir , 1 ) ;
-				}
-			}
-		}
-
-		if ( ! ( port->rs485.flags & SER_RS485_RX_DURING_TX ) )
-			temp &= ~UCR2_RXEN;
 
 		/* enable transmitter and shifter empty irq */
 		temp = readl(port->membase + UCR4);
@@ -806,6 +746,27 @@ out:
 	spin_unlock_irqrestore(&sport->port.lock, flags);
 	tty_flip_buffer_push(port);
 	return IRQ_HANDLED;
+}
+
+static void imx_disable_rx_int(struct imx_port *sport)
+{
+	unsigned long temp;
+
+	sport->dma_is_rxing = 1;
+
+	/* disable the receiver ready and aging timer interrupts */
+	temp = readl(sport->port.membase + UCR1);
+	temp &= ~(UCR1_RRDYEN);
+	writel(temp, sport->port.membase + UCR1);
+
+	temp = readl(sport->port.membase + UCR2);
+	temp &= ~(UCR2_ATEN);
+	writel(temp, sport->port.membase + UCR2);
+
+	/* disable the rx errors interrupts */
+	temp = readl(sport->port.membase + UCR4);
+	temp &= ~UCR4_OREN;
+	writel(temp, sport->port.membase + UCR4);
 }
 
 /*
@@ -1191,6 +1152,9 @@ static void imx_uart_dma_exit(struct imx_port *sport)
 		sport->dma_chan_tx = NULL;
 	}
 
+	if (sport->dma_is_inited)
+		release_bus_freq(BUS_FREQ_HIGH);
+
 	sport->dma_is_inited = 0;
 }
 
@@ -1250,6 +1214,7 @@ static int imx_uart_dma_init(struct imx_port *sport)
 	}
 
 	sport->dma_is_inited = 1;
+	request_bus_freq(BUS_FREQ_HIGH);
 
 	return 0;
 err:
@@ -1393,19 +1358,10 @@ static int imx_startup(struct uart_port *port)
 	if (!is_imx1_uart(sport)) {
 		temp = readl(sport->port.membase + UCR3);
 
-		/*
-		 * The effect of RI and DCD differs depending on the UFCR_DCEDTE
-		 * bit. In DCE mode they control the outputs, in DTE mode they
-		 * enable the respective irqs. At least the DCD irq cannot be
-		 * cleared on i.MX25 at least, so it's not usable and must be
-		 * disabled. I don't have test hardware to check if RI has the
-		 * same problem but I consider this likely so it's disabled for
-		 * now, too.
-		 */
-		temp |= IMX21_UCR3_RXDMUXSEL | UCR3_ADNIMP |
-			UCR3_DTRDEN | UCR3_RI | UCR3_DCD;
+		temp |= UCR3_DTRDEN | UCR3_RI | UCR3_DCD;
 
 		if (sport->dte_mode)
+			/* disable broken interrupts */
 			temp &= ~(UCR3_RI | UCR3_DCD);
 
 		writel(temp, sport->port.membase + UCR3);
@@ -1415,6 +1371,17 @@ static int imx_startup(struct uart_port *port)
 	 * Enable modem status interrupts
 	 */
 	imx_enable_ms(&sport->port);
+
+	/*
+	 * Start RX DMA immediately instead of waiting for RX FIFO interrupts.
+	 * In our iMX53 the average delay for the first reception dropped from
+	 * approximately 35000 microseconds to 1000 microseconds.
+	 */
+	if (sport->dma_is_enabled) {
+		imx_disable_rx_int(sport);
+		start_rx_dma(sport);
+	}
+
 	spin_unlock_irqrestore(&sport->port.lock, flags);
 
 	return 0;
@@ -1496,7 +1463,9 @@ static void imx_flush_buffer(struct uart_port *port)
 		temp = readl(sport->port.membase + UCR1);
 		temp &= ~UCR1_TDMAEN;
 		writel(temp, sport->port.membase + UCR1);
-		sport->dma_is_txing = false;
+		sport->dma_is_txing = 0;
+		clear_bit(DMA_TX_IS_WORKING, &sport->flags);
+		smp_mb__after_atomic();
 	}
 
 	/*
@@ -1562,9 +1531,9 @@ imx_set_termios(struct uart_port *port, struct ktermios *termios,
 				 */
 				if (port->rs485.flags &
 				    SER_RS485_RTS_AFTER_SEND)
-					imx_port_rts_inactive(sport, &ucr2);
-				else
 					imx_port_rts_active(sport, &ucr2);
+				else
+					imx_port_rts_inactive(sport, &ucr2);
 			} else {
 				imx_port_rts_auto(sport, &ucr2);
 			}
@@ -1574,9 +1543,9 @@ imx_set_termios(struct uart_port *port, struct ktermios *termios,
 	} else if (port->rs485.flags & SER_RS485_ENABLED) {
 		/* disable transmitter */
 		if (port->rs485.flags & SER_RS485_RTS_AFTER_SEND)
-			imx_port_rts_inactive(sport, &ucr2);
-		else
 			imx_port_rts_active(sport, &ucr2);
+		else
+			imx_port_rts_inactive(sport, &ucr2);
 	}
 
 	if (termios->c_cflag & CSTOPB)
@@ -1668,8 +1637,6 @@ imx_set_termios(struct uart_port *port, struct ktermios *termios,
 
 	ufcr = readl(sport->port.membase + UFCR);
 	ufcr = (ufcr & (~UFCR_RFDIV)) | UFCR_RFDIV_REG(div);
-	if (sport->dte_mode)
-		ufcr |= UFCR_DCEDTE;
 	writel(ufcr, sport->port.membase + UFCR);
 
 	writel(num, sport->port.membase + UBIR);
@@ -1820,16 +1787,16 @@ static int imx_rs485_config(struct uart_port *port,
 	rs485conf->delay_rts_after_send = 0;
 
 	/* RTS is required to control the transmitter */
-	if (!sport->have_rtscts)
+	if (!sport->have_rtscts && !sport->have_rtsgpio)
 		rs485conf->flags &= ~SER_RS485_ENABLED;
 
 	if (rs485conf->flags & SER_RS485_ENABLED) {
 		/* disable transmitter */
 		temp = readl(sport->port.membase + UCR2);
 		if (rs485conf->flags & SER_RS485_RTS_AFTER_SEND)
-			imx_port_rts_inactive(sport, &temp);
-		else
 			imx_port_rts_active(sport, &temp);
+		else
+			imx_port_rts_inactive(sport, &temp);
 		writel(temp, sport->port.membase + UCR2);
 	}
 
@@ -2143,182 +2110,8 @@ static int serial_imx_probe_dt(struct imx_port *sport,
 	if (of_get_property(np, "fsl,dte-mode", NULL))
 		sport->dte_mode = 1;
 
-	if (of_get_property(np, "fsl,sp339e", NULL))
-		sport->have_sp339e = 1;
-
-	if ( sport->have_sp339e )
-	{
-		int gpio ;
-
-		sport->sp339e_mode = 1 ;
-
-		gpio = of_get_named_gpio( np , "fsl,sp339e-dir" , 0 ) ;
-		if ( gpio_is_valid( gpio ) )
-		{
-			sport->sp339e_gpio_dir = gpio ;
-			if ( gpio_request_one( sport->sp339e_gpio_dir , GPIOF_DIR_OUT , "sp3339e-dir" ) == 0 )
-			{
-				gpio_set_value( sport->sp339e_gpio_dir , 1 ) ;
-			}
-			else
-			{
-				dev_err( &pdev->dev , "cannot request gpio for sp339e dir pin\n" ) ;
-				sport->sp339e_gpio_dir = 0 ;
-			}
-		}
-		else
-		{
-			dev_err( &pdev->dev , "cannot request gpio for sp339e dir pin\n" ) ;
-		}
-
-		gpio = of_get_named_gpio( np , "fsl,sp339e-enable" , 0 ) ;
-		if ( gpio_is_valid( gpio ) )
-		{
-			sport->sp339e_gpio_enable = gpio ;
-			if ( gpio_request_one( sport->sp339e_gpio_enable , GPIOF_DIR_OUT , "sp3339e-enable" ) == 0 )
-			{
-				gpio_set_value( sport->sp339e_gpio_enable , 0 ) ;
-			}
-			else
-			{
-				dev_err( &pdev->dev , "cannot request gpio for sp339e enable pin\n" ) ;
-				sport->sp339e_gpio_enable = 0 ;
-			}
-		}
-		else
-		{
-			dev_err( &pdev->dev , "cannot request gpio for sp339e enable pin\n" ) ;
-		}
-
-		gpio = of_get_named_gpio( np , "fsl,sp339e-m0" , 0 ) ;
-		if ( gpio_is_valid( gpio ) )
-		{
-			sport->sp339e_gpio_m0 = gpio ;
-			if ( gpio_request_one( sport->sp339e_gpio_m0 , GPIOF_DIR_OUT , "sp3339e-m0" ) == 0 )
-			{
-				gpio_set_value( sport->sp339e_gpio_m0 , 1 ) ;
-			}
-			else
-			{
-				dev_err( &pdev->dev , "cannot request gpio for sp339e m0 pin\n" ) ;
-				sport->sp339e_gpio_m0 = 0 ;
-			}
-		}
-		else
-		{
-			dev_err( &pdev->dev , "cannot request gpio for sp339e m0 pin\n" ) ;
-		}
-
-		gpio = of_get_named_gpio( np , "fsl,sp339e-m1" , 0 ) ;
-		if ( gpio_is_valid( gpio ) )
-		{
-			sport->sp339e_gpio_m1 = gpio ;
-			if ( gpio_request_one( sport->sp339e_gpio_m1 , GPIOF_DIR_OUT , "sp3339e-m1" ) == 0 )
-			{
-				gpio_set_value( sport->sp339e_gpio_m1 , 0 ) ;
-			}
-			else
-			{
-				dev_err( &pdev->dev , "cannot request gpio for sp339e m1 pin\n" ) ;
-				sport->sp339e_gpio_m1 = 0 ;
-			}
-		}
-		else
-		{
-			dev_err( &pdev->dev , "cannot request gpio for sp339e m1 pin\n" ) ;
-		}
-
-		gpio = of_get_named_gpio( np , "fsl,sp339e-tm" , 0 ) ;
-		if ( gpio_is_valid( gpio ) )
-		{
-			sport->sp339e_gpio_tm = gpio ;
-			if ( gpio_request_one( sport->sp339e_gpio_tm , GPIOF_DIR_OUT , "sp3339e-tm" ) == 0 )
-			{
-				gpio_set_value( sport->sp339e_gpio_tm , 0 ) ;
-			}
-			else
-			{
-				dev_err( &pdev->dev , "cannot request gpio for sp339e tm pin\n" ) ;
-				sport->sp339e_gpio_tm = 0 ;
-			}
-		}
-		else
-		{
-			dev_err( &pdev->dev , "cannot request gpio for sp339e tm pin\n" ) ;
-		}
-
-		gpio = of_get_named_gpio( np , "fsl,sp339e-slew" , 0 ) ;
-		if ( gpio_is_valid( gpio ) )
-		{
-			sport->sp339e_gpio_slew = gpio ;
-			if ( gpio_request_one( sport->sp339e_gpio_slew , GPIOF_DIR_OUT , "sp3339e-slew" ) == 0 )
-			{
-				gpio_set_value( sport->sp339e_gpio_slew , 0 ) ;
-			}
-			else
-			{
-				dev_err( &pdev->dev , "cannot request gpio for sp339e slew pin\n" ) ;
-				sport->sp339e_gpio_slew = 0 ;
-			}
-		}
-		else
-		{
-			dev_err( &pdev->dev , "cannot request gpio for sp339e slew pin\n" ) ;
-		}
-
-		sport->pinctrl = devm_pinctrl_get(&pdev->dev);
-		sport->pins_rs232 = pinctrl_lookup_state(sport->pinctrl,	PINCTRL_STATE_DEFAULT);
-		sport->pins_rs422 = pinctrl_lookup_state(sport->pinctrl,	"rs422");
-
-	}
-
-	if (of_get_property(np, "fsl,azrs3080", NULL))
-		sport->have_azrs3080 = 1;
-
-	if ( sport->have_azrs3080 )
-	{
-		int gpio ;
-
-		sport->azrs3080_mode = 0 ;
-
-		gpio = of_get_named_gpio( np , "fsl,azrs3080-rts-dir" , 0 ) ;
-		if ( gpio_is_valid( gpio ) )
-		{
-			sport->azrs3080_gpio_rts_dir = gpio ;
-			if ( gpio_request_one( sport->azrs3080_gpio_rts_dir , GPIOF_DIR_OUT , "azrs3080-rts-dir" ) == 0 )
-			{
-				gpio_set_value( sport->azrs3080_gpio_rts_dir , 0 ) ;
-			}
-			else
-			{
-				dev_err( &pdev->dev , "cannot request gpio for azrs3080 rts_dir pin\n" ) ;
-				sport->azrs3080_gpio_rts_dir = 0 ;
-			}
-		}
-		else
-		{
-			dev_err( &pdev->dev , "cannot request gpio for azrs3080 rts_dir pin\n" ) ;
-		}
-
-		gpio = of_get_named_gpio( np , "fsl,azrs3080-cts-dir" , 0 ) ;
-		if ( gpio_is_valid( gpio ) )
-		{
-			sport->azrs3080_gpio_cts_dir = gpio ;
-			if ( gpio_request_one( sport->azrs3080_gpio_cts_dir , GPIOF_DIR_OUT , "azrs3080-cts-dir" ) == 0 )
-			{
-				gpio_set_value( sport->azrs3080_gpio_cts_dir , 0 ) ;
-			}
-			else
-			{
-				dev_err( &pdev->dev , "cannot request gpio for azrs3080 cts_dir pin\n" ) ;
-				sport->azrs3080_gpio_cts_dir = 0 ;
-			}
-		}
-		else
-		{
-			dev_err( &pdev->dev , "cannot request gpio for azrs3080 cts_dir pin\n" ) ;
-		}
-	}
+	if (of_get_property(np, "rts-gpios", NULL))
+		sport->have_rtsgpio = 1;
 
 	return 0;
 }
@@ -2345,557 +2138,6 @@ static void serial_imx_probe_pdata(struct imx_port *sport,
 		sport->have_rtscts = 1;
 }
 
-/* ---------------------------------------------------------------------
- * sp339e
---------------------------------------------------------------------- */
-static ssize_t sp339e_dir_show(struct device *dev, struct device_attribute *attr, char *buf)
-{
-	struct platform_device *pdev = container_of(dev, struct platform_device, dev);
-	struct imx_port *sport = platform_get_drvdata(pdev);
-
-	if ( ! sport->have_sp339e )
-	{
-		return -EINVAL ;
-	}
-	if ( sport->sp339e_gpio_dir )
-	{
-		return sprintf(buf, "%d", gpio_get_value(sport->sp339e_gpio_dir));
-	}
-
-	return sprintf(buf, "0");
-
-}
-
-static ssize_t sp339e_dir_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
-{
-	struct platform_device *pdev = container_of(dev, struct platform_device, dev);
-	struct imx_port *sport = platform_get_drvdata(pdev);
-	ssize_t		status = -EINVAL ;
-
-	if ( ! sport->have_sp339e )
-	{
-		return -EINVAL ;
-	}
-
-	if ( sport && sport->sp339e_gpio_dir )
-	{
-		long		value;
-
-		status = kstrtol(buf, 0, &value);
-		if (status == 0) {
-			gpio_set_value( sport->sp339e_gpio_dir , value ) ;
-		}
-	}
-
-	return count ;
-}
-
-static DEVICE_ATTR(sp339e_dir, S_IRUGO | S_IWUSR, sp339e_dir_show, sp339e_dir_store);
-
-static ssize_t sp339e_enable_show(struct device *dev, struct device_attribute *attr, char *buf)
-{
-	struct platform_device *pdev = container_of(dev, struct platform_device, dev);
-	struct imx_port *sport = platform_get_drvdata(pdev);
-
-	if ( ! sport->have_sp339e )
-	{
-		return -EINVAL ;
-	}
-	if ( sport->sp339e_gpio_enable )
-	{
-		return sprintf(buf, "%d", gpio_get_value(sport->sp339e_gpio_enable));
-	}
-
-	return sprintf(buf, "0");
-}
-
-static ssize_t sp339e_enable_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
-{
-	struct platform_device *pdev = container_of(dev, struct platform_device, dev);
-	struct imx_port *sport = platform_get_drvdata(pdev);
-	ssize_t		status = -EINVAL ;
-
-	if ( ! sport->have_sp339e )
-	{
-		return -EINVAL ;
-	}
-
-	if ( sport && sport->sp339e_gpio_enable )
-	{
-		long		value;
-
-		status = kstrtol(buf, 0, &value);
-		if (status == 0) {
-			gpio_set_value( sport->sp339e_gpio_enable , value ) ;
-		}
-	}
-
-	return count ;
-}
-
-static DEVICE_ATTR(sp339e_enable, S_IRUGO | S_IWUSR, sp339e_enable_show, sp339e_enable_store);
-
-static ssize_t sp339e_m0_show(struct device *dev, struct device_attribute *attr, char *buf)
-{
-	struct platform_device *pdev = container_of(dev, struct platform_device, dev);
-	struct imx_port *sport = platform_get_drvdata(pdev);
-
-	if ( ! sport->have_sp339e )
-	{
-		return -EINVAL ;
-	}
-	if ( sport->sp339e_gpio_m0 )
-	{
-		return sprintf(buf, "%d", gpio_get_value(sport->sp339e_gpio_m0));
-	}
-
-	return sprintf(buf, "0");
-}
-
-static ssize_t sp339e_m0_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
-{
-	struct platform_device *pdev = container_of(dev, struct platform_device, dev);
-	struct imx_port *sport = platform_get_drvdata(pdev);
-	ssize_t		status = -EINVAL ;
-
-	if ( ! sport->have_sp339e )
-	{
-		return -EINVAL ;
-	}
-
-	if ( sport && sport->sp339e_gpio_m0 )
-	{
-		long		value;
-
-		status = kstrtol(buf, 0, &value);
-		if (status == 0) {
-			gpio_set_value( sport->sp339e_gpio_m0 , value ) ;
-		}
-	}
-
-	return count ;
-}
-
-static DEVICE_ATTR(sp339e_m0, S_IRUGO | S_IWUSR, sp339e_m0_show, sp339e_m0_store);
-
-static ssize_t sp339e_m1_show(struct device *dev, struct device_attribute *attr, char *buf)
-{
-	struct platform_device *pdev = container_of(dev, struct platform_device, dev);
-	struct imx_port *sport = platform_get_drvdata(pdev);
-
-	if ( ! sport->have_sp339e )
-	{
-		return -EINVAL ;
-	}
-	if ( sport->sp339e_gpio_m1 )
-	{
-		return sprintf(buf, "%d", gpio_get_value(sport->sp339e_gpio_m1));
-	}
-
-	return sprintf(buf, "0");
-}
-
-static ssize_t sp339e_m1_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
-{
-	struct platform_device *pdev = container_of(dev, struct platform_device, dev);
-	struct imx_port *sport = platform_get_drvdata(pdev);
-	ssize_t		status = -EINVAL ;
-
-	if ( ! sport->have_sp339e )
-	{
-		return -EINVAL ;
-	}
-
-	if ( sport && sport->sp339e_gpio_m1 )
-	{
-		long		value;
-
-		status = kstrtol(buf, 0, &value);
-		if (status == 0) {
-			gpio_set_value( sport->sp339e_gpio_m1 , value ) ;
-		}
-	}
-
-	return count ;
-}
-
-static DEVICE_ATTR(sp339e_m1, S_IRUGO | S_IWUSR, sp339e_m1_show, sp339e_m1_store);
-
-static ssize_t sp339e_tm_show(struct device *dev, struct device_attribute *attr, char *buf)
-{
-	struct platform_device *pdev = container_of(dev, struct platform_device, dev);
-	struct imx_port *sport = platform_get_drvdata(pdev);
-
-	if ( ! sport->have_sp339e )
-	{
-		return -EINVAL ;
-	}
-	if ( sport->sp339e_gpio_tm )
-	{
-		return sprintf(buf, "%d", gpio_get_value(sport->sp339e_gpio_tm));
-	}
-
-	return sprintf(buf, "0");
-}
-
-static ssize_t sp339e_tm_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
-{
-	struct platform_device *pdev = container_of(dev, struct platform_device, dev);
-	struct imx_port *sport = platform_get_drvdata(pdev);
-	ssize_t		status = -EINVAL ;
-
-	if ( ! sport->have_sp339e )
-	{
-		return -EINVAL ;
-	}
-
-	if ( sport && sport->sp339e_gpio_tm )
-	{
-		long		value;
-
-		status = kstrtol(buf, 0, &value);
-		if (status == 0) {
-			gpio_set_value( sport->sp339e_gpio_tm , value ) ;
-		}
-	}
-
-	return count ;
-}
-
-static DEVICE_ATTR(sp339e_tm, S_IRUGO | S_IWUSR, sp339e_tm_show, sp339e_tm_store);
-
-static ssize_t sp339e_slew_show(struct device *dev, struct device_attribute *attr, char *buf)
-{
-	struct platform_device *pdev = container_of(dev, struct platform_device, dev);
-	struct imx_port *sport = platform_get_drvdata(pdev);
-
-	if ( ! sport->have_sp339e )
-	{
-		return -EINVAL ;
-	}
-	if ( sport->sp339e_gpio_slew )
-	{
-		return sprintf(buf, "%d", gpio_get_value(sport->sp339e_gpio_slew));
-	}
-
-	return sprintf(buf, "0");
-}
-
-static ssize_t sp339e_slew_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
-{
-	struct platform_device *pdev = container_of(dev, struct platform_device, dev);
-	struct imx_port *sport = platform_get_drvdata(pdev);
-	ssize_t		status = -EINVAL ;
-
-	if ( ! sport->have_sp339e )
-	{
-		return -EINVAL ;
-	}
-
-	if ( sport && sport->sp339e_gpio_slew )
-	{
-		long		value;
-
-		status = kstrtol(buf, 0, &value);
-		if (status == 0) {
-			gpio_set_value( sport->sp339e_gpio_slew , value ) ;
-		}
-	}
-
-	return count ;
-}
-
-static DEVICE_ATTR(sp339e_slew, S_IRUGO | S_IWUSR, sp339e_slew_show, sp339e_slew_store);
-
-static ssize_t sp339e_mode_show(struct device *dev, struct device_attribute *attr, char *buf)
-{
-	struct platform_device *pdev = container_of(dev, struct platform_device, dev);
-	struct imx_port *sport = platform_get_drvdata(pdev);
-
-	if ( ! sport->have_sp339e )
-	{
-		return -EINVAL ;
-	}
-
-	switch( sport->sp339e_mode )
-	{
-		case 0 : return sprintf(buf, "loop");
-		case 1 : return sprintf(buf, "rs232");
-		case 2 : return sprintf(buf, "rs485");
-		case 3 : return sprintf(buf, "rs422");
-		default :
-			sport->sp339e_mode = 1 ;
-			return sprintf(buf, "rs232");
-
-	}
-
-	return sprintf(buf, "0");
-}
-
-static ssize_t sp339e_mode_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
-{
-	struct platform_device *pdev = container_of(dev, struct platform_device, dev);
-	struct imx_port *sport = platform_get_drvdata(pdev);
-
-	if ( ! sport->have_sp339e )
-	{
-		return -EINVAL ;
-	}
-
-	if ( sport )
-	{
-		if (sysfs_streq(buf, "loop"))
-		{
-			sport->sp339e_mode = 0 ;
-			if ( sport->sp339e_gpio_m0 && sport->sp339e_gpio_m1 )
-			{
-				gpio_set_value( sport->sp339e_gpio_m0 , 0 ) ;
-				gpio_set_value( sport->sp339e_gpio_m1 , 0 ) ;
-			}
-
-			if ( sport->sp339e_gpio_slew && sport->sp339e_gpio_tm && sport->sp339e_gpio_enable )
-			{
-//				gpio_set_value( sport->sp339e_gpio_slew , 0 ) ;
-//				gpio_set_value( sport->sp339e_gpio_tm , 0 ) ;
-				gpio_set_value( sport->sp339e_gpio_enable , 1 ) ;
-			}
-
-			if ( sport->pinctrl && sport->pins_rs232 )
-			{
-				pinctrl_select_state(sport->pinctrl, sport->pins_rs232);
-			}
-		}
-		if (sysfs_streq(buf, "rs232"))
-		{
-			sport->sp339e_mode = 1 ;
-			if ( sport->sp339e_gpio_m0 && sport->sp339e_gpio_m1 )
-			{
-				gpio_set_value( sport->sp339e_gpio_m0 , 1 ) ;
-				gpio_set_value( sport->sp339e_gpio_m1 , 0 ) ;
-			}
-
-			if ( sport->sp339e_gpio_slew && sport->sp339e_gpio_tm && sport->sp339e_gpio_enable )
-			{
-				gpio_set_value( sport->sp339e_gpio_slew , 1 ) ;
-//				gpio_set_value( sport->sp339e_gpio_tm , 0 ) ;
-				gpio_set_value( sport->sp339e_gpio_enable , 1 ) ;
-			}
-
-			if ( sport->pinctrl && sport->pins_rs232 )
-			{
-				pinctrl_select_state(sport->pinctrl, sport->pins_rs232);
-			}
-		}
-		if (sysfs_streq(buf, "rs485"))
-		{
-			sport->sp339e_mode = 2 ;
-			if ( sport->sp339e_gpio_m0 && sport->sp339e_gpio_m1 )
-			{
-				gpio_set_value( sport->sp339e_gpio_m0 , 0 ) ;
-				gpio_set_value( sport->sp339e_gpio_m1 , 1 ) ;
-			}
-
-			if ( sport->sp339e_gpio_slew && sport->sp339e_gpio_tm && sport->sp339e_gpio_enable )
-			{
-				gpio_set_value( sport->sp339e_gpio_slew , 1 ) ;
-				gpio_set_value( sport->sp339e_gpio_tm , 1 ) ;
-				gpio_set_value( sport->sp339e_gpio_enable , 1 ) ;
-			}
-
-			if ( sport->pinctrl && sport->pins_rs422 )
-			{
-				pinctrl_select_state(sport->pinctrl, sport->pins_rs422);
-			}
-
-			if ( sport->sp339e_gpio_dir )
-			{
-				gpio_set_value( sport->sp339e_gpio_dir , 1 ) ;
-			}
-		}
-		if (sysfs_streq(buf, "rs422"))
-		{
-			sport->sp339e_mode = 3 ;
-			if ( sport->sp339e_gpio_m0 && sport->sp339e_gpio_m1 )
-			{
-				gpio_set_value( sport->sp339e_gpio_m0 , 1 ) ;
-				gpio_set_value( sport->sp339e_gpio_m1 , 1 ) ;
-			}
-
-			if ( sport->sp339e_gpio_slew && sport->sp339e_gpio_tm && sport->sp339e_gpio_enable )
-			{
-				gpio_set_value( sport->sp339e_gpio_slew , 1 ) ;
-				gpio_set_value( sport->sp339e_gpio_tm , 1 ) ;
-				gpio_set_value( sport->sp339e_gpio_enable , 1 ) ;
-			}
-
-			if ( sport->pinctrl && sport->pins_rs422 )
-			{
-				pinctrl_select_state(sport->pinctrl, sport->pins_rs422);
-			}
-
-			if ( sport->sp339e_gpio_dir )
-			{
-				gpio_set_value( sport->sp339e_gpio_dir , 0 ) ;
-			}
-		}
-	}
-
-	return count ;
-}
-
-static DEVICE_ATTR(sp339e_mode, S_IRUGO | S_IWUSR, sp339e_mode_show, sp339e_mode_store);
-
-/* ---------------------------------------------------------------------
- * azrs3080
---------------------------------------------------------------------- */
-static ssize_t azrs3080_rts_dir_show(struct device *dev, struct device_attribute *attr, char *buf)
-{
-	struct platform_device *pdev = container_of(dev, struct platform_device, dev);
-	struct imx_port *sport = platform_get_drvdata(pdev);
-
-	if ( ! sport->have_azrs3080 )
-	{
-		return -EINVAL ;
-	}
-	if ( sport->azrs3080_gpio_rts_dir )
-	{
-		return sprintf(buf, "%d", gpio_get_value(sport->azrs3080_gpio_rts_dir));
-	}
-
-	return sprintf(buf, "0");
-
-}
-
-static ssize_t azrs3080_rts_dir_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
-{
-	struct platform_device *pdev = container_of(dev, struct platform_device, dev);
-	struct imx_port *sport = platform_get_drvdata(pdev);
-	ssize_t		status = -EINVAL ;
-
-	if ( ! sport->have_azrs3080 )
-	{
-		return -EINVAL ;
-	}
-
-	if ( sport && sport->azrs3080_gpio_rts_dir )
-	{
-		long		value;
-
-		status = kstrtol(buf, 0, &value);
-		if (status == 0) {
-			gpio_set_value( sport->azrs3080_gpio_rts_dir , value ) ;
-		}
-	}
-
-	return count ;
-}
-
-static DEVICE_ATTR(azrs3080_rts_dir, S_IRUGO | S_IWUSR, azrs3080_rts_dir_show, azrs3080_rts_dir_store);
-
-static ssize_t azrs3080_cts_dir_show(struct device *dev, struct device_attribute *attr, char *buf)
-{
-	struct platform_device *pdev = container_of(dev, struct platform_device, dev);
-	struct imx_port *sport = platform_get_drvdata(pdev);
-
-	if ( ! sport->have_azrs3080 )
-	{
-		return -EINVAL ;
-	}
-	if ( sport->azrs3080_gpio_cts_dir )
-	{
-		return sprintf(buf, "%d", gpio_get_value(sport->azrs3080_gpio_cts_dir));
-	}
-
-	return sprintf(buf, "0");
-
-}
-
-static ssize_t azrs3080_cts_dir_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
-{
-	struct platform_device *pdev = container_of(dev, struct platform_device, dev);
-	struct imx_port *sport = platform_get_drvdata(pdev);
-	ssize_t		status = -EINVAL ;
-
-	if ( ! sport->have_azrs3080 )
-	{
-		return -EINVAL ;
-	}
-
-	if ( sport && sport->azrs3080_gpio_cts_dir )
-	{
-		long		value;
-
-		status = kstrtol(buf, 0, &value);
-		if (status == 0) {
-			gpio_set_value( sport->azrs3080_gpio_cts_dir , value ) ;
-		}
-	}
-
-	return count ;
-}
-
-static DEVICE_ATTR(azrs3080_cts_dir, S_IRUGO | S_IWUSR, azrs3080_cts_dir_show, azrs3080_cts_dir_store);
-
-static ssize_t azrs3080_mode_show(struct device *dev, struct device_attribute *attr, char *buf)
-{
-	struct platform_device *pdev = container_of(dev, struct platform_device, dev);
-	struct imx_port *sport = platform_get_drvdata(pdev);
-
-	if ( ! sport->have_azrs3080 )
-	{
-		return -EINVAL ;
-	}
-
-	switch( sport->azrs3080_mode )
-	{
-		case 0 : return sprintf(buf, "rs485");
-		case 1 : return sprintf(buf, "rs422");
-		default :
-			sport->azrs3080_mode = 0 ;
-			return sprintf(buf, "rs485");
-
-	}
-
-	return sprintf(buf, "0");
-}
-
-static ssize_t azrs3080_mode_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
-{
-	struct platform_device *pdev = container_of(dev, struct platform_device, dev);
-	struct imx_port *sport = platform_get_drvdata(pdev);
-
-	if ( ! sport->have_azrs3080 )
-	{
-		return -EINVAL ;
-	}
-
-	if ( sport )
-	{
-		if (sysfs_streq(buf, "rs485"))
-		{
-			sport->azrs3080_mode = 0 ;
-			if ( sport->azrs3080_gpio_rts_dir && sport->azrs3080_gpio_cts_dir )
-			{
-				gpio_set_value( sport->azrs3080_gpio_rts_dir , 0 ) ;
-				gpio_set_value( sport->azrs3080_gpio_cts_dir , 0 ) ;
-			}
-		}
-		if (sysfs_streq(buf, "rs422"))
-		{
-			sport->azrs3080_mode = 1 ;
-			if ( sport->azrs3080_gpio_rts_dir && sport->azrs3080_gpio_cts_dir )
-			{
-				gpio_set_value( sport->azrs3080_gpio_rts_dir , 0 ) ;
-				gpio_set_value( sport->azrs3080_gpio_cts_dir , 0 ) ;
-			}
-		}
-	}
-
-	return count ;
-}
-
-static DEVICE_ATTR(azrs3080_mode, S_IRUGO | S_IWUSR, azrs3080_mode_show, azrs3080_mode_store);
-
 static int serial_imx_probe(struct platform_device *pdev)
 {
 	struct imx_port *sport;
@@ -2913,6 +2155,12 @@ static int serial_imx_probe(struct platform_device *pdev)
 		serial_imx_probe_pdata(sport, pdev);
 	else if (ret < 0)
 		return ret;
+
+	if (sport->port.line >= ARRAY_SIZE(imx_ports)) {
+		dev_err(&pdev->dev, "serial%d out of range\n",
+			sport->port.line);
+		return -EINVAL;
+	}
 
 	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
 	base = devm_ioremap_resource(&pdev->dev, res);
@@ -2980,6 +2228,37 @@ static int serial_imx_probe(struct platform_device *pdev)
 		 UCR1_TXMPTYEN | UCR1_RTSDEN);
 	writel_relaxed(reg, sport->port.membase + UCR1);
 
+	if (!is_imx1_uart(sport) && sport->dte_mode) {
+		/*
+		 * The DCEDTE bit changes the direction of DSR, DCD, DTR and RI
+		 * and influences if UCR3_RI and UCR3_DCD changes the level of RI
+		 * and DCD (when they are outputs) or enables the respective
+		 * irqs. So set this bit early, i.e. before requesting irqs.
+		 */
+		reg = readl(sport->port.membase + UFCR);
+		if (!(reg & UFCR_DCEDTE))
+			writel(reg | UFCR_DCEDTE, sport->port.membase + UFCR);
+
+		/*
+		 * Disable UCR3_RI and UCR3_DCD irqs. They are also not
+		 * enabled later because they cannot be cleared
+		 * (confirmed on i.MX25) which makes them unusable.
+		 */
+		writel(IMX21_UCR3_RXDMUXSEL | UCR3_ADNIMP | UCR3_DSR,
+		       sport->port.membase + UCR3);
+
+	} else {
+		unsigned long ucr3 = UCR3_DSR;
+
+		reg = readl(sport->port.membase + UFCR);
+		if (reg & UFCR_DCEDTE)
+			writel(reg & ~UFCR_DCEDTE, sport->port.membase + UFCR);
+
+		if (!is_imx1_uart(sport))
+			ucr3 |= IMX21_UCR3_RXDMUXSEL | UCR3_ADNIMP;
+		writel(ucr3, sport->port.membase + UCR3);
+	}
+
 	clk_disable_unprepare(sport->clk_ipg);
 
 	/*
@@ -3002,6 +2281,14 @@ static int serial_imx_probe(struct platform_device *pdev)
 				ret);
 			return ret;
 		}
+
+		ret = devm_request_irq(&pdev->dev, rtsirq, imx_rtsint, 0,
+				       dev_name(&pdev->dev), sport);
+		if (ret) {
+			dev_err(&pdev->dev, "failed to request rts irq: %d\n",
+				ret);
+			return ret;
+		}
 	} else {
 		ret = devm_request_irq(&pdev->dev, rxirq, imx_int, 0,
 				       dev_name(&pdev->dev), sport);
@@ -3015,57 +2302,7 @@ static int serial_imx_probe(struct platform_device *pdev)
 
 	platform_set_drvdata(pdev, sport);
 
-	ret = uart_add_one_port(&imx_reg, &sport->port) ;
-
-	if ( sport->have_sp339e )
-	{
-		int error ;
-		error = device_create_file(&pdev->dev, &dev_attr_sp339e_dir);
-		if (error)
-			dev_err(&pdev->dev, "Error %d on creating file\n", error);
-
-		error = device_create_file(&pdev->dev, &dev_attr_sp339e_enable);
-		if (error)
-			dev_err(&pdev->dev, "Error %d on creating file\n", error);
-
-		error = device_create_file(&pdev->dev, &dev_attr_sp339e_m0);
-		if (error)
-			dev_err(&pdev->dev, "Error %d on creating file\n", error);
-
-		error = device_create_file(&pdev->dev, &dev_attr_sp339e_m1);
-		if (error)
-			dev_err(&pdev->dev, "Error %d on creating file\n", error);
-
-		error = device_create_file(&pdev->dev, &dev_attr_sp339e_tm);
-		if (error)
-			dev_err(&pdev->dev, "Error %d on creating file\n", error);
-
-		error = device_create_file(&pdev->dev, &dev_attr_sp339e_slew);
-		if (error)
-			dev_err(&pdev->dev, "Error %d on creating file\n", error);
-
-		error = device_create_file(&pdev->dev, &dev_attr_sp339e_mode);
-		if (error)
-			dev_err(&pdev->dev, "Error %d on creating file\n", error);
-	}
-
-	if ( sport->have_azrs3080 )
-	{
-		int error ;
-		error = device_create_file(&pdev->dev, &dev_attr_azrs3080_rts_dir);
-		if (error)
-			dev_err(&pdev->dev, "Error %d on creating file\n", error);
-
-		error = device_create_file(&pdev->dev, &dev_attr_azrs3080_cts_dir);
-		if (error)
-			dev_err(&pdev->dev, "Error %d on creating file\n", error);
-
-		error = device_create_file(&pdev->dev, &dev_attr_azrs3080_mode);
-		if (error)
-			dev_err(&pdev->dev, "Error %d on creating file\n", error);
-	}
-
-	return ret ;
+	return uart_add_one_port(&imx_reg, &sport->port);
 }
 
 static int serial_imx_remove(struct platform_device *pdev)
@@ -3077,9 +2314,12 @@ static int serial_imx_remove(struct platform_device *pdev)
 
 static void serial_imx_restore_context(struct imx_port *sport)
 {
+	unsigned long flags = 0;
+
 	if (!sport->context_saved)
 		return;
 
+	spin_lock_irqsave(&sport->port.lock, flags);
 	writel(sport->saved_reg[4], sport->port.membase + UFCR);
 	writel(sport->saved_reg[5], sport->port.membase + UESC);
 	writel(sport->saved_reg[6], sport->port.membase + UTIM);
@@ -3091,11 +2331,15 @@ static void serial_imx_restore_context(struct imx_port *sport)
 	writel(sport->saved_reg[2], sport->port.membase + UCR3);
 	writel(sport->saved_reg[3], sport->port.membase + UCR4);
 	sport->context_saved = false;
+	spin_unlock_irqrestore(&sport->port.lock, flags);
 }
 
 static void serial_imx_save_context(struct imx_port *sport)
 {
+	unsigned long flags = 0;
+
 	/* Save necessary regs */
+	spin_lock_irqsave(&sport->port.lock, flags);
 	sport->saved_reg[0] = readl(sport->port.membase + UCR1);
 	sport->saved_reg[1] = readl(sport->port.membase + UCR2);
 	sport->saved_reg[2] = readl(sport->port.membase + UCR3);
@@ -3107,11 +2351,19 @@ static void serial_imx_save_context(struct imx_port *sport)
 	sport->saved_reg[8] = readl(sport->port.membase + UBMR);
 	sport->saved_reg[9] = readl(sport->port.membase + IMX21_UTS);
 	sport->context_saved = true;
+
+	if (uart_console(&sport->port) && sport->port.sysrq)
+		sport->saved_reg[0] |= UCR1_RRDYEN;
+	spin_unlock_irqrestore(&sport->port.lock, flags);
 }
 
 static void serial_imx_enable_wakeup(struct imx_port *sport, bool on)
 {
 	unsigned int val;
+
+	val = readl(sport->port.membase + USR1);
+	if (val & (USR1_AWAKE | USR1_RTSD))
+		writel(USR1_AWAKE | USR1_RTSD, sport->port.membase + USR1);
 
 	val = readl(sport->port.membase + UCR3);
 	if (on)
@@ -3156,7 +2408,6 @@ static int imx_serial_port_resume_noirq(struct device *dev)
 {
 	struct platform_device *pdev = to_platform_device(dev);
 	struct imx_port *sport = platform_get_drvdata(pdev);
-	unsigned int val;
 	int ret;
 
 	pinctrl_pm_select_default_state(dev);
@@ -3169,9 +2420,6 @@ static int imx_serial_port_resume_noirq(struct device *dev)
 
 	/* disable wakeup from i.MX UART */
 	serial_imx_enable_wakeup(sport, false);
-	val = readl(sport->port.membase + USR1);
-	if (val & (USR1_AWAKE | USR1_RTSD))
-		writel(USR1_AWAKE | USR1_RTSD, sport->port.membase + USR1);
 
 	clk_disable(sport->clk_ipg);
 
@@ -3184,6 +2432,7 @@ static int imx_serial_port_suspend(struct device *dev)
 	struct imx_port *sport = platform_get_drvdata(pdev);
 
 	uart_suspend_port(&imx_reg, &sport->port);
+	disable_irq(sport->port.irq);
 
 	/* Needed to enable clock in suspend_noirq */
 	return clk_prepare(sport->clk_ipg);
@@ -3195,6 +2444,7 @@ static int imx_serial_port_resume(struct device *dev)
 	struct imx_port *sport = platform_get_drvdata(pdev);
 
 	uart_resume_port(&imx_reg, &sport->port);
+	enable_irq(sport->port.irq);
 
 	clk_unprepare(sport->clk_ipg);
 

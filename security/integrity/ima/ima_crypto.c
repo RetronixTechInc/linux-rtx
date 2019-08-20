@@ -78,6 +78,8 @@ int __init ima_init_crypto(void)
 		       hash_algo_name[ima_hash_algo], rc);
 		return rc;
 	}
+	pr_info("Allocated hash algorithm: %s\n",
+		hash_algo_name[ima_hash_algo]);
 	return 0;
 }
 
@@ -441,6 +443,16 @@ int ima_calc_file_hash(struct file *file, struct ima_digest_data *hash)
 	loff_t i_size;
 	int rc;
 
+	/*
+	 * For consistency, fail file's opened with the O_DIRECT flag on
+	 * filesystems mounted with/without DAX option.
+	 */
+	if (file->f_flags & O_DIRECT) {
+		hash->length = hash_digest_size[ima_hash_algo];
+		hash->algo = ima_hash_algo;
+		return -EINVAL;
+	}
+
 	i_size = i_size_read(file_inode(file));
 
 	if (ima_ahash_minsize && i_size >= ima_ahash_minsize) {
@@ -477,11 +489,13 @@ static int ima_calc_field_array_hash_tfm(struct ima_field_data *field_data,
 		u8 buffer[IMA_EVENT_NAME_LEN_MAX + 1] = { 0 };
 		u8 *data_to_hash = field_data[i].data;
 		u32 datalen = field_data[i].len;
+		u32 datalen_to_hash =
+		    !ima_canonical_fmt ? datalen : cpu_to_le32(datalen);
 
 		if (strcmp(td->name, IMA_TEMPLATE_IMA_NAME) != 0) {
 			rc = crypto_shash_update(shash,
-						(const u8 *) &field_data[i].len,
-						sizeof(field_data[i].len));
+						(const u8 *) &datalen_to_hash,
+						sizeof(datalen_to_hash));
 			if (rc)
 				break;
 		} else if (strcmp(td->fields[i]->field_id, "n") == 0) {

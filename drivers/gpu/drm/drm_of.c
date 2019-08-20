@@ -3,8 +3,16 @@
 #include <linux/list.h>
 #include <linux/of_graph.h>
 #include <drm/drmP.h>
+#include <drm/drm_bridge.h>
 #include <drm/drm_crtc.h>
+#include <drm/drm_encoder.h>
+#include <drm/drm_panel.h>
 #include <drm/drm_of.h>
+
+static void drm_release_of(struct device *dev, void *data)
+{
+	of_node_put(data);
+}
 
 /**
  * drm_crtc_port_mask - find the mask of a registered CRTC by port OF node
@@ -64,8 +72,28 @@ uint32_t drm_of_find_possible_crtcs(struct drm_device *dev,
 EXPORT_SYMBOL(drm_of_find_possible_crtcs);
 
 /**
- * drm_of_component_probe - Generic probe function for a component based master
+ * drm_of_component_match_add - Add a component helper OF node match rule
+ * @master: master device
+ * @matchptr: component match pointer
+ * @compare: compare function used for matching component
+ * @node: of_node
+ */
+void drm_of_component_match_add(struct device *master,
+				struct component_match **matchptr,
+				int (*compare)(struct device *, void *),
+				struct device_node *node)
+{
+	of_node_get(node);
+	component_match_add_release(master, matchptr, drm_release_of,
+				    compare, node);
+}
+EXPORT_SYMBOL_GPL(drm_of_component_match_add);
+
+/**
+ * drm_of_component_probe_with_match - Generic probe function with match
+ *                                     entries for a component based master
  * @dev: master device containing the OF node
+ * @match: component match pointer provided to store matches
  * @compare_of: compare function used for matching components
  * @master_ops: component master ops to be used
  *
@@ -76,12 +104,12 @@ EXPORT_SYMBOL(drm_of_find_possible_crtcs);
  *
  * Returns zero if successful, or one of the standard error codes if it fails.
  */
-int drm_of_component_probe(struct device *dev,
+int drm_of_component_probe_with_match(struct device *dev,
+			   struct component_match *match,
 			   int (*compare_of)(struct device *, void *),
 			   const struct component_master_ops *m_ops)
 {
 	struct device_node *ep, *port, *remote;
-	struct component_match *match = NULL;
 	int i;
 
 	if (!dev->of_node)
@@ -101,7 +129,7 @@ int drm_of_component_probe(struct device *dev,
 			continue;
 		}
 
-		component_match_add(dev, &match, compare_of, port);
+		drm_of_component_match_add(dev, &match, compare_of, port);
 		of_node_put(port);
 	}
 
@@ -134,19 +162,43 @@ int drm_of_component_probe(struct device *dev,
 				of_node_put(remote);
 				continue;
 			} else if (!of_device_is_available(remote->parent)) {
-				dev_warn(dev, "parent device of %s is not available\n",
-					 remote->full_name);
+				dev_warn(dev, "parent device of %pOF is not available\n",
+					 remote);
 				of_node_put(remote);
 				continue;
 			}
 
-			component_match_add(dev, &match, compare_of, remote);
+			drm_of_component_match_add(dev, &match, compare_of,
+						   remote);
 			of_node_put(remote);
 		}
 		of_node_put(port);
 	}
 
 	return component_master_add_with_match(dev, m_ops, match);
+}
+EXPORT_SYMBOL(drm_of_component_probe_with_match);
+
+/**
+ * drm_of_component_probe - Generic probe function for a component based master
+ * @dev: master device containing the OF node
+ * @compare_of: compare function used for matching components
+ * @master_ops: component master ops to be used
+ *
+ * Parse the platform device OF node and bind all the components associated
+ * with the master. Interface ports are added before the encoders in order to
+ * satisfy their .bind requirements
+ * See Documentation/devicetree/bindings/graph.txt for the bindings.
+ *
+ * Returns zero if successful, or one of the standard error codes if it fails.
+ */
+int drm_of_component_probe(struct device *dev,
+			   int (*compare_of)(struct device *, void *),
+			   const struct component_master_ops *m_ops)
+{
+	struct component_match *match = NULL;
+
+	return drm_of_component_probe_with_match(dev, match, compare_of, m_ops);
 }
 EXPORT_SYMBOL(drm_of_component_probe);
 
@@ -183,3 +235,53 @@ int drm_of_encoder_active_endpoint(struct device_node *node,
 	return -EINVAL;
 }
 EXPORT_SYMBOL_GPL(drm_of_encoder_active_endpoint);
+
+/*
+ * drm_of_find_panel_or_bridge - return connected panel or bridge device
+ * @np: device tree node containing encoder output ports
+ * @panel: pointer to hold returned drm_panel
+ * @bridge: pointer to hold returned drm_bridge
+ *
+ * Given a DT node's port and endpoint number, find the connected node and
+ * return either the associated struct drm_panel or drm_bridge device. Either
+ * @panel or @bridge must not be NULL.
+ *
+ * Returns zero if successful, or one of the standard error codes if it fails.
+ */
+int drm_of_find_panel_or_bridge(const struct device_node *np,
+				int port, int endpoint,
+				struct drm_panel **panel,
+				struct drm_bridge **bridge)
+{
+	int ret = -EPROBE_DEFER;
+	struct device_node *remote;
+
+	if (!panel && !bridge)
+		return -EINVAL;
+
+	remote = of_graph_get_remote_node(np, port, endpoint);
+	if (!remote)
+		return -ENODEV;
+
+	if (panel) {
+		*panel = of_drm_find_panel(remote);
+		if (*panel)
+			ret = 0;
+	}
+
+	/* No panel found yet, check for a bridge next. */
+	if (bridge) {
+		if (ret) {
+			*bridge = of_drm_find_bridge(remote);
+			if (*bridge)
+				ret = 0;
+		} else {
+			*bridge = NULL;
+		}
+
+	}
+
+	of_node_put(remote);
+	return ret;
+}
+EXPORT_SYMBOL_GPL(drm_of_find_panel_or_bridge);

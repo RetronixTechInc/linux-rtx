@@ -41,7 +41,7 @@ endif
 bindir?=$(prefix)/bin
 htmldir?=$(prefix)/share/doc/perf-doc
 pdfdir?=$(prefix)/share/doc/perf-doc
-mandir:=$(prefix)/share/man
+mandir?=$(prefix)/share/man
 man1dir=$(mandir)/man1
 man5dir=$(mandir)/man5
 man7dir=$(mandir)/man7
@@ -192,7 +192,7 @@ do-install-man: man
 #		$(INSTALL) -m 644 $(DOC_MAN5) $(DESTDIR)$(man5dir); \
 #		$(INSTALL) -m 644 $(DOC_MAN7) $(DESTDIR)$(man7dir)
 
-install-man: check-man-tools man
+install-man: check-man-tools man do-install-man
 
 ifdef missing_tools
   DO_INSTALL_MAN = $(warning Please install $(missing_tools) to have the man pages installed)

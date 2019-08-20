@@ -22,13 +22,11 @@
 
 #include "imx-pcm.h"
 
-static const struct snd_pcm_hardware imx_pcm_hardware = {
+static struct snd_pcm_hardware imx_pcm_hardware = {
 	.info = SNDRV_PCM_INFO_INTERLEAVED |
 		SNDRV_PCM_INFO_BLOCK_TRANSFER |
 		SNDRV_PCM_INFO_MMAP |
-		SNDRV_PCM_INFO_MMAP_VALID |
-		SNDRV_PCM_INFO_PAUSE |
-		SNDRV_PCM_INFO_RESUME,
+		SNDRV_PCM_INFO_MMAP_VALID,
 	.buffer_bytes_max = IMX_SSI_DMABUF_SIZE,
 	.period_bytes_min = 128,
 	.period_bytes_max = 65532, /* Limited by SDMA engine */
@@ -47,16 +45,39 @@ static bool imx_dma_filter_fn(struct dma_chan *chan, void *param)
 	return true;
 }
 
+static void imx_pcm_dma_v2_complete(void *arg)
+{
+	struct snd_pcm_substream *substream = arg;
+	struct snd_soc_pcm_runtime *rtd = substream->private_data;
+	struct dmaengine_pcm_runtime_data *prtd =
+				substream->runtime->private_data;
+	struct snd_dmaengine_dai_dma_data *dma_data;
+
+	prtd->pos += snd_pcm_lib_period_bytes(substream);
+	if (prtd->pos >= snd_pcm_lib_buffer_bytes(substream))
+		prtd->pos = 0;
+
+	snd_pcm_period_elapsed(substream);
+
+	dma_data = snd_soc_dai_get_dma_data(rtd->cpu_dai, substream);
+	if (dma_data->check_xrun && dma_data->check_xrun(substream))
+		dma_data->device_reset(substream, 1);
+}
+
 /* this may get called several times by oss emulation */
 static int imx_pcm_hw_params(struct snd_pcm_substream *substream,
 			      struct snd_pcm_hw_params *params)
 {
 	struct snd_pcm_runtime *runtime = substream->runtime;
 	struct snd_soc_pcm_runtime *rtd = substream->private_data;
-	struct imx_pcm_dma_data *dma_data;
+	struct snd_dmaengine_dai_dma_data *dma_data;
 	struct dma_slave_config config;
 	struct dma_chan *chan;
+	struct dmaengine_pcm_runtime_data *prtd =
+				substream->runtime->private_data;
 	int err = 0;
+
+	prtd->callback = imx_pcm_dma_v2_complete;
 
 	dma_data = snd_soc_dai_get_dma_data(rtd->cpu_dai, substream);
 
@@ -79,8 +100,13 @@ static int imx_pcm_hw_params(struct snd_pcm_substream *substream,
 		return err;
 
 	snd_dmaengine_pcm_set_config_from_dai_data(substream,
-			snd_soc_dai_get_dma_data(rtd->cpu_dai, substream),
-			&config);
+					dma_data,
+					&config);
+
+	if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK)
+		config.dst_fifo_num = dma_data->fifo_num;
+	else
+		config.src_fifo_num = dma_data->fifo_num;
 
 	return dmaengine_slave_config(chan, &config);
 }
@@ -96,13 +122,39 @@ static snd_pcm_uframes_t imx_pcm_pointer(struct snd_pcm_substream *substream)
 	return snd_dmaengine_pcm_pointer(substream);
 }
 
+static int imx_pcm_preallocate_dma_buffer(struct snd_pcm_substream *substream,
+	struct device *dev)
+{
+	size_t size = imx_pcm_hardware.buffer_bytes_max;
+	int ret;
+
+	ret = snd_pcm_lib_preallocate_pages(substream,
+				SNDRV_DMA_TYPE_DEV_IRAM,
+				dev,
+				size,
+				size);
+	if (ret)
+		return ret;
+
+	return 0;
+}
+
+static int imx_pcm_free_dma_buffers(struct snd_pcm_substream *substream)
+{
+	return snd_pcm_lib_preallocate_free(substream);
+}
+
 static int imx_pcm_open(struct snd_pcm_substream *substream)
 {
 	struct snd_soc_pcm_runtime *rtd = substream->private_data;
 	struct snd_dmaengine_dai_dma_data *dma_data;
+	struct dma_slave_caps dma_caps;
+	struct dma_chan *chan;
+	u32 addr_widths = BIT(DMA_SLAVE_BUSWIDTH_1_BYTE) |
+			  BIT(DMA_SLAVE_BUSWIDTH_2_BYTES) |
+			  BIT(DMA_SLAVE_BUSWIDTH_4_BYTES);
 	int ret;
-
-	snd_soc_set_runtime_hwparams(substream, &imx_pcm_hardware);
+	int i;
 
 	dma_data = snd_soc_dai_get_dma_data(rtd->cpu_dai, substream);
 
@@ -111,14 +163,83 @@ static int imx_pcm_open(struct snd_pcm_substream *substream)
 		struct dma_chan *chan;
 
 		chan = dma_request_slave_channel(rtd->cpu_dai->dev,
-						 dma_data->filter_data);
+						 dma_data->chan_name);
 		ret = snd_dmaengine_pcm_open(substream, chan);
+		if (ret)
+			return ret;
 	} else {
 		ret = snd_dmaengine_pcm_open_request_chan(substream,
 							  imx_dma_filter_fn,
 							  dma_data->filter_data);
+		if (ret)
+			return ret;
 	}
-	return ret;
+
+	chan = snd_dmaengine_pcm_get_chan(substream);
+
+	ret = dma_get_slave_caps(chan, &dma_caps);
+	if (ret == 0) {
+		if (dma_caps.cmd_pause)
+			imx_pcm_hardware.info |= SNDRV_PCM_INFO_PAUSE | SNDRV_PCM_INFO_RESUME;
+		if (dma_caps.residue_granularity <= DMA_RESIDUE_GRANULARITY_SEGMENT)
+			imx_pcm_hardware.info |= SNDRV_PCM_INFO_BATCH;
+
+		if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK)
+			addr_widths = dma_caps.dst_addr_widths;
+		else
+			addr_widths = dma_caps.src_addr_widths;
+	}
+
+	/*
+	 * If SND_DMAENGINE_PCM_DAI_FLAG_PACK is set keep
+	 * hw.formats set to 0, meaning no restrictions are in place.
+	 * In this case it's the responsibility of the DAI driver to
+	 * provide the supported format information.
+	 */
+	if (!(dma_data->flags & SND_DMAENGINE_PCM_DAI_FLAG_PACK))
+		/*
+		 * Prepare formats mask for valid/allowed sample types. If the
+		 * dma does not have support for the given physical word size,
+		 * it needs to be masked out so user space can not use the
+		 * format which produces corrupted audio.
+		 * In case the dma driver does not implement the slave_caps the
+		 * default assumption is that it supports 1, 2 and 4 bytes
+		 * widths.
+		 */
+		for (i = 0; i <= SNDRV_PCM_FORMAT_LAST; i++) {
+			int bits = snd_pcm_format_physical_width(i);
+
+			/*
+			 * Enable only samples with DMA supported physical
+			 * widths
+			 */
+			switch (bits) {
+			case 8:
+			case 16:
+			case 24:
+			case 32:
+			case 64:
+				if (addr_widths & (1 << (bits / 8)))
+					imx_pcm_hardware.formats |= (1LL << i);
+				break;
+			default:
+				/* Unsupported types */
+				break;
+			}
+		}
+
+	snd_soc_set_runtime_hwparams(substream, &imx_pcm_hardware);
+
+	ret = imx_pcm_preallocate_dma_buffer(substream, chan->device->dev);
+	if (ret)
+		return ret;
+
+	ret = snd_pcm_hw_constraint_integer(substream->runtime,
+					    SNDRV_PCM_HW_PARAM_PERIODS);
+	if (ret < 0)
+		return ret;
+
+	return 0;
 }
 
 static int imx_pcm_mmap(struct snd_pcm_substream *substream,
@@ -132,9 +253,20 @@ static int imx_pcm_mmap(struct snd_pcm_substream *substream,
 				     runtime->dma_bytes);
 }
 
+static int imx_pcm_close(struct snd_pcm_substream *substream)
+{
+	int ret;
+
+	ret = imx_pcm_free_dma_buffers(substream);
+	if (ret)
+		return ret;
+
+	return snd_dmaengine_pcm_close_release_chan(substream);
+}
+
 static struct snd_pcm_ops imx_pcm_ops = {
 	.open		= imx_pcm_open,
-	.close		= snd_dmaengine_pcm_close_release_chan,
+	.close		= imx_pcm_close,
 	.ioctl		= snd_pcm_lib_ioctl,
 	.hw_params	= imx_pcm_hw_params,
 	.hw_free	= imx_pcm_hw_free,
@@ -143,74 +275,14 @@ static struct snd_pcm_ops imx_pcm_ops = {
 	.mmap		= imx_pcm_mmap,
 };
 
-static int imx_pcm_preallocate_dma_buffer(struct snd_pcm *pcm,
-	int stream)
-{
-	struct snd_pcm_substream *substream = pcm->streams[stream].substream;
-	struct snd_dma_buffer *buf = &substream->dma_buffer;
-	size_t size = imx_pcm_hardware.buffer_bytes_max;
-
-	buf->dev.type = SNDRV_DMA_TYPE_DEV;
-	buf->dev.dev = pcm->card->dev;
-	buf->private_data = NULL;
-	buf->area = dma_alloc_writecombine(pcm->card->dev, size,
-					   &buf->addr, GFP_KERNEL);
-	if (!buf->area)
-		return -ENOMEM;
-
-	buf->bytes = size;
-	return 0;
-}
-
-static void imx_pcm_free_dma_buffers(struct snd_pcm *pcm)
-{
-	struct snd_pcm_substream *substream;
-	struct snd_dma_buffer *buf;
-	int stream;
-
-	for (stream = SNDRV_PCM_STREAM_PLAYBACK; stream < SNDRV_PCM_STREAM_LAST; stream++) {
-		substream = pcm->streams[stream].substream;
-		if (!substream)
-			continue;
-
-		buf = &substream->dma_buffer;
-		if (!buf->area)
-			continue;
-
-		dma_free_writecombine(pcm->card->dev, buf->bytes,
-				      buf->area, buf->addr);
-		buf->area = NULL;
-	}
-}
-
 static int imx_pcm_new(struct snd_soc_pcm_runtime *rtd)
 {
 	struct snd_card *card = rtd->card->snd_card;
-	struct snd_pcm *pcm = rtd->pcm;
-	int ret;
+	int ret = 0;
 
 	ret = dma_coerce_mask_and_coherent(card->dev, DMA_BIT_MASK(32));
 	if (ret)
 		return ret;
-
-	if (pcm->streams[SNDRV_PCM_STREAM_PLAYBACK].substream) {
-		ret = imx_pcm_preallocate_dma_buffer(pcm,
-			SNDRV_PCM_STREAM_PLAYBACK);
-		if (ret)
-			goto out;
-	}
-
-	if (pcm->streams[SNDRV_PCM_STREAM_CAPTURE].substream) {
-		ret = imx_pcm_preallocate_dma_buffer(pcm,
-			SNDRV_PCM_STREAM_CAPTURE);
-		if (ret)
-			goto out;
-	}
-
-out:
-	/* free preallocated buffers in case of error */
-	if (ret)
-		imx_pcm_free_dma_buffers(pcm);
 
 	return ret;
 }
@@ -218,7 +290,6 @@ out:
 static struct snd_soc_platform_driver imx_soc_platform = {
 	.ops		= &imx_pcm_ops,
 	.pcm_new	= imx_pcm_new,
-	.pcm_free	= imx_pcm_free_dma_buffers,
 };
 
 int imx_pcm_platform_register(struct device *dev)

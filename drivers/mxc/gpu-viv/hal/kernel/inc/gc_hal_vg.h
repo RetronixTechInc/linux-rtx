@@ -2,7 +2,7 @@
 *
 *    The MIT License (MIT)
 *
-*    Copyright (c) 2014 - 2017 Vivante Corporation
+*    Copyright (c) 2014 - 2018 Vivante Corporation
 *
 *    Permission is hereby granted, free of charge, to any person obtaining a
 *    copy of this software and associated documentation files (the "Software"),
@@ -26,7 +26,7 @@
 *
 *    The GPL License (GPL)
 *
-*    Copyright (C) 2014 - 2017 Vivante Corporation
+*    Copyright (C) 2014 - 2018 Vivante Corporation
 *
 *    This program is free software; you can redistribute it and/or
 *    modify it under the terms of the GNU General Public License
@@ -121,7 +121,7 @@ typedef gctTHREADFUNCRESULT (gctTHREADFUNCTYPE * gctTHREADFUNC) (
 #define gcmkIS_ERROR(status)        (status < 0)
 
 #define gcmALIGNDOWN(n, align) \
-( \
+(\
     (n) & ~((align) - 1) \
 )
 
@@ -130,7 +130,7 @@ typedef gctTHREADFUNCRESULT (gctTHREADFUNCTYPE * gctTHREADFUNC) (
 
 
 #define gcmIS_NAN(x) \
-( \
+(\
     ((* (gctUINT32_PTR) &(x)) & 0x7FFFFFFF) == 0x7FFFFFFF \
 )
 
@@ -160,7 +160,7 @@ typedef gctTHREADFUNCRESULT (gctTHREADFUNCTYPE * gctTHREADFUNC) (
     status = Function; \
     if (gcmIS_ERROR(status)) \
     { \
-        gcmTRACE( \
+        gcmTRACE(\
             gcvLEVEL_ERROR, \
             "gcmERR_GOTO: status=%d @ line=%d in function %s.\n", \
             status, __LINE__, __FUNCTION__ \
@@ -170,9 +170,9 @@ typedef gctTHREADFUNCRESULT (gctTHREADFUNCTYPE * gctTHREADFUNC) (
 
 #if gcvDEBUG || gcdFORCE_MESSAGES
 #   define gcmVERIFY_BOOLEAN(Expression) \
-        gcmASSERT( \
-            ( (Expression) == gcvFALSE ) || \
-            ( (Expression) == gcvTRUE  )    \
+        gcmASSERT(\
+            ((Expression) == gcvFALSE ) || \
+            ((Expression) == gcvTRUE  )    \
             )
 #else
 #   define gcmVERIFY_BOOLEAN(Expression)
@@ -192,7 +192,7 @@ typedef gctTHREADFUNCRESULT (gctTHREADFUNCTYPE * gctTHREADFUNC) (
 **      value   Value for field.
 */
 #define gcmVERIFYFIELDFIT(reg, field, value) \
-    gcmASSERT( \
+    gcmASSERT(\
         (value) <= gcmFIELDMAX(reg, field) \
         )
 /*******************************************************************************
@@ -207,9 +207,9 @@ typedef gctTHREADFUNCRESULT (gctTHREADFUNCTYPE * gctTHREADFUNC) (
 **      field   Name of field within register.
 */
 #define gcmFIELDMAX(reg, field) \
-( \
+(\
     (gctUINT32) \
-        ( \
+        (\
         (__gcmGETSIZE(reg##_##field) == 32) \
                 ?  ~0U \
                 : (~(~0U << __gcmGETSIZE(reg##_##field))) \
@@ -250,28 +250,28 @@ typedef gctTHREADFUNCRESULT (gctTHREADFUNCTYPE * gctTHREADFUNC) (
 \******************************************************************************/
 
 #define gcmKB2BYTES(Kilobyte) \
-( \
+(\
     (Kilobyte) << 10 \
 )
 
 #define gcmMB2BYTES(Megabyte) \
-( \
+(\
     (Megabyte) << 20 \
 )
 
 #define gcmMAT(Matrix, Row, Column) \
-( \
+(\
     (Matrix) [(Row) * 3 + (Column)] \
 )
 
 #define gcmMAKE2CHAR(Char1, Char2) \
-( \
+(\
     ((gctUINT16) (gctUINT8) (Char1) << 0) | \
     ((gctUINT16) (gctUINT8) (Char2) << 8) \
 )
 
 #define gcmMAKE4CHAR(Char1, Char2, Char3, Char4) \
-( \
+(\
     ((gctUINT32)(gctUINT8) (Char1) <<  0) | \
     ((gctUINT32)(gctUINT8) (Char2) <<  8) | \
     ((gctUINT32)(gctUINT8) (Char3) << 16) | \
@@ -292,14 +292,6 @@ typedef gctTHREADFUNCRESULT (gctTHREADFUNCTYPE * gctTHREADFUNC) (
 /******************************************************************************\
 ****************************** Kernel Debug Macro ******************************
 \******************************************************************************/
-
-/* Set signal to signaled state for specified process. */
-gceSTATUS
-gckOS_SetSignal(
-    IN gckOS Os,
-    IN gctHANDLE Process,
-    IN gctSIGNAL Signal
-    );
 
 /* Return the kernel logical pointer for the given physical one. */
 gceSTATUS
@@ -384,7 +376,8 @@ gckKERNEL_UnmapMemory(
     IN gckKERNEL Kernel,
     IN gctPHYS_ADDR Physical,
     IN gctSIZE_T Bytes,
-    IN gctPOINTER Logical
+    IN gctPOINTER Logical,
+    IN gctUINT32 ProcessID
     );
 
 /* Dispatch a user-level command. */
@@ -466,6 +459,7 @@ gckVGHARDWARE_QueryChipIdentity(
     OUT gctUINT32* ChipRevision,
     OUT gctUINT32* ProductID,
     OUT gctUINT32* EcoID,
+    OUT gctUINT32* CustomerID,
     OUT gctUINT32* ChipFeatures,
     OUT gctUINT32* ChipMinorFeatures,
     OUT gctUINT32* ChipMinorFeatures1
@@ -920,3 +914,5 @@ gckVGMMU_Flush(
 #endif
 
 #endif /* __gc_hal_h_ */
+
+

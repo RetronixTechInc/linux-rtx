@@ -12,6 +12,7 @@
 #include <linux/hdmi.h>
 #include <linux/i2c.h>
 #include <linux/regmap.h>
+#include <linux/regulator/consumer.h>
 
 #include <drm/drm_crtc_helper.h>
 #include <drm/drm_mipi_dsi.h>
@@ -194,6 +195,10 @@
 #define ADV7511_PACKET_GM(x)	    ADV7511_PACKET(5, x)
 #define ADV7511_PACKET_SPARE(x)	    ADV7511_PACKET(6, x)
 
+#define FORMAT_RATIO(x, y) (((x) * 100) / (y))
+#define RATIO_16_9 FORMAT_RATIO(16, 9)
+#define RATIO_4_3  FORMAT_RATIO(4, 3)
+
 enum adv7511_input_clock {
 	ADV7511_INPUT_CLOCK_1X,
 	ADV7511_INPUT_CLOCK_2X,
@@ -294,12 +299,17 @@ struct adv7511_video_config {
 enum adv7511_type {
 	ADV7511,
 	ADV7533,
+	ADV7535,
 };
 
 struct adv7511 {
 	struct i2c_client *i2c_main;
 	struct i2c_client *i2c_edid;
 	struct i2c_client *i2c_cec;
+
+	u32 addr_cec;
+	u32 addr_edid;
+	u32 addr_pkt;
 
 	struct regmap *regmap;
 	struct regmap *regmap_cec;
@@ -309,6 +319,8 @@ struct adv7511 {
 	struct drm_display_mode curr_mode;
 
 	unsigned int f_tmds;
+	unsigned int f_audio;
+	unsigned int audio_source;
 
 	unsigned int current_edid_segment;
 	uint8_t edid_buf[256];
@@ -329,19 +341,23 @@ struct adv7511 {
 
 	struct gpio_desc *gpio_pd;
 
+	struct regulator_bulk_data *supplies;
+	unsigned int num_supplies;
+
 	/* ADV7533 DSI RX related params */
 	struct device_node *host_node;
 	struct mipi_dsi_device *dsi;
 	u8 num_dsi_lanes;
+	u8 channel_id;
 	bool use_timing_gen;
 
 	enum adv7511_type type;
+	struct platform_device *audio_pdev;
 };
 
 #ifdef CONFIG_DRM_I2C_ADV7533
 void adv7533_dsi_power_on(struct adv7511 *adv);
 void adv7533_dsi_power_off(struct adv7511 *adv);
-void adv7533_mode_set(struct adv7511 *adv, struct drm_display_mode *mode);
 int adv7533_patch_registers(struct adv7511 *adv);
 void adv7533_uninit_cec(struct adv7511 *adv);
 int adv7533_init_cec(struct adv7511 *adv);
@@ -360,6 +376,12 @@ static inline void adv7533_dsi_power_off(struct adv7511 *adv)
 static inline void adv7533_mode_set(struct adv7511 *adv,
 				    struct drm_display_mode *mode)
 {
+}
+
+static inline bool adv7533_mode_fixup(struct adv7511 *adv,
+				      struct drm_display_mode *mode)
+{
+	return true;
 }
 
 static inline int adv7533_patch_registers(struct adv7511 *adv)
@@ -390,5 +412,18 @@ static inline int adv7533_parse_dt(struct device_node *np, struct adv7511 *adv)
 	return -ENODEV;
 }
 #endif
+
+#ifdef CONFIG_DRM_I2C_ADV7511_AUDIO
+int adv7511_audio_init(struct device *dev, struct adv7511 *adv7511);
+void adv7511_audio_exit(struct adv7511 *adv7511);
+#else /*CONFIG_DRM_I2C_ADV7511_AUDIO */
+static inline int adv7511_audio_init(struct device *dev, struct adv7511 *adv7511)
+{
+	return 0;
+}
+static inline void adv7511_audio_exit(struct adv7511 *adv7511)
+{
+}
+#endif /* CONFIG_DRM_I2C_ADV7511_AUDIO */
 
 #endif /* __DRM_I2C_ADV7511_H__ */

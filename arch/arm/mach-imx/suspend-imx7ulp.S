@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2016 Freescale Semiconductor, Inc.
+ * Copyright 2017 NXP
  *
  * The code contained herein is licensed under the GNU General Public
  * License. You may obtain a copy of the GNU General Public License
@@ -50,17 +51,17 @@
 #define PM_INFO_PM_INFO_MMDC_IO_VBASE_OFFSET	0x24
 #define PM_INFO_PM_INFO_SMC1_VBASE_OFFSET	0x28
 #define PM_INFO_PM_INFO_SCG1_VAL_OFFSET		0x2c
-#define PM_INFO_MX7ULP_TTBR1_V_OFFSET		0x6c
-#define PM_INFO_MX7ULP_GPIO_REG_OFFSET		0x70
-#define PM_INFO_IOMUX_NUM_OFFSET		0x90
-#define PM_INFO_IOMUX_VAL_OFFSET		0x94
-#define PM_INFO_SELECT_INPUT_NUM_OFFSET		0x264
-#define PM_INFO_SELECT_INPUT_VAL_OFFSET		0x268
-#define PM_INFO_MMDC_IO_NUM_OFFSET		0x3a0
-#define PM_INFO_MMDC_IO_VAL_OFFSET		0x3a4
+#define PM_INFO_MX7ULP_TTBR1_V_OFFSET		0x70
+#define PM_INFO_MX7ULP_GPIO_REG_OFFSET		0x74
+#define PM_INFO_IOMUX_NUM_OFFSET		0x94
+#define PM_INFO_IOMUX_VAL_OFFSET		0x98
+#define PM_INFO_SELECT_INPUT_NUM_OFFSET		0x268
+#define PM_INFO_SELECT_INPUT_VAL_OFFSET		0x26c
+#define PM_INFO_MMDC_IO_NUM_OFFSET		0x3a4
+#define PM_INFO_MMDC_IO_VAL_OFFSET		0x3a8
 /* below offsets depends on MX7ULP_MAX_MMDC_IO_NUM(36) definition */
-#define PM_INFO_MMDC_NUM_OFFSET			0x4c4
-#define PM_INFO_MMDC_VAL_OFFSET			0x4c8
+#define PM_INFO_MMDC_NUM_OFFSET			0x5a8
+#define PM_INFO_MMDC_VAL_OFFSET			0x5ac
 
 #define DGO_CTRL0	0x50
 #define DGO_GPR3	0x60
@@ -330,6 +331,18 @@ poll_dvfs_set:
 	ands	r7, r7, #(1 << 24)
 	beq	poll_dvfs_set
 
+	/* put mmdc io into lpm */
+	ldr	r11, [r0, #PM_INFO_PM_INFO_MMDC_IO_VBASE_OFFSET]
+	ldr	r10, [r0, #PM_INFO_MMDC_IO_NUM_OFFSET]
+	ldr	r7, =PM_INFO_MMDC_IO_VAL_OFFSET
+	add	r7, r7, r0
+mmdc_io_lpm:
+	ldr	r8, [r7], #0x8
+	mov	r9, #0x0
+	str	r9, [r11, r8]
+	subs	r10, r10, #0x1
+	bne	mmdc_io_lpm
+
 	/* switch NIC clock to FIRC */
 	ldr	r10, [r0, #PM_INFO_PM_INFO_SCG1_VBASE_OFFSET]
 	ldr	r7, [r10, #SCG_NICCCR]
@@ -414,7 +427,20 @@ wait_apll:
 	orr	r7, #(1 << 28)
 	str	r7, [r10, #SCG_NICCCR]
 
+	/* let mmdc io out of lpm */
+	ldr	r11, [r0, #PM_INFO_PM_INFO_MMDC_IO_VBASE_OFFSET]
+	ldr	r10, [r0, #PM_INFO_MMDC_IO_NUM_OFFSET]
+	ldr	r7, =PM_INFO_MMDC_IO_VAL_OFFSET
+	add	r7, r7, r0
+mmdc_io_exit_lpm:
+	ldr	r8, [r7], #0x4
+	ldr	r9, [r7], #0x4
+	str	r9, [r11, r8]
+	subs	r10, r10, #0x1
+	bne	mmdc_io_exit_lpm
+
 	/* let DDR out of self-refresh */
+	ldr	r11, [r0, #PM_INFO_PM_INFO_MMDC_VBASE_OFFSET]
 	ldr	r7, [r11, #MX7ULP_MMDC_MAPSR]
 	bic	r7, r7, #(1 << 20)
 	str	r7, [r11, #MX7ULP_MMDC_MAPSR]
@@ -526,6 +552,11 @@ resume:
 	add	r6, r5, #12
 	ldr	r7, [r0, r6]
 	str	r7, [r11, #SCG_FIRCDIV]
+
+	/* restore system OSC div */
+	add	r6, r5, #64
+	ldr	r7, [r0, r6]
+	str	r7, [r11, #SCG_SOSCDIV]
 
 	/* enable mmdc clock in pcc3 */
 	ldr	r11, =MX7ULP_PCC3_BASE_ADDR

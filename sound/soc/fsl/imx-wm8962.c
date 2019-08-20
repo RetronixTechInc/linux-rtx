@@ -38,6 +38,7 @@ struct imx_wm8962_data {
 	struct snd_soc_card card;
 	char codec_dai_name[DAI_NAME_SIZE];
 	char platform_name[DAI_NAME_SIZE];
+	struct clk *codec_clk;
 	unsigned int clk_frequency;
 	bool is_codec_master;
 };
@@ -53,8 +54,6 @@ struct imx_priv {
 	struct platform_device *pdev;
 	struct snd_pcm_substream *first_stream;
 	struct snd_pcm_substream *second_stream;
-	struct snd_kcontrol *headphone_kctl;
-	struct snd_card *snd_card;
 	struct platform_device *asrc_pdev;
 	u32 asrc_rate;
 	u32 asrc_format;
@@ -116,12 +115,10 @@ static int hpjack_status_check(void *data)
 		snprintf(buf, 32, "STATE=%d", 2);
 		snd_soc_dapm_disable_pin(snd_soc_codec_get_dapm(priv->codec), "Ext Spk");
 		ret = imx_hp_jack_gpio.report;
-		snd_kctl_jack_report(priv->snd_card, priv->headphone_kctl, 1);
 	} else {
 		snprintf(buf, 32, "STATE=%d", 0);
 		snd_soc_dapm_enable_pin(snd_soc_codec_get_dapm(priv->codec), "Ext Spk");
 		ret = 0;
-		snd_kctl_jack_report(priv->snd_card, priv->headphone_kctl, 0);
 	}
 
 	envp[0] = "NAME=headphone";
@@ -261,6 +258,8 @@ static int imx_wm8962_set_bias_level(struct snd_soc_card *card,
 	if (dapm->dev != codec_dai->dev)
 		return 0;
 
+	data->clk_frequency = clk_get_rate(data->codec_clk);
+
 	switch (level) {
 	case SND_SOC_BIAS_PREPARE:
 		if (dapm->bias_level == SND_SOC_BIAS_STANDBY) {
@@ -340,6 +339,8 @@ static int imx_hifi_hw_params(struct snd_pcm_substream *substream,
 		/* We suppose the two substream are using same params */
 		return 0;
 	}
+
+	data->clk_frequency = clk_get_rate(data->codec_clk);
 
 	if (data->is_codec_master)
 		dai_format = SND_SOC_DAIFMT_I2S | SND_SOC_DAIFMT_NB_NF |
@@ -474,7 +475,7 @@ static int imx_wm8962_gpio_init(struct snd_soc_card *card)
 	return 0;
 }
 
-static ssize_t show_headphone(struct device_driver *dev, char *buf)
+static ssize_t headphone_show(struct device_driver *dev, char *buf)
 {
 	struct imx_priv *priv = &card_priv;
 	int hp_status;
@@ -495,9 +496,9 @@ static ssize_t show_headphone(struct device_driver *dev, char *buf)
 	return strlen(buf);
 }
 
-static DRIVER_ATTR(headphone, S_IRUGO | S_IWUSR, show_headphone, NULL);
+static DRIVER_ATTR_RO(headphone);
 
-static ssize_t show_mic(struct device_driver *dev, char *buf)
+static ssize_t microphone_show(struct device_driver *dev, char *buf)
 {
 	struct imx_priv *priv = &card_priv;
 	int mic_status;
@@ -518,7 +519,7 @@ static ssize_t show_mic(struct device_driver *dev, char *buf)
 	return strlen(buf);
 }
 
-static DRIVER_ATTR(microphone, S_IRUGO | S_IWUSR, show_mic, NULL);
+static DRIVER_ATTR_RO(microphone);
 
 static int imx_wm8962_late_probe(struct snd_soc_card *card)
 {
@@ -529,6 +530,7 @@ static int imx_wm8962_late_probe(struct snd_soc_card *card)
 	struct device *dev = &priv->pdev->dev;
 	int ret;
 
+	data->clk_frequency = clk_get_rate(data->codec_clk);
 	rtd = snd_soc_get_pcm_runtime(card, card->dai_link[0].name);
 	codec_dai = rtd->codec_dai;
 	ret = snd_soc_dai_set_sysclk(codec_dai, WM8962_SYSCLK_MCLK,
@@ -561,12 +563,11 @@ static int be_hw_params_fixup(struct snd_soc_pcm_runtime *rtd,
 static int imx_wm8962_probe(struct platform_device *pdev)
 {
 	struct device_node *np = pdev->dev.of_node;
-	struct device_node *cpu_np, *codec_np = NULL;
+	struct device_node *cpu_np = NULL, *codec_np = NULL;
 	struct platform_device *cpu_pdev;
 	struct imx_priv *priv = &card_priv;
 	struct i2c_client *codec_dev;
 	struct imx_wm8962_data *data;
-	struct clk *codec_clk = NULL;
 	int int_port, ext_port, tmp_port;
 	int ret;
 	struct platform_device *asrc_pdev = NULL;
@@ -667,14 +668,12 @@ audmux_bypass:
 	priv->first_stream = NULL;
 	priv->second_stream = NULL;
 
-	codec_clk = devm_clk_get(&codec_dev->dev, NULL);
-	if (IS_ERR(codec_clk)) {
-		ret = PTR_ERR(codec_clk);
+	data->codec_clk = clk_get(&codec_dev->dev, NULL);
+	if (IS_ERR(data->codec_clk)) {
+		ret = PTR_ERR(data->codec_clk);
 		dev_err(&codec_dev->dev, "failed to get codec clk: %d\n", ret);
 		goto fail;
 	}
-
-	data->clk_frequency = clk_get_rate(codec_clk);
 
 	priv->amic_mono = of_property_read_bool(codec_np, "amic-mono");
 	priv->dmic_mono = of_property_read_bool(codec_np, "dmic-mono");
@@ -773,12 +772,6 @@ audmux_bypass:
 		dev_err(&pdev->dev, "snd_soc_register_card failed (%d)\n", ret);
 		goto fail;
 	}
-
-	priv->snd_card = data->card.snd_card;
-	priv->headphone_kctl = snd_kctl_jack_new("Headphone", NULL);
-	ret = snd_ctl_add(data->card.snd_card, priv->headphone_kctl);
-	if (ret)
-		goto fail;
 
 	imx_wm8962_gpio_init(&data->card);
 

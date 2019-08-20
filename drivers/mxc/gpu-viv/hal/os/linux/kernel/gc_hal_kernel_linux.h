@@ -2,7 +2,7 @@
 *
 *    The MIT License (MIT)
 *
-*    Copyright (c) 2014 - 2017 Vivante Corporation
+*    Copyright (c) 2014 - 2018 Vivante Corporation
 *
 *    Permission is hereby granted, free of charge, to any person obtaining a
 *    copy of this software and associated documentation files (the "Software"),
@@ -26,7 +26,7 @@
 *
 *    The GPL License (GPL)
 *
-*    Copyright (C) 2014 - 2017 Vivante Corporation
+*    Copyright (C) 2014 - 2018 Vivante Corporation
 *
 *    This program is free software; you can redistribute it and/or
 *    modify it under the terms of the GNU General Public License
@@ -56,8 +56,6 @@
 #ifndef __gc_hal_kernel_linux_h_
 #define __gc_hal_kernel_linux_h_
 
-/* VIV: Latest kernel version supported: 4.1.0. */
-
 #include <linux/version.h>
 #include <linux/init.h>
 #include <linux/module.h>
@@ -65,10 +63,6 @@
 #include <linux/mm.h>
 #include <linux/sched.h>
 #include <linux/signal.h>
-#ifdef FLAREON
-#error 1
-#   include <asm/arch-realview/dove_gpio_irq.h>
-#endif
 #include <linux/interrupt.h>
 #include <linux/vmalloc.h>
 #include <linux/dma-mapping.h>
@@ -124,14 +118,6 @@
 /* Protection bit when mapping memroy to user sapce */
 #define gcmkPAGED_MEMROY_PROT(x)    pgprot_writecombine(x)
 
-#if gcdNONPAGED_MEMORY_BUFFERABLE
-#define gcmkIOREMAP                 ioremap_wc
-#define gcmkNONPAGED_MEMROY_PROT(x) pgprot_writecombine(x)
-#elif !gcdNONPAGED_MEMORY_CACHEABLE
-#define gcmkIOREMAP                 ioremap_nocache
-#define gcmkNONPAGED_MEMROY_PROT(x) pgprot_noncached(x)
-#endif
-
 #define gcdSUPPRESS_OOM_MESSAGE 1
 
 #if gcdSUPPRESS_OOM_MESSAGE
@@ -153,6 +139,29 @@
 #       define gcdIRQF_FLAG   (IRQF_DISABLED)
 #   endif
 #endif
+
+/* gcdLINUX_SYNC_FILE and CONFIG_SYNC_FILE. */
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4,10,0)
+#  define dma_fence                         fence
+#  define dma_fence_array                   fence_array
+#  define dma_fence_ops                     fence_ops
+
+#  define dma_fence_default_wait            fence_default_wait
+
+#  define dma_fence_signal(f)               fence_signal(f)
+#  define dma_fence_signal_locked(f)        fence_signal_locked(f)
+#  define dma_fence_get(f)                  fence_get(f)
+#  define dma_fence_put(f)                  fence_put(f)
+#  define dma_fence_is_array(f)             fence_is_array(f)
+#  define dma_fence_is_signaled(f)          fence_is_signaled(f)
+#  define to_dma_fence_array(f)             to_fence_array(f)
+#  define dma_fence_wait_timeout(f, n, t)   fence_wait_timeout((f), (n), (t))
+#  define dma_fence_init(f, o, l, t, s)     fence_init((f), (o), (l), (t), (s))
+#  define dma_fence_context_alloc(s)        fence_context_alloc(s)
+
+#endif
+
+extern struct device *galcore_device;
 
 /******************************************************************************\
 ********************************** Structures **********************************
@@ -209,7 +218,7 @@ struct _gckOS
     /* Signal management. */
 
     /* Lock. */
-    struct mutex                signalMutex;
+    spinlock_t                  signalLock;
 
     /* signal id database. */
     gcsINTEGER_DB               signalDB;
@@ -232,7 +241,7 @@ struct _gckOS
     gctBOOL                     allocatorLimitMarker;
 
     /* Lock for register access check. */
-    struct mutex                registerAccessLocks[gcdMAX_GPU_COUNT];
+    spinlock_t                  registerAccessLock;
 
     /* External power states. */
     gctBOOL                     powerStates[gcdMAX_GPU_COUNT];
@@ -248,7 +257,10 @@ typedef struct _gcsSIGNAL * gcsSIGNAL_PTR;
 typedef struct _gcsSIGNAL
 {
     /* Kernel sync primitive. */
-    struct completion obj;
+    volatile unsigned int done;
+    spinlock_t lock;
+
+    wait_queue_head_t wait;
 
     /* Manual reset flag. */
     gctBOOL manualReset;
@@ -262,12 +274,12 @@ typedef struct _gcsSIGNAL
     /* ID. */
     gctUINT32 id;
 
-#if gcdANDROID_NATIVE_FENCE_SYNC
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4,9,0)
+#if gcdLINUX_SYNC_FILE
+#ifndef CONFIG_SYNC_FILE
     /* Parent timeline. */
     struct sync_timeline * timeline;
 #  else
-    struct fence *fence;
+    struct dma_fence *fence;
 #  endif
 #endif
 }
@@ -291,6 +303,23 @@ gckOS_FreeAllocators(
     gckOS Os
     );
 
+/* Reserved memory. */
+gceSTATUS
+gckOS_RequestReservedMemory(
+    gckOS Os,
+    unsigned long Start,
+    unsigned long Size,
+    const char * Name,
+    gctBOOL Requested,
+    void ** MemoryHandle
+    );
+
+void
+gckOS_ReleaseReservedMemory(
+    gckOS Os,
+    void * MemoryHandle
+    );
+
 gceSTATUS
 _ConvertLogical2Physical(
     IN gckOS Os,
@@ -298,12 +327,6 @@ _ConvertLogical2Physical(
     IN gctUINT32 ProcessID,
     IN PLINUX_MDL Mdl,
     OUT gctPHYS_ADDR_T * Physical
-    );
-
-void
-_UnmapUserLogical(
-    IN gctPOINTER Logical,
-    IN gctUINT32  Size
     );
 
 gctBOOL
@@ -322,6 +345,26 @@ _GetProcessID(
 #else
     return current->tgid;
 #endif
+}
+
+static inline void
+_MemoryBarrier(
+    void
+    )
+{
+#if defined(CONFIG_ARM) && (LINUX_VERSION_CODE < KERNEL_VERSION(2,6,34))
+    dsb();
+#else
+    mb();
+#endif
+}
+
+static inline void
+_Barrier(
+    void
+    )
+{
+    barrier();
 }
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,25)

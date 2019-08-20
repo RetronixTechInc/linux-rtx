@@ -194,6 +194,7 @@ extern const struct fb_videomode mxc_cea_mode[64];
 extern void mxc_hdmi_cec_handle(u16 cec_stat);
 
 static void mxc_hdmi_setup(struct mxc_hdmi *hdmi, unsigned long event);
+static void mxc_hdmi_phy_disable(struct mxc_hdmi *hdmi);
 static void hdmi_enable_overflow_interrupts(void);
 static void hdmi_disable_overflow_interrupts(void);
 
@@ -337,6 +338,7 @@ static ssize_t mxc_hdmi_store_hdcp_enable(struct device *dev,
 	char event_string[32];
 	char *envp[] = { event_string, NULL };
 	unsigned long value;
+	u8 clkdis;
 	int ret;
 
 	ret = kstrtoul(buf, 10, &value);
@@ -344,6 +346,13 @@ static ssize_t mxc_hdmi_store_hdcp_enable(struct device *dev,
 		return ret;
 
 	hdmi->hdmi_data.hdcp_enable = value;
+
+	/* Disable All HDMI clock and HDMI PHY */
+	clkdis = hdmi_readb(HDMI_MC_CLKDIS);
+	clkdis |= 0x5f;
+	hdmi_writeb(clkdis, HDMI_MC_CLKDIS);
+	mxc_hdmi_phy_disable(hdmi);
+	hdmi_disable_overflow_interrupts();
 
 	/* Reconfig HDMI for HDCP */
 	mxc_hdmi_setup(hdmi, 0);
@@ -1032,12 +1041,6 @@ static int hdmi_phy_configure(struct mxc_hdmi *hdmi, unsigned char pRep,
 			HDMI_PHY_I2CM_SLAVE_ADDR);
 	hdmi_phy_test_clear(hdmi, 0);
 
-	if (hdmi->hdmi_data.video_mode.mPixelClock < 0) {
-		dev_dbg(&hdmi->pdev->dev, "Pixel clock (%d) must be positive\n",
-			hdmi->hdmi_data.video_mode.mPixelClock);
-		return false;
-	}
-
 	if (hdmi->hdmi_data.video_mode.mPixelClock <= 45250000) {
 		switch (cRes) {
 		case 8:
@@ -1260,7 +1263,6 @@ static void mxc_hdmi_phy_init(struct mxc_hdmi *hdmi)
 	if (!hdmi->fb_reg || !hdmi->cable_plugin
 			|| (hdmi->blank != FB_BLANK_UNBLANK))
 		return;
-
 
 	/*check csc whether needed activated in HDMI mode */
 	cscon = (isColorSpaceConversion(hdmi) &&
@@ -1692,8 +1694,8 @@ static void mxc_hdmi_enable_video_path(struct mxc_hdmi *hdmi)
 	hdmi_writeb(0x16, HDMI_FC_CH1PREAM);
 	hdmi_writeb(0x21, HDMI_FC_CH2PREAM);
 
+	clkdis = hdmi_readb(HDMI_MC_CLKDIS);
 	/* Enable pixel clock and tmds data path */
-	clkdis = 0x7F;
 	clkdis &= ~HDMI_MC_CLKDIS_PIXELCLK_DISABLE;
 	hdmi_writeb(clkdis, HDMI_MC_CLKDIS);
 
@@ -1984,10 +1986,13 @@ static void mxc_hdmi_power_off(struct mxc_dispdrv_handle *disp,
 
 static void mxc_hdmi_cable_disconnected(struct mxc_hdmi *hdmi)
 {
-	dev_dbg(&hdmi->pdev->dev, "%s\n", __func__);
+	u8 clkdis;
 
-	/* Disable All HDMI clock */
-	hdmi_writeb(0xff, HDMI_MC_CLKDIS);
+	dev_dbg(&hdmi->pdev->dev, "%s\n", __func__);
+	/* Disable All HDMI clock and bypass cec */
+	clkdis = hdmi_readb(HDMI_MC_CLKDIS);
+	clkdis |= 0x5f;
+	hdmi_writeb(clkdis, HDMI_MC_CLKDIS);
 
 	mxc_hdmi_phy_disable(hdmi);
 

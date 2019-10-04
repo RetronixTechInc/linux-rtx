@@ -15,15 +15,15 @@
 #include "skeleton.dtsi"
 #include "imx6q-pinfunc.h"
 #include <dt-bindings/gpio/gpio.h>
-#include <dt-bindings/input/input.h>
 #include <dt-bindings/interrupt-controller/arm-gic.h>
 #include <dt-bindings/clock/imx6qdl-clock.h>
+#include <dt-bindings/input/input.h>
 #include "rtx-imx6q-soc.dtsi"
 #include "rtx-imx6q-a6plus-iomux.dtsi"
 
 / {
 	model = "Retronix i.MX6 Quad A6PLUS Board";
-	compatible = "fsl,rtx-imx6q-a6plus", "fsl,imx6q";
+	compatible = "rtx,rtx-imx6q-a6plus", "fsl,imx6q";
 
 	aliases {
 		mxcfb0 = &hdmi_display;
@@ -35,11 +35,8 @@
 	};
 
 	clocks {
-		#address-cells = <1>;
-		#size-cells = <0>;
-		mclk: clock@0 {
+		clk24m: clk24m {
 			compatible = "fixed-clock";
-			reg = <0>;
 			#clock-cells = <0>;
 			clock-frequency = <24000000>;
 		};
@@ -52,7 +49,6 @@
 
 		reg_1p8v: 1p8v {
 			compatible = "regulator-fixed";
-			reg = <0>;
 			regulator-name = "1P8V";
 			regulator-min-microvolt = <1800000>;
 			regulator-max-microvolt = <1800000>;
@@ -61,7 +57,6 @@
 
 		reg_2p5v: 2p5v {
 			compatible = "regulator-fixed";
-			reg = <1>;
 			regulator-name = "2P5V";
 			regulator-min-microvolt = <2500000>;
 			regulator-max-microvolt = <2500000>;
@@ -70,7 +65,6 @@
 
 		reg_3p3v: 3p3v {
 			compatible = "regulator-fixed";
-			reg = <2>;
 			regulator-name = "3P3V";
 			regulator-min-microvolt = <3300000>;
 			regulator-max-microvolt = <3300000>;
@@ -79,7 +73,6 @@
 
 		reg_usb_otg_vbus: usb_otg_vbus {
 			compatible = "regulator-fixed";
-			reg = <3>;
 			regulator-name = "usb_otg_vbus";
 			regulator-min-microvolt = <5000000>;
 			regulator-max-microvolt = <5000000>;
@@ -89,7 +82,6 @@
 
 		reg_usb_h1_vbus: usb_h1_vbus {
 			compatible = "regulator-fixed";
-			reg = <4>;
 			regulator-name = "usb_h1_vbus";
 			regulator-min-microvolt = <5000000>;
 			regulator-max-microvolt = <5000000>;
@@ -99,22 +91,126 @@
 
 		reg_backlight: backlight {
 			compatible = "regulator-fixed";
-			reg = <5>;
 			regulator-name = "lcd-supply";
 			gpio = <&gpio1 9 0>;
 			startup-delay-us = <5000>;
 			enable-active-high;
 		};
+
 	};
 
 	gpio-keys {
 		compatible = "gpio-keys";
 		power {
 			label = "Power Button";
-			gpios = <&gpio3 29 GPIO_ACTIVE_HIGH>;
-			linux,code = <KEY_POWER>;
+			gpios = <&gpio3 29 1>;
+			linux,code = <KEY_POWER>; /* KEY_POWER */
 			gpio-key,wakeup;
 		};
+
+	};
+
+    gpio_export {
+		compatible = "gpio-export";
+
+		DVI_I2C_ENB {
+			gpio-export,name = "DVI_I2C_ENB";
+			gpio-export,output = <1>;
+			gpio-export,direction_may_change ;
+			gpios = <&gpio4 5 1>;
+		};
+
+		VDAC_STBY_B {
+			gpio-export,name = "VDAC_STBY_B";
+			gpio-export,output = <1>;
+			gpio-export,direction_may_change ;
+			gpios = <&gpio1 4 1>;
+		};
+
+		GPIO_1 {
+			gpio-export,name = "GPIO_1";
+			gpio-export,output = <0>;
+			gpio-export,direction_may_change ;
+			gpios = <&gpio1 28 1>;
+		};
+        		
+		GPIO_2 {
+			gpio-export,name = "GPIO_2";
+			gpio-export,output = <0>;
+			gpio-export,direction_may_change ;
+			gpios = <&gpio1 27 1>;
+		};
+
+		GPIO_3 {
+			gpio-export,name = "GPIO_3";
+			gpio-export,output = <0>;
+			gpio-export,direction_may_change ;
+			gpios = <&gpio1 30 1>;
+		};
+
+		GPIO_4 {
+			gpio-export,name = "GPIO_4";
+			gpio-export,output = <0>;
+			gpio-export,direction_may_change ;
+			gpios = <&gpio4 8 1>;
+		};
+
+		GPIO_5 {
+			gpio-export,name = "GPIO_5";
+			gpio-export,output = <0>;
+			gpio-export,direction_may_change ;
+			gpios = <&gpio4 9 1>;
+		};
+
+		GPIO_6 {
+			gpio-export,name = "GPIO_6";
+			gpio-export,output = <0>;
+			gpio-export,direction_may_change ;
+			gpios = <&gpio3 26 1>;
+		};
+
+		GPIO_7 {
+			gpio-export,name = "GPIO_7";
+			gpio-export,output = <0>;
+			gpio-export,direction_may_change ;
+			gpios = <&gpio3 27 1>;
+		};
+
+		IR_C {
+			gpio-export,name = "IR_C";
+			gpio-export,output = <0>;
+			gpio-export,direction_may_change ;
+			gpios = <&gpio7 0 1>;
+		};
+
+		LED_R_C {
+			gpio-export,name = "LED_R_C";
+			gpio-export,output = <0>;
+			gpio-export,direction_may_change ;
+			gpios = <&gpio6 18 1>;
+		};
+
+		LED_G_C {
+			gpio-export,name = "LED_G_C";
+			gpio-export,output = <0>;
+			gpio-export,direction_may_change ;
+			gpios = <&gpio6 17 1>;
+		};
+
+		Touch_INT {
+			gpio-export,name = "Touch_INT";
+			gpio-export,output = <0>;
+			gpio-export,direction_may_change ;
+			gpios = <&gpio6 11 1>;
+		};
+
+		Touch_Reset {
+			gpio-export,name = "Touch_Reset";
+			gpio-export,output = <0>;
+			gpio-export,direction_may_change ;
+			gpios = <&gpio6 14 1>;
+		};
+
 	};
 
 	sound {
@@ -137,7 +233,7 @@
 
 	sound-hdmi {
 		compatible = "fsl,imx6q-audio-hdmi",
-			         "fsl,imx-audio-hdmi";
+			     "fsl,imx-audio-hdmi";
 		model = "imx-audio-hdmi";
 		hdmi-controller = <&hdmi_audio>;
 	};
@@ -221,6 +317,7 @@
 	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl_enet_4>;
 	phy-mode = "rgmii";
+	phy-reset-boot-on;
 	status = "okay";
 };
 
@@ -246,8 +343,8 @@
 };
 
 &hdmi_core {
-	ipu_id = <0>;
-	disp_id = <1>;
+	ipu_id = <1>;
+	disp_id = <0>;
 	status = "okay";
 };
 
@@ -305,7 +402,6 @@
 				regulator-max-microvolt = <3300000>;
 				regulator-boot-on;
 				regulator-always-on;
-				regulator-ramp-delay = <6250>;
 			};
 
 			sw3a_reg: sw3a {
@@ -325,11 +421,14 @@
 			sw4_reg: sw4 {
 				regulator-min-microvolt = <800000>;
 				regulator-max-microvolt = <3300000>;
+				regulator-boot-on;
+				regulator-always-on;
 			};
 
 			swbst_reg: swbst {
 				regulator-min-microvolt = <5000000>;
 				regulator-max-microvolt = <5150000>;
+				regulator-always-on;
 			};
 
 			snvs_reg: vsnvs {
@@ -347,16 +446,22 @@
 			vgen1_reg: vgen1 {
 				regulator-min-microvolt = <800000>;
 				regulator-max-microvolt = <1550000>;
+				regulator-boot-on;
+				regulator-always-on;
 			};
 
 			vgen2_reg: vgen2 {
 				regulator-min-microvolt = <800000>;
 				regulator-max-microvolt = <1550000>;
+				regulator-boot-on;
+				regulator-always-on;
 			};
 
 			vgen3_reg: vgen3 {
 				regulator-min-microvolt = <1800000>;
 				regulator-max-microvolt = <3300000>;
+				regulator-boot-on;
+				regulator-always-on;
 			};
 
 			vgen4_reg: vgen4 {
@@ -378,6 +483,8 @@
 			};
 		};
 	};
+
+
 };
 
 &i2c3 {
@@ -391,12 +498,11 @@
 		reg = <0x50>;
 	};
 
-	rtc@0c {
+	efm32: rtx-efm32@0c {
 		compatible = "rtx,efm32-a6plus";
-		power-on-gpio = <&gpio4 7 0>;
-		#gpio-boot = <&gpio4 11 0>;
-		#gpio-reset = <&gpio4 6 0>;
+		pinctrl-names = "default";
 		reg = <0x0c>;
+		gpio-power = <&gpio4 7 0>;
 	};
 };
 
@@ -491,5 +597,16 @@
 
 &ssi1 {
 	fsl,mode = "i2s-slave";
+	status = "okay";
+};
+
+&wdog1 {
+	status = "disabled";
+};
+
+&wdog2 {
+	pinctrl-names = "default";
+	fsl,wdog_b;
+    fsl,ext-reset-output;
 	status = "okay";
 };

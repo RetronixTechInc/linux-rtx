@@ -231,6 +231,21 @@
 		#mic-det-gpios = <&gpio7 8 1>;
 	};
 
+	sound-gpio {
+		compatible = "gpio-leds";
+		pinctrl-names = "default";
+		amp-gpio {
+		label = "amp-gpio";
+		gpios = <&gpio2 6 GPIO_ACTIVE_HIGH>;
+		default-state = "on";
+		};
+		amp-ena-gpios {
+		label = "amp-ena-gpios";
+		gpios = <&gpio2 7 GPIO_ACTIVE_HIGH>;
+		default-state = "on";
+		};
+	};
+
 	sound-hdmi {
 		compatible = "fsl,imx6q-audio-hdmi",
 			     "fsl,imx-audio-hdmi";

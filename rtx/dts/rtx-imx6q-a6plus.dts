@@ -26,8 +26,10 @@
 	compatible = "rtx,rtx-imx6q-a6plus", "fsl,imx6q";
 
 	aliases {
-		mxcfb0 = &hdmi_display;
-		mxcfb1 = &lcd_display;
+		mxcfb0 = &mxcfb1;
+		mxcfb1 = &mxcfb2;
+		mxcfb2 = &mxcfb3;
+		mxcfb3 = &mxcfb4;
 	};
 
 	memory {
@@ -253,7 +255,27 @@
 		hdmi-controller = <&hdmi_audio>;
 	};
 
-	hdmi_display: fb@0 {
+	mxcfb1: fb@0 {
+		compatible = "fsl,mxc_sdc_fb";
+		disp_dev = "ldb";
+		interface_pix_fmt = "RGB666";
+		default_bpp = <16>;
+		int_clk = <0>;
+		late_init = <0>;
+		status = "okay";
+	};
+
+	mxcfb2: fb@1 {
+		compatible = "fsl,mxc_sdc_fb";
+		disp_dev = "ldb";
+		interface_pix_fmt = "RGB24";
+		default_bpp = <32>;
+		int_clk = <0>;
+		late_init = <0>;
+		status = "okay";
+	};
+
+	mxcfb3: fb@2 {
 		compatible = "fsl,mxc_sdc_fb";
 		disp_dev = "hdmi";
 		interface_pix_fmt = "RGB24";
@@ -264,7 +286,7 @@
 		status = "okay";
 	};
 
-	lcd_display: fb@1 {
+	mxcfb4: fb@3 {
 		compatible = "fsl,mxc_sdc_fb";
 		disp_dev = "lcd";
 		interface_pix_fmt = "RGB24";
@@ -518,6 +540,62 @@
 		pinctrl-names = "default";
 		reg = <0x0c>;
 		gpio-power = <&gpio4 7 0>;
+	};
+};
+
+&ldb {
+	status = "okay";
+
+	lvds-channel@0 {
+		fsl,data-mapping = "spwg";
+		fsl,data-width = <24>;
+		primary;
+		crtc = "ipu1-di0";
+		interface_pix_fmt = "RGB24";
+		status = "okay";
+
+		display-timings {
+			native-mode = <&timing0>;
+			timing0: hsd100pxn1 {
+				clock-frequency = <71000000>;
+				hactive = <1280>;
+				hfront-porch = <48>;
+				hback-porch = <80>;
+				hsync-len = <32>;
+				vactive = <800>;
+				vfront-porch = <3>;
+				vback-porch = <14>;
+				vsync-len = <6>;
+				mode-is-detailed ;
+				de-active = <1>;
+			};
+		};
+	};
+
+	lvds-channel@1 {
+		fsl,data-mapping = "spwg";
+		fsl,data-width = <24>;
+		primary;
+		crtc = "ipu1-di1";
+		interface_pix_fmt = "RGB24";
+		status = "okay";
+
+		display-timings {
+			native-mode = <&timing1>;
+			timing1: hsd100pxn2 {
+				clock-frequency = <71000000>;
+				hactive = <1280>;
+				hfront-porch = <48>;
+				hback-porch = <80>;
+				hsync-len = <32>;
+				vactive = <800>;
+				vfront-porch = <3>;
+				vback-porch = <14>;
+				vsync-len = <6>;
+				mode-is-detailed ;
+				de-active = <1>;
+			};
+		};
 	};
 };
 

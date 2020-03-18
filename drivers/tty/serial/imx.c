@@ -419,7 +419,7 @@ static void imx_stop_tx(struct uart_port *port)
 	writel(temp & ~UCR1_TXMPTYEN, port->membase + UCR1);
 
 	/* in rs485 mode disable transmitter if shifter is empty */
-	if ( port->rs485.flags & SER_RS485_ENABLED || sport->have_sp339e || sport->have_azrs3080 &&
+	if ( ( port->rs485.flags & SER_RS485_ENABLED || sport->have_sp339e || sport->have_azrs3080 ) &&
 	    readl(port->membase + USR2) & USR2_TXDC ) {
 		temp = readl(port->membase + UCR2);
 		if (port->rs485.flags & SER_RS485_RTS_AFTER_SEND)
@@ -432,24 +432,30 @@ static void imx_stop_tx(struct uart_port *port)
 			temp |= UCR2_CTS;
 		}
 
-		if ( sport->sp339e_gpio_dir )
+		if ( sport->have_sp339e )
 		{
-			gpio_set_value( sport->sp339e_gpio_dir , 1 ) ;
-		}
-
-		if ( sport->azrs3080_mode == 0 )
-		{
-			if ( sport->azrs3080_gpio_rts_dir )
+			if ( sport->sp339e_gpio_dir )
 			{
-				gpio_set_value( sport->azrs3080_gpio_rts_dir , 0 ) ;
+				gpio_set_value( sport->sp339e_gpio_dir , 1 ) ;
 			}
 		}
 
-		if ( sport->azrs3080_mode == 1 )
+		if ( sport->have_azrs3080 )
 		{
-			if ( sport->azrs3080_gpio_cts_dir )
+			if ( sport->azrs3080_mode == 0 )
 			{
-				gpio_set_value( sport->azrs3080_gpio_cts_dir , 0 ) ;
+				if ( sport->azrs3080_gpio_rts_dir )
+				{
+					gpio_set_value( sport->azrs3080_gpio_rts_dir , 0 ) ;
+				}
+			}
+
+			if ( sport->azrs3080_mode == 1 )
+			{
+				if ( sport->azrs3080_gpio_cts_dir )
+				{
+					gpio_set_value( sport->azrs3080_gpio_cts_dir , 0 ) ;
+				}
 			}
 		}
 
@@ -662,24 +668,30 @@ static void imx_start_tx(struct uart_port *port)
 			temp |= UCR2_CTS;
 		}
 
-		if ( sport->sp339e_gpio_dir )
+		if ( sport->have_sp339e )
 		{
-			gpio_set_value( sport->sp339e_gpio_dir , 0 ) ;
-		}
-
-		if ( sport->azrs3080_mode == 0 )
-		{
-			if ( sport->azrs3080_gpio_rts_dir )
+			if ( sport->sp339e_gpio_dir )
 			{
-				gpio_set_value( sport->azrs3080_gpio_rts_dir , 1 ) ;
+				gpio_set_value( sport->sp339e_gpio_dir , 0 ) ;
 			}
 		}
 
-		if ( sport->azrs3080_mode == 1 )
+		if ( sport->have_azrs3080 )
 		{
-			if ( sport->azrs3080_gpio_cts_dir )
+			if ( sport->azrs3080_mode == 0 )
 			{
-				gpio_set_value( sport->azrs3080_gpio_cts_dir , 1 ) ;
+				if ( sport->azrs3080_gpio_rts_dir )
+				{
+					gpio_set_value( sport->azrs3080_gpio_rts_dir , 1 ) ;
+				}
+			}
+
+			if ( sport->azrs3080_mode == 1 )
+			{
+				if ( sport->azrs3080_gpio_cts_dir )
+				{
+					gpio_set_value( sport->azrs3080_gpio_cts_dir , 1 ) ;
+				}
 			}
 		}
 

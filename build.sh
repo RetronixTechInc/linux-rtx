@@ -24,8 +24,8 @@ fi
 
 #### Define the CROSS COMPILE TOOL #########################################################
 #CROSS_COMPILE_TOOL=rtx-gcc-4.9.3-glibc-2.19-hf-32bits/bin
-CROSS_COMPILE_TOOL=rtx-gcc-4.9.3-glibc-2.19-hf-64bits/arm-rtx-linux-gnueabihf/bin
-#CROSS_COMPILE_TOOL=rtx-gcc-5.3.0-glibc-2.23-hf/arm-rtx-linux-gnueabihf/bin
+#CROSS_COMPILE_TOOL=rtx-gcc-4.9.3-glibc-2.19-hf-64bits/arm-rtx-linux-gnueabihf/bin
+CROSS_COMPILE_TOOL=rtx-gcc-5.3.0-glibc-2.23-hf/arm-rtx-linux-gnueabihf/bin
 #CROSS_COMPILE_TOOL=rtx-gcc-6.3.0-glibc-2.25-hf-32bits/bin
 
 CROSS_COMPILE_GCC=arm-rtx-linux-gnueabihf-
@@ -75,6 +75,7 @@ TARGET_CUSTOMER="RTX-PITX-B21"
 #TARGET_CUSTOMER="ROM-7420"
 #TARGET_CUSTOMER="PITX-CSE-JP"
 #TARGET_CUSTOMER="PITX-OHGA-JP"
+#TARGET_CUSTOMER="PITX-TESLA"
 
 ########################################################################
 case "${TARGET_CUSTOMER}" in
@@ -143,6 +144,12 @@ case "${TARGET_CUSTOMER}" in
 		TARGET_SOC="imx6q"
 		TARGET_BOARD="pitx-b21"
 		TARGET_SUBBOARD="ohga-jp"
+		;;
+	"PITX-TESLA" )
+		TARGET_VENDER="rtx"
+		TARGET_SOC="imx6q"
+		TARGET_BOARD="pitx-b21"
+		TARGET_SUBBOARD="tesla"
 		;;
     *)
 		echo "Please set the target customer."

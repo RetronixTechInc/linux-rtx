@@ -407,7 +407,7 @@ function build_imx_firmware()
 		"imx6q")
 			check_rtx_imx6libs
 			if [ ! -f rtx/imx6-libs/firmware-imx-5.4.bin ] ; then
-				break ;
+				return ;
 			fi
 			if [ -d .tmp_build ] ; then
 				rm -rf .tmp_build
@@ -433,7 +433,7 @@ function build_gpu_viv_module()
 			"imx6q")
 				check_rtx_imx6libs
 				if [ ! -f rtx/imx6-libs/kernel-module-imx-gpu-viv-6.2.2.p0.tar.gz ] ; then
-					break ;
+					return ;
 				fi
 				if [ -d .tmp_build ] ; then
 					rm -rf .tmp_build

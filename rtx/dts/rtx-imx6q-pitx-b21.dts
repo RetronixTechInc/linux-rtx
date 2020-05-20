@@ -108,7 +108,7 @@
 		power {
 			label = "Power Button";
 			gpios = <&gpio3 29 1>;
-			linux,code = <KEY_POWER>; /* KEY_POWER */
+			linux,code = <0x2fe>; /* KEY_POWER */
 			gpio-key,wakeup;
 		};
 
@@ -139,6 +139,12 @@
 			gpio-export,output = <1>;
 			gpio-export,direction_may_change ;
 			gpios = <&gpio3 18 1>;
+		};
+
+		/* mcu_int = <&gpio1 4 0>; 4 */
+		mcu_int {
+			gpio-export,name = "mcu_int";
+			gpios = <&gpio1 4 0>;
 		};
 
 		/* 3234_en = <&gpio3 22 1>; 86
@@ -531,6 +537,7 @@
 		pinctrl-0 = <&pinctrl_mcu_pitx>;
 		reg = <0x0c>;
 		gpio-power = <&gpio6 9 0>;
+		gpio-boot = <&gpio6 11 0>;
 	};
 };
 

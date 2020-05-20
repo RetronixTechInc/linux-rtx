@@ -957,7 +957,7 @@ static void efm32_poweroff(void)
 	if ( efm32_i2c_client )
 	{
 		efm32data = i2c_get_clientdata( efm32_i2c_client ) ;
-		efm32_boot( efm32data , 3 ) ;
+		efm32_boot( efm32data , 0 ) ;
 		error = efm32_status_set( &efm32_i2c_client->dev , 0 ) ;
 	}
 }
@@ -1020,7 +1020,7 @@ static int efm32_probe(struct i2c_client *client, const struct i2c_device_id *id
 			efm32data->gpio_boot = gpio ;
 			if ( devm_gpio_request( &client->dev , efm32data->gpio_boot , "efm32-a6 boot" ) == 0 )
 			{
-				gpio_set_value( efm32data->gpio_boot , 0 ) ;
+				gpio_set_value( efm32data->gpio_boot , 1 ) ;
 			} 
 			else 
 			{

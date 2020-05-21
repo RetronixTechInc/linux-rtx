@@ -18,7 +18,7 @@
 #include <dt-bindings/interrupt-controller/arm-gic.h>
 #include <dt-bindings/clock/imx6qdl-clock.h>
 #include <dt-bindings/input/input.h>
-#include "rtx-imx6q-soc.dtsi"
+#include "rtx-imx6q-soc-tesla.dtsi"
 #include "rtx-imx6q-pitx-b21-tesla-iomux.dtsi"
 
 / {
@@ -594,7 +594,7 @@
     DCE mode : CSI0_DAT10 is TX; CSI0_DAT11 is RX; EIM_D19 is CTS; EIM_D20 is RTS;
     */
     fsl,dte-mode;
-	fsl,uart-has-rtscts;
+/*	fsl,uart-has-rtscts; */
 	fsl,sp339e;
 	fsl,sp339e-dir    = <&gpio3 20 0> ;
 	fsl,sp339e-m0     = <&gpio3 23 0> ;

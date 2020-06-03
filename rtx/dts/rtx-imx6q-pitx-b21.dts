@@ -117,7 +117,7 @@
 	gpio_export {
 		compatible = "gpio-export";
 
-		/* can1_standby = <&gpio1 5 0>; 5 */
+		/* CAN1_STBY */
 		can1_standby {
 			gpio-export,name = "can1_standby";
 			gpio-export,output = <1>;
@@ -125,7 +125,7 @@
 			gpios = <&gpio1 5 GPIO_ACTIVE_HIGH>;
 		};
 
-		/* current_gpio1 = <&gpio5 2 0>; 130 */
+		/* CN7_2 GPIO1 */
 		current_gpio1 {
 			gpio-export,name = "current_gpio1";
 			gpio-export,output = <0>;
@@ -133,7 +133,7 @@
 			gpios = <&gpio5 2 1>;
 		};
 
-		/* current_gpio2 = <&gpio3 18 0>; 82 */
+		/* CN7_3 GPIO2 */
 		current_gpio2 {
 			gpio-export,name = "current_gpio2";
 			gpio-export,output = <1>;
@@ -141,50 +141,59 @@
 			gpios = <&gpio3 18 1>;
 		};
 
+		/* CN7_4 SPI1_CLK */
+		current_gpio3 {
+			gpio-export,name = "current_gpio3";
+			gpio-export,output = <1>;
+			gpio-export,direction_may_change ;
+			gpios = <&gpio4 21 1>;
+		};
+
+		/* CN7_5 SPI1_MOSI */
+		current_gpio4 {
+			gpio-export,name = "current_gpio4";
+			gpio-export,output = <1>;
+			gpio-export,direction_may_change ;
+			gpios = <&gpio4 22 1>;
+		};
+
+		/* CN7_6 SPI1_MISO */
+		current_gpio5 {
+			gpio-export,name = "current_gpio5";
+			gpio-export,output = <1>;
+			gpio-export,direction_may_change ;
+			gpios = <&gpio4 23 1>;
+		};
+
+		/* CN7_7 SPI1_SS0 */
+		current_gpio6 {
+			gpio-export,name = "current_gpio6";
+			gpio-export,output = <1>;
+			gpio-export,direction_may_change ;
+			gpios = <&gpio4 24 1>;
+		};
+		
+		/* CN20_1 CANH */
+		current_gpio7 {
+			gpio-export,name = "current_gpio7";
+			gpio-export,output = <0>;
+			gpio-export,direction_may_change ;
+			gpios = <&gpio1 7 1>;
+		};
+
+		/* CN20_2 CANL */
+		current_gpio8 {
+			gpio-export,name = "current_gpio8";
+			gpio-export,output = <1>;
+			gpio-export,direction_may_change ;
+			gpios = <&gpio1 8 1>;
+		};
+
 		/* mcu_int = <&gpio1 4 0>; 4 */
 		mcu_int {
 			gpio-export,name = "mcu_int";
 			gpios = <&gpio1 4 0>;
 		};
-
-		/* 3234_en = <&gpio3 22 1>; 86
-		3234_en {
-			gpio-export,name = "3234_en";
-			gpio-export,output = <1>;
-			gpio-export,direction_may_change ;
-			gpios = <&gpio3 22 1>;
-		}; */
-
-		/* UR1_M1 = <&gpio6 8 0>; 168
-		UR1_M1 {
-			gpio-export,name = "UR1_M1";
-			gpio-export,output = <0>;
-			gpio-export,direction_may_change ;
-			gpios = <&gpio6 8 0>;
-		}; */
-
-		/* UR1_M0 = <&gpio6 7 1>; 167
-		UR1_M0 {
-			gpio-export,name = "UR1_M0";
-			gpio-export,output = <1>;
-			gpio-export,direction_may_change ;
-			gpios = <&gpio6 7 1>;
-		}; */
-
-		/* UR1_TM = <&gpio6 16 0>; 176
-		UR1_TM {
-			gpio-export,name = "UR1_TM";
-			gpio-export,output = <0>;
-			gpio-export,direction_may_change ;
-			gpios = <&gpio6 16 0>;
-		};	 */
-
-		/* amp_standby = <&gpio4 10 0>; 106
-		amp_standby {
-			gpio-export,output = <1>;
-			gpio-export,direction_may_change ;
-			gpios = <&gpio4 10 1>;
-		}; */
 
 	};
 
@@ -317,31 +326,35 @@
 	soc-supply = <&reg_soc>;
 };
 
+/* chage to gpio
 &ecspi3 {
 	fsl,spi-num-chipselects = <1>;
 	cs-gpios = <&gpio4 24 0>;
 	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl_cspi3_pitx>;
 	status = "okay";
-
+*/
     /*flash: en25q32b@0 {
         compatible = "fsl,en25q32b";
         spi-max-frequency = <50000000>;
         reg = <0>;
 	};*/
 
+/*
 	flash@microchip {
 		compatible = "mchip,25lc01a0";
 		spi-max-frequency = <1000000>;
         size = <128>;
         pagesize = <16>;
         address-width = <8>;
+ */
         /*spi-cpha;
         spi-cpol;*/
-		reg = <0>;
+/*		reg = <0>;
 	};
 
 };
+*/
 
 &fec {
 	pinctrl-names = "default";
@@ -354,11 +367,13 @@
 	status = "okay";
 };
 
+/* chage to gpio
 &can1 {
 	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl_flexcan1_pitx>;
 	status = "okay";
 };
+*/
 
 &gpc {
 	fsl,ldo-bypass = <0>; /* use ldo-bypass, u-boot will check it and configure */
@@ -543,6 +558,62 @@
 
 &ldb {
 	status = "okay";
+
+	lvds-channel@0 {
+		fsl,data-mapping = "spwg";
+		fsl,data-width = <24>;
+		primary;
+		crtc = "ipu1-di0";
+		interface_pix_fmt = "RGB24";
+		status = "okay";
+
+		display-timings {
+			native-mode = <&timing0>;
+			timing0: hsd100pxn1 {
+				clock-frequency = <65000000>;
+				hactive = <1024>;
+				hfront-porch = <240>;
+				hback-porch = <0>;
+				hsync-len = <80>;
+				vactive = <768>;
+				vfront-porch = <28>;
+				vback-porch = <0>;
+				vsync-len = <7>;
+				mode-is-detailed ;
+				de-active = <1>;
+			};
+		};
+	};
+
+	lvds-channel@1 {
+		fsl,data-mapping = "spwg";
+		fsl,data-width = <24>;
+		primary;
+		crtc = "ipu1-di1";
+		interface_pix_fmt = "RGB24";
+		status = "okay";
+
+		display-timings {
+			native-mode = <&timing1>;
+			timing1: hsd100pxn2 {
+				clock-frequency = <65000000>;
+				hactive = <1024>;
+				hfront-porch = <240>;
+				hback-porch = <0>;
+				hsync-len = <80>;
+				vactive = <768>;
+				vfront-porch = <28>;
+				vback-porch = <0>;
+				vsync-len = <7>;
+				mode-is-detailed ;
+				de-active = <1>;
+			};
+		};
+	};
+};
+/*
+&ldb {
+	status = "okay";
 	
 	lvds-channel@0 {
 		fsl,data-mapping = "spwg";
@@ -596,7 +667,7 @@
 		};
 	};
 };
-
+*/
 
 &pcie {
 	pinctrl-names = "default";
@@ -623,9 +694,9 @@
     /* fsl,dte-mode;
     DTE mode : CSI0_DAT10 is RX; CSI0_DAT11 is TX; EIM_D19 is RTS; EIM_D20 is CTS;
     DCE mode : CSI0_DAT10 is TX; CSI0_DAT11 is RX; EIM_D19 is CTS; EIM_D20 is RTS;
+	fsl,uart-has-rtscts;
     */
     fsl,dte-mode;
-	fsl,uart-has-rtscts;
 	fsl,sp339e;
 	fsl,sp339e-dir    = <&gpio3 20 0> ;
 	fsl,sp339e-m0     = <&gpio3 23 0> ;
@@ -652,9 +723,9 @@
     /* fsl,dte-mode;
     DTE mode : CSI0_DAT14 is RX; CSI0_DAT15 is TX; KEY_ROW4 is RTS; KEY_COL4 is CTS;
     DCE mode : CSI0_DAT14 is TX; CSI0_DAT15 is RX; KEY_ROW4 is CTS; KEY_COL4 is RTS;
+	fsl,uart-has-rtscts;
     */
     fsl,dte-mode;
-	fsl,uart-has-rtscts;
 	fsl,sp339e;
 	fsl,sp339e-dir    = <&gpio6 4 0> ;
 	fsl,sp339e-m0     = <&gpio6 7 0> ;

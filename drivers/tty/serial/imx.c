@@ -413,7 +413,7 @@ static void imx_stop_tx(struct uart_port *port)
 	writel(temp & ~UCR1_TXMPTYEN, port->membase + UCR1);
 
 	/* in rs485 mode disable transmitter if shifter is empty */
-	if ( ( port->rs485.flags & SER_RS485_ENABLED || sport->have_sp339e || sport->have_azrs3080 ) &&
+	if ( ( port->rs485.flags & SER_RS485_ENABLED) && ( sport->have_sp339e || sport->have_azrs3080 ) &&
 	    readl(port->membase + USR2) & USR2_TXDC ) {
 		temp = readl(port->membase + UCR2);
 		if (port->rs485.flags & SER_RS485_RTS_AFTER_SEND)
@@ -424,7 +424,13 @@ static void imx_stop_tx(struct uart_port *port)
 
 		if ( sport->have_sp339e )
 		{
-			gpio_set_value( sport->sp339e_gpio_dir , 1 ) ;
+			if ( sport->sp339e_mode == 2 || sport->sp339e_mode == 3 )
+			{
+				if ( sport->sp339e_gpio_dir )
+				{
+					gpio_set_value( sport->sp339e_gpio_dir , 1 ) ;
+				}
+			}
 		}
 
 		if ( sport->have_azrs3080 )
@@ -644,7 +650,7 @@ static void imx_start_tx(struct uart_port *port)
 	struct imx_port *sport = (struct imx_port *)port;
 	unsigned long temp;
 
-	if (port->rs485.flags & SER_RS485_ENABLED || sport->have_sp339e || sport->have_azrs3080 ) {
+	if ((port->rs485.flags & SER_RS485_ENABLED) && (sport->have_sp339e || sport->have_azrs3080) ) {
 		temp = readl(port->membase + UCR2);
 		if (port->rs485.flags & SER_RS485_RTS_ON_SEND)
 			imx_port_rts_inactive(sport, &temp);
@@ -656,7 +662,13 @@ static void imx_start_tx(struct uart_port *port)
 
 		if ( sport->have_sp339e )
 		{
-			gpio_set_value( sport->sp339e_gpio_dir , 0 ) ;
+			if ( sport->sp339e_mode == 2 || sport->sp339e_mode == 3 )
+			{
+				if ( sport->sp339e_gpio_dir )
+				{
+					gpio_set_value( sport->sp339e_gpio_dir , 0 ) ;
+				}
+			}
 		}
 
 		if ( sport->have_azrs3080 )

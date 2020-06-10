@@ -11,7 +11,6 @@
 #include <linux/etherdevice.h>
 #include <linux/list.h>
 #include <linux/slab.h>
-
 #include "dsa_priv.h"
 
 #define DSA_HLEN	4
@@ -30,7 +29,7 @@ static struct sk_buff *edsa_xmit(struct sk_buff *skb, struct net_device *dev)
 	 */
 	if (skb->protocol == htons(ETH_P_8021Q)) {
 		if (skb_cow_head(skb, DSA_HLEN) < 0)
-			return NULL;
+			goto out_free;
 		skb_push(skb, DSA_HLEN);
 
 		memmove(skb->data, skb->data + DSA_HLEN, 2 * ETH_ALEN);
@@ -43,8 +42,8 @@ static struct sk_buff *edsa_xmit(struct sk_buff *skb, struct net_device *dev)
 		edsa_header[1] = ETH_P_EDSA & 0xff;
 		edsa_header[2] = 0x00;
 		edsa_header[3] = 0x00;
-		edsa_header[4] = 0x60 | p->dp->ds->index;
-		edsa_header[5] = p->dp->index << 3;
+		edsa_header[4] = 0x60 | p->parent->index;
+		edsa_header[5] = p->port << 3;
 
 		/*
 		 * Move CFI field from byte 6 to byte 5.
@@ -55,7 +54,7 @@ static struct sk_buff *edsa_xmit(struct sk_buff *skb, struct net_device *dev)
 		}
 	} else {
 		if (skb_cow_head(skb, EDSA_HLEN) < 0)
-			return NULL;
+			goto out_free;
 		skb_push(skb, EDSA_HLEN);
 
 		memmove(skb->data, skb->data + EDSA_HLEN, 2 * ETH_ALEN);
@@ -68,17 +67,21 @@ static struct sk_buff *edsa_xmit(struct sk_buff *skb, struct net_device *dev)
 		edsa_header[1] = ETH_P_EDSA & 0xff;
 		edsa_header[2] = 0x00;
 		edsa_header[3] = 0x00;
-		edsa_header[4] = 0x40 | p->dp->ds->index;
-		edsa_header[5] = p->dp->index << 3;
+		edsa_header[4] = 0x40 | p->parent->index;
+		edsa_header[5] = p->port << 3;
 		edsa_header[6] = 0x00;
 		edsa_header[7] = 0x00;
 	}
 
 	return skb;
+
+out_free:
+	kfree_skb(skb);
+	return NULL;
 }
 
-static struct sk_buff *edsa_rcv(struct sk_buff *skb, struct net_device *dev,
-				struct packet_type *pt)
+static int edsa_rcv(struct sk_buff *skb, struct net_device *dev,
+		    struct packet_type *pt, struct net_device *orig_dev)
 {
 	struct dsa_switch_tree *dst = dev->dsa_ptr;
 	struct dsa_switch *ds;
@@ -86,8 +89,15 @@ static struct sk_buff *edsa_rcv(struct sk_buff *skb, struct net_device *dev,
 	int source_device;
 	int source_port;
 
+	if (unlikely(dst == NULL))
+		goto out_drop;
+
+	skb = skb_unshare(skb, GFP_ATOMIC);
+	if (skb == NULL)
+		goto out;
+
 	if (unlikely(!pskb_may_pull(skb, EDSA_HLEN)))
-		return NULL;
+		goto out_drop;
 
 	/*
 	 * Skip the two null bytes after the ethertype.
@@ -98,7 +108,7 @@ static struct sk_buff *edsa_rcv(struct sk_buff *skb, struct net_device *dev,
 	 * Check that frame type is either TO_CPU or FORWARD.
 	 */
 	if ((edsa_header[0] & 0xc0) != 0x00 && (edsa_header[0] & 0xc0) != 0xc0)
-		return NULL;
+		goto out_drop;
 
 	/*
 	 * Determine source device and port.
@@ -111,17 +121,14 @@ static struct sk_buff *edsa_rcv(struct sk_buff *skb, struct net_device *dev,
 	 * port is a registered DSA port.
 	 */
 	if (source_device >= DSA_MAX_SWITCHES)
-		return NULL;
+		goto out_drop;
 
 	ds = dst->ds[source_device];
 	if (!ds)
-		return NULL;
+		goto out_drop;
 
-	if (source_port >= ds->num_ports || !ds->ports[source_port].netdev)
-		return NULL;
-
-	if (unlikely(ds->cpu_port_mask & BIT(source_port)))
-		return NULL;
+	if (source_port >= DSA_MAX_PORTS || !ds->ports[source_port].netdev)
+		goto out_drop;
 
 	/*
 	 * If the 'tagged' bit is set, convert the DSA tag to a 802.1q
@@ -176,8 +183,21 @@ static struct sk_buff *edsa_rcv(struct sk_buff *skb, struct net_device *dev,
 	}
 
 	skb->dev = ds->ports[source_port].netdev;
+	skb_push(skb, ETH_HLEN);
+	skb->pkt_type = PACKET_HOST;
+	skb->protocol = eth_type_trans(skb, skb->dev);
 
-	return skb;
+	skb->dev->stats.rx_packets++;
+	skb->dev->stats.rx_bytes += skb->len;
+
+	netif_receive_skb(skb);
+
+	return 0;
+
+out_drop:
+	kfree_skb(skb);
+out:
+	return 0;
 }
 
 const struct dsa_device_ops edsa_netdev_ops = {

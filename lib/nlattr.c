@@ -143,7 +143,6 @@ static int validate_nla(const struct nlattr *nla, int maxtype,
  * @len: length of attribute stream
  * @maxtype: maximum attribute type to be expected
  * @policy: validation policy
- * @extack: extended ACK report struct
  *
  * Validates all attributes in the specified attribute stream against the
  * specified policy. Attributes with a type exceeding maxtype will be
@@ -152,25 +151,23 @@ static int validate_nla(const struct nlattr *nla, int maxtype,
  * Returns 0 on success or a negative error code.
  */
 int nla_validate(const struct nlattr *head, int len, int maxtype,
-		 const struct nla_policy *policy,
-		 struct netlink_ext_ack *extack)
+		 const struct nla_policy *policy)
 {
 	const struct nlattr *nla;
-	int rem;
+	int rem, err;
 
 	nla_for_each_attr(nla, head, len, rem) {
-		int err = validate_nla(nla, maxtype, policy);
-
-		if (err < 0) {
-			if (extack)
-				extack->bad_attr = nla;
-			return err;
-		}
+		err = validate_nla(nla, maxtype, policy);
+		if (err < 0)
+			goto errout;
 	}
 
-	return 0;
+	err = 0;
+errout:
+	return err;
 }
 EXPORT_SYMBOL(nla_validate);
+
 
 /**
  * nla_policy_len - Determin the max. length of a policy

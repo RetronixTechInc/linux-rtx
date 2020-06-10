@@ -31,6 +31,12 @@ config RTC_DRV_EFM32_ADLINK
 	help
       If you say yes here you will get support for the
       RTC of EFM32 ADLINK series.c
+
+config RTC_DRV_EFM32_CSE
+	tristate "FEM32 for CSE"
+	help
+      If you say yes here you will get support for the
+      RTC of EFM32 CSE series.c
 endmenu
 
 endif

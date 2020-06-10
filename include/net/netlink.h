@@ -244,8 +244,7 @@ int nlmsg_notify(struct sock *sk, struct sk_buff *skb, u32 portid,
 		 unsigned int group, int report, gfp_t flags);
 
 int nla_validate(const struct nlattr *head, int len, int maxtype,
-		 const struct nla_policy *policy,
-		 struct netlink_ext_ack *extack);
+		 const struct nla_policy *policy);
 int nla_parse(struct nlattr **tb, int maxtype, const struct nlattr *head,
 	      int len, const struct nla_policy *policy,
 	      struct netlink_ext_ack *extack);
@@ -431,8 +430,7 @@ static inline int nlmsg_validate(const struct nlmsghdr *nlh,
 		return -EINVAL;
 
 	return nla_validate(nlmsg_attrdata(nlh, hdrlen),
-			    nlmsg_attrlen(nlh, hdrlen), maxtype, policy,
-			    extack);
+			    nlmsg_attrlen(nlh, hdrlen), maxtype, policy);
 }
 
 /**
@@ -1327,11 +1325,9 @@ static inline void nla_nest_cancel(struct sk_buff *skb, struct nlattr *start)
  * Returns 0 on success or a negative error code.
  */
 static inline int nla_validate_nested(const struct nlattr *start, int maxtype,
-				      const struct nla_policy *policy,
-				      struct netlink_ext_ack *extack)
+				      const struct nla_policy *policy)
 {
-	return nla_validate(nla_data(start), nla_len(start), maxtype, policy,
-			    extack);
+	return nla_validate(nla_data(start), nla_len(start), maxtype, policy);
 }
 
 /**

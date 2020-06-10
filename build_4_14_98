@@ -1,12 +1,16 @@
 #! /bin/bash
 
 set -e
+#### Cross compiler ####################################################
+CROSS_COMPILE_PATH=/opt/cross
 
 #### Target OS #########################################################
 TARGET_OS="Ubuntu-18.04hf"
 
 #### Target Board ######################################################
-TARGET_BOARD="IMX8MM_EVK"
+#TARGET_BOARD="IMX8MM_EVK"
+#TARGET_BOARD="IMX8MM_EVK_M4"
+TARGET_BOARD="IMX8MM_CSE"
 
 #### Default Define ####################################################
 KERNEL_DEFAULT_CONFIG=defconfig
@@ -23,7 +27,7 @@ case "${TARGET_OS}" in
 		# Ubuntu 18.04
 		echo "Build Kernel for Ubuntu 18.04 hf"
 		export ARCH=arm64
-		export CROSS_COMPILE=/opt/cross/gcc-linaro-7.4.1-2019.02-x86_64_aarch64-linux-gnu/bin/aarch64-linux-gnu-
+		export CROSS_COMPILE=${CROSS_COMPILE_PATH}/gcc-linaro-7.4.1-2019.02-x86_64_aarch64-linux-gnu/bin/aarch64-linux-gnu-
 		;;
 	*)
 		echo "Please set the target OS."
@@ -34,9 +38,18 @@ esac
 case "${TARGET_BOARD}" in
 	"IMX8MM_EVK" )
 		TARGET_SOC=imx8mm
-#		KERNEL_PROJECT_CONFIG=arch/arm64/configs/defconfig
-		KERNEL_LOADADDR=0x10008000
+		KERNEL_PROJECT_CONFIG=rtx/configs/rtx-imx8mm-evk_defconfig
 		KERNEL_DTB=fsl-imx8mm-evk
+		;;
+	"IMX8MM_EVK_M4" )
+		TARGET_SOC=imx8mm
+		KERNEL_PROJECT_CONFIG=rtx/configs/rtx-imx8mm-evk_defconfig
+		KERNEL_DTB=fsl-imx8mm-evk-m4
+		;;
+	"IMX8MM_CSE" )
+		TARGET_SOC=imx8mm
+		KERNEL_PROJECT_CONFIG=rtx/configs/rtx-imx8mm-cse_defconfig
+		KERNEL_DTB=rtx-imx8mm-cse
 		;;
 	*)
 		echo "Please set the target board."
@@ -84,17 +97,15 @@ function configure()
 					make ${KERNEL_DEFAULT_CONFIG}
 				fi
 			fi
+		else
+			echo "Use the currently configure file (.config)"
 		fi
 	fi
 }
 
 function build_kernel()
 {
-	if [ -z "${KERNEL_LOADADDR}" ] ; then
-		make -j8
-	else
-		make -j8 
-	fi
+	make -j8 
 	
 	if [ -f arch/arm64/boot/Image ] ; then
 		cp -f arch/arm64/boot/Image out/.
@@ -184,6 +195,18 @@ build_dir
 
 # 
 case "${1}" in
+	"info")
+		echo "ARCH		          = ${ARCH}"
+		echo "CROSS_COMPILE_PATH          = ${CROSS_COMPILE_PATH}"
+		echo "CROSS_COMPILE               = ${CROSS_COMPILE}"
+		echo "TARGET_OS                   = ${TARGET_OS}"
+		echo "TARGET_BOARD                = ${TARGET_BOARD}"
+		echo "TARGET_SOC                  = ${TARGET_SOC}"
+		echo "KERNEL_PROJECT_CONFIG       = ${KERNEL_PROJECT_CONFIG}"
+		echo "KERNEL_VERSION              = ${KERNEL_VERSION}"
+		echo "KERNEL_DEFAULT_CONFIG       = ${KERNEL_DEFAULT_CONFIG}"
+		echo "KERNEL_DTB                  = ${KERNEL_DTB}"
+		;;
 	"all")
 		rm -rf out
 		mkdir -p out
@@ -238,32 +261,6 @@ case "${1}" in
 		configure ${2}
 		build_dtb
 		;;
-	"modules")
-		configure ${2}
-		
-		if [ ! -f arch/arm64/boot/uImage ] ; then
-			build_kernel
-		fi
-		make modules -j8
-		build_gpu_viv_module
-		;;
-	"install")
-		if [ ! -d out ] ; then
-			mkdir -p out
-		fi
-		
-		configure ${2}
-		
-		if [ ! -f arch/arm64/boot/uImage ] ; then
-			build_kernel
-		fi
-		if [ ! -f modules.builtin ] ; then
-			make modules -j8
-		fi
-		make DEPMOD=/bin/true INSTALL_MOD_PATH=out modules_install
-		make INSTALL_HDR_PATH=out headers_install
-		cp -f arch/arm64/boot/uImage out/.
-		;;
 	"clean")
 		make clean
 		;;
@@ -271,26 +268,8 @@ case "${1}" in
 		make distclean
 		rm -rf out
 		;;
-	"rootfs")
-		if [ -z "${2}" ] ; then
-			echo "${0} ${1} [/dev/sd? or /dev/mmcblk?]"
-		else
-			sudo dd if=out/uImage of=${2} bs=512 seek=26624
-			#echo "dd if=out/uImage of=${2} bs=512 seek=26624"
-			if [ -d /media/rootfs/lib/modules ] ; then
-				sudo rm -rf /media/rootfs/lib/modules/*
-				sudo cp -avrf out/lib/modules/* /media/rootfs/lib/modules/.
-				sudo chown -R root:root /media/rootfs/lib/modules/*
-			fi
-			if [ -d /media/rootfs/usr/src/linux/include ] ; then
-				sudo rm -rf /media/rootfs/usr/src/linux/include/*
-				sudo cp -avrf out/include/* /media/rootfs/usr/src/linux/include/.
-				sudo chown -R root:root /media/rootfs/usr/src/linux/include/*
-			fi
-		fi
-		;;
 	*) 
-		echo "${0} [all/config/menuconfig/saveconfig/uImage/modules/install/clean/disclean/rootfs]"
+		echo "${0} [all/config/menuconfig/saveconfig/uImage/install/clean/distclean]"
 		exit 1
 		;;
 esac

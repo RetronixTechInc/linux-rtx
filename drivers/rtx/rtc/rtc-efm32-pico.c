@@ -679,7 +679,7 @@ static ssize_t startup_finish_store( struct device *dev , struct device_attribut
 		{
 			if ( efm32_wdog_set( dev , 0 ) == 0 )
 			{
-				printk(KERN_INFO "startup_finish: %d\n", count);
+				printk(KERN_INFO "startup_finish: %ld\n", count);
 				return count;
 			}
 		}

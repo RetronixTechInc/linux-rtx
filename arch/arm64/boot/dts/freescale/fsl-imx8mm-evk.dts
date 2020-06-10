@@ -37,6 +37,18 @@
 		};
 	};
 
+/*
+	wakeup_gpio {
+		compatible = "gpio-keys";
+		power {
+			label = "Power Button";
+			gpios = <&gpio3 22 GPIO_ACTIVE_HIGH>;
+			linux,code = <KEY_POWER>;
+			gpio-key,wakeup;
+		};
+	};
+*/
+
 	modem_reset: modem-reset {
 		compatible = "gpio-reset";
 		reset-gpios = <&gpio2 6 GPIO_ACTIVE_LOW>;
@@ -219,6 +231,7 @@
 		pinctrl_gpio_led: gpioledgrp {
 			fsl,pins = <
 				MX8MM_IOMUXC_NAND_READY_B_GPIO3_IO16	0x19
+				/* MX8MM_IOMUXC_SAI5_RXD1_GPIO3_IO22	0x19 */
 			>;
 		};
 
@@ -630,8 +643,8 @@
 			ldo1_reg: regulator@8 {
 				reg = <8>;
 				regulator-compatible = "ldo1";
-				regulator-min-microvolt = <3000000>;
-				regulator-max-microvolt = <3300000>;
+				regulator-min-microvolt = <1600000>;
+				regulator-max-microvolt = <1900000>;
 				regulator-boot-on;
 				regulator-always-on;
 			};
@@ -639,7 +652,7 @@
 			ldo2_reg: regulator@9 {
 				reg = <9>;
 				regulator-compatible = "ldo2";
-				regulator-min-microvolt = <900000>;
+				regulator-min-microvolt = <800000>;
 				regulator-max-microvolt = <900000>;
 				regulator-boot-on;
 				regulator-always-on;
@@ -1042,4 +1055,5 @@
 	assigned-clock-parents = <&clk IMX8MM_AUDIO_PLL1_OUT>;
 	assigned-clock-rates = <0>, <196608000>;
 	status = "okay";
+	/*status = "disabled";*/
 };

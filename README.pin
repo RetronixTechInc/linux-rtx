@@ -1,0 +1,224 @@
+CSE Project
+=======================================================================================
+imx8mm_pin	pin_name		pin_Type	Status		descriptions
+
+
+pca6416_10	MCU_BOOT_EN		gpio/Out	H/L		no use
+pca6416_12	MCU_UPDATE_PWR_ON	gpio/Out	H/L		no use
+	
+UART4_RXD	I2C_EXT_INT		gpio/In		interrupt	pca6416, current not use
+UART4_TXD	EX_POR_B		gpio/Out	H/L		ON -> High (uboot)//pinctrl_gpio_led, pca6416 reset
+
+OK!!!!!!!
+---------------------------------------------------------------------
+pca6416_0	Power_LED_G		gpio/Out	H/L		
+pca6416_1	Power_LED_R		gpio/Out	H/L		
+pca6416_2	LTE_LED_G		gpio/Out	H/L
+pca6416_3	LTE_LED_R		gpio/Out	H/L	
+pca6416_4	GPS_LED_G		gpio/Out	H/L	
+pca6416_5	GPS_LED_R		gpio/Out	H/L	
+pca6416_6	Data_LED_G		gpio/Out	H/L	
+pca6416_7	Data_LED_R		gpio/Out	H/L
+
+SD1_DATA4	DIP_S1			gpio/In		H/L		pin setting
+SD1_DATA5	DIP_S2			gpio/In		H/L		pin setting
+SD1_DATA6	DIP_S3			gpio/In		H/L		pin setting
+SD1_DATA7	DIP_S4			gpio/In		H/L		pin setting
+SPDIF_EXT_CLK	PWMO1			buzzer		pwm
+
+ECSPI2_SCLK	GUART4M_RXD		uart		rx		gnss
+ECSPI2_MOSI	GUART4M_TXD		uart		tx		gnss
+ECSPI2_MISO	GUART4M_RTS		X
+ECSPI2_SS0	GUART4M_CTS		X
+GPIO1_IO05	GNSS_RST		gpio/In		H/L		reset,gnss
+GPIO1_IO04	GNSS_EN			regulator			gnss		
+GPIO1_IO01	Gyro_EN			regulator			gyro
+
+SD1_DATA1	LSM_INT1		gpio/In		interrupt	gyro 
+
+---------------------------------------------------------------------
+ENET_MDC(x)	ENET_MDC		eth
+ENET_MDIO(x)	ENET_MDIO		eth
+UART2_TXD	SPI3_CS			spi		cs		eth
+UART2_RXD	SPI3_MISO		spi		mi		eth
+UART1_TXD	SPI3_MOSI		spi		mo		eth
+UART1_RXD	SPI3_SCLK		spi		clk		eth
+ENET_RD0	ENET_RD0		eth
+ENET_RD1	ENET_RD1		eth
+ENET_RD2	ENET_RD2		eth
+ENET_RD3	ENET_RD3		eth
+ENET_RXC	ENET_RXC		eth
+ENET_RX_CTL	ENET_RX_CTL		eth
+ENET_TD0	ENET_TD0		eth
+ENET_TD1	ENET_TD1		eth
+ENET_TD2	ENET_TD2		eth
+ENET_TD3	ENET_TD3		eth
+ENET_TXC	ENET_TXC		eth
+ENET_TX_CTL	ENET_TX_CTL		eth
+SD1_CLK		EGPIO_1			gpio/In		IE1588		eth, current not use,free??
+SD1_CMD		EGPIO_2			gpio/In		IE1588		eth, current not use,free??
+SAI3_RXFS	ECore_EN		regulator	H		gpio,eth
+SAI3_MCLK	EINTR_N			interrupt(5,2)
+SAI3_TXD	ERST_N			reset				eth, don't care, free??
+
+OK!!!!!!!!
+---------------------------------------------------------------------
+SD2_CMD		SD2_CMD			sdcard		command
+SD2_CLK		SD2_CLK			sdcard		clock
+SD2_DATA0	SD2_DATA0		sdcard		data
+SD2_DATA1	SD2_DATA1		sdcard		data
+SD2_DATA2	SD2_DATA2		sdcard		data
+SD2_DATA3	SD2_DATA3		sdcard		data
+SD2_WP		SD2_WP			??????				it's not need ??????free??
+SD2_nRST	SD2_nRST		sdcard		control
+SD2_nCD		SD2_nCD/SD2_DET		sdcard		control
+
+NAND_WP_B	SD3_CMD			emmc
+NAND_WE_B	SD3_CLK			emmc
+NAND_DATA04	SD3_DATA0		emmc
+NAND_DATA05	SD3_DATA1		emmc
+NAND_DATA06	SD3_DATA2		emmc
+NAND_DATA07	SD3_DATA3		emmc
+NAND_RE_B	SD3_DATA4		emmc
+NAND_CE2_B	SD3_DATA5		emmc
+NAND_CE3_B	SD3_DATA6		emmc
+NAND_CLE	SD3_DATA7		emmc
+NAND_READY_B	SD3_RESETn		emmc
+NAND_CE1_B	SD3_STROBE		emmc
+
+NAND_DATA00	QSPIA_DATA0		flash
+NAND_DATA01	QSPIA_DATA1		flash
+NAND_DATA02	QSPIA_DATA2		flash
+NAND_DATA03	QSPIA_DATA3		flash
+NAND_ALE	QSPIA_SCLK		flash
+NAND_CE0_B	QSPIA_nSS0		flash
+
+OK!!!!!!!!!!!
+---------------------------------------------------------------------
+MIPI_DSI_CLK_N	DSI_CKN			mipi
+MIPI_DSI_CLK_P	DSI_CKP			mipi
+MIPI_DSI_D0_N	DSI_DN0			mipi
+MIPI_DSI_D0_P	DSI_DP0			mipi
+MIPI_DSI_D1_N	DSI_DN1			mipi
+MIPI_DSI_D1_P	DSI_DP1			mipi
+MIPI_DSI_D2_N	DSI_DN2			mipi
+MIPI_DSI_D2_P	DSI_DP2			mipi
+MIPI_DSI_D3_N	DSI_DN3			mipi
+MIPI_DSI_D3_P	DSI_DP3			mipi
+
+SAI5_MCLK	M2H_I2S_MCLK		mipi		i2s
+SAI5_RXD3	M2H_I2S_D3_SPDIF	mipi		i2s
+SAI5_RXD2	M2H_I2S_D2		mipi		i2s
+SAI5_RXD1	M2H_I2S_D1		mipi		i2s
+SAI5_RXD0	M2H_I2S_D0		mipi		i2s
+SAI5_RXFS	M2H_I2S_WS		mipi		i2s
+SAI5_RXC	M2H_I2S_SCLK		mipi		i2s
+
+SAI2_MCLK	M2HPWR_EN		regulator	1.8V		mipi pwren
+SAI2_TXD0	M2H_IRQ			interrupt(4,26)
+SAI2_TXC	M2H_RSTN		reset
+
+OK!!!!!!!!!
+---------------------------------------------------------------------
+SAI2_RXC	UART1_RXD		uart
+SAI2_RXFS	UART1_TXD		uart
+SAI2_TXFS	UART1_RTS		uart
+SAI2_RXD0	UART1_CTS		uart
+SAI1_RXD2	U1_MODE0		gpio/Out	H/L		uart	
+SAI1_RXD3	U1_MODE1		gpio/Out	H/L		uart	
+SAI1_TXFS	U1_TM			gpio/Out	H/L		uart	
+SAI1_MCLK	U1_3234_EN		gpio/Out	H/L		uart
+
+SAI3_TXFS	UART2_RXD		uart_debug
+SAI3_TXC	UART2_TXD		uart_debug
+SAI3_RXC	UART2_RTS		uart
+SAI3_RXD	UART2_CTS		uart
+
+ECSPI1_SCLK	UART3_RXD		uart
+ECSPI1_MOSI	UART3_TXD		uart
+ECSPI1_MISO	UART3_RTS		uart
+ECSPI1_SS0	UART3_CTS		uart
+SAI1_RXD0	U3_MODE0		gpio/Out	H/L		uart
+SAI1_RXD1	U3_MODE1		gpio/Out	H/L		uart
+SAI1_RXC	U3_TM			gpio/Out	H/L		uart
+SAI1_RXFS	U3_3234_EN		gpio/Out	H/L		uart
+
+X		UART4_RXD		uart
+X		UART4_TXD		uart
+X		UART4_RTS		uart
+X		UART4_CTS		uart
+X		U4_MODE0		ugpio/Out	H/L		uart
+X		U4_MODE1		gpio/Out	H/L		uart
+X		U4_TM			gpio/Out	H/L		uart
+X		U4_3234_EN		gpio/Out	H/L		uart
+
+---------------------------------------------------------------------
+PCIE_TXN_N	PCIE_TXN		pcie		tx
+PCIE_TXN_P	PCIE_TXP		pcie		tx
+PCIE_RXN_N	PCIE_RXN		pcie		rx
+PCIE_RXN_P	PCIE_RXP		pcie		rx
+PCIE_CLK_N	PCIE_CLKN		pcie		clk
+PCIE_CLK_P	PCIE_CLKP		pcie		clk
+SAI1_TXC	PCIE_PWR_EN		gpio/Out	H/L		ON -> High(uboot)	//pinctrl_gpio_led, pcie pwren
+SAI1_TXD1	MINI_M.2_SEL		gpio/Out	H/L		X(for future)?
+SAI1_TXD0	PCIE_nCLKREQ		gpio/Out	H/L		conflict XXXXX
+SAI1_TXD7	PCIe_CLKREQ_B		gpio/Out	H/L		conflict XXXXX
+SAI1_TXD4	PCIe_nWAKE		gpio/Out	H/L		pcie, wake
+SAI1_TXD5	PCIe_nRST		gpio/Out	H/L		pcie, reseet
+SAI1_TXD6	PCIe_DIS		gpio/Out	H/L		pcie, disable
+???		SUSCLK_LEDWAN		pcie				?????
+
+OK!!!!!!!
+---------------------------------------------------------------------
+pca6416_11	1WSLP			led_on
+---		1Wire IO		temperature	input signal
+GPIO1_IO06	SED1			sensor		input signal	好像不需要設定
+GPIO1_IO07	SED2			sensor		input signal	好像不需要設定
+GPIO1_IO08	SED3			sensor		input signal	好像不需要設定
+GPIO1_IO09	SED4			sensor		input signal	好像不需要設定
+GPIO1_IO11	S_PULSE			speed pulse	gpio_count
+
+sp339e		CM1_TXD			uart
+sp339e		CM1_RXD			uart
+
+OK!!!!!!!!
+---------------------------------------------------------------------
+USB1_VBUS	USB1_VBUS		usb
+USB1_DN		USB1_OTG_DN		usb
+USB1_DP		USB1_OTG_DP		usb
+USB1_ID		USB1_OTG_ID		usb
+GPIO1_IO13	USB1_OTG_OC		oc				usb
+GPIO1_IO12	USB1_OTG_PWR		regulator(1,12) 		usb
+
+USB2_VBUS	USB2_VBUS		usb
+USB2_DN		USB2_DN			usb
+USB2_DP		USB2_DP			usb
+GPIO1_IO15	USB2_HUB_OC		oc				usb
+GPIO1_IO14	USB2_HUB_PWR		regulator(1,X)			usb
+
+SD1_DATA2	UHUB_RST		gpio/Out	reset		usb
+pca6416_8	USBP1_ONOFF		regulator			usb
+pca6416_9	USBP2_ONOFF		regulator			usb
+SD1_STROBE	USBP6_ONOFF		regulator			usb
+SD1_RESET_B	USBP7_ONOFF		regulator			usb
+
+OK!!!!!!!!!!
+---------------------------------------------------------------------
+
+SPDIF_TX	IGN_ON			gpio/In		ign			
+SAI1_TXD2	CPU_RDY_LED		led		output		ON -> High (default)	//pinctrl_gpio_led
+SAI1_TXD3	LED_WWAN		gpio/Out	H/L		pcie
+
+UART3_TXD	C_Mode			gpio/Out	H/L		X(for future), battery
+UART3_RXD	C_EN			gpio/Out	H/L		X(for future), battery
+SD1_DATA0	EXT_5V_detect		gpio/Out	H/L		can't implement, voltage detect
+SD1_DATA3(X)	EXT_PWREN		gpio/Out	H/L		X(for future), 3.3V pwren 
+GPIO1_IO10	MCU_RST			gpio/Out	H/L		X(for future)
+
+I2C4_SCL	(X)	free ?
+I2C4_SDA	(X)	free ?
+
+SPDIF_RX	PWMO2			exp cn		gpio04		X(for future)
+pca6416_13	GPIO_O01		exp cn		gpio01		X(for future)	
+pca6416_14	GPIO_O02		exp cn		gpio02		X(for future)
+pca6416_15	GPIO_O03		exp cn		gpio03		X(for future)

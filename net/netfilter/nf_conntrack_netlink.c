@@ -934,7 +934,7 @@ static int ctnetlink_parse_tuple_ip(struct nlattr *attr,
 
 	if (likely(l3proto->nlattr_to_tuple)) {
 		ret = nla_validate_nested(attr, CTA_IP_MAX,
-					  l3proto->nla_policy, NULL);
+					  l3proto->nla_policy);
 		if (ret == 0)
 			ret = l3proto->nlattr_to_tuple(tb, tuple);
 	}
@@ -969,7 +969,7 @@ static int ctnetlink_parse_tuple_proto(struct nlattr *attr,
 
 	if (likely(l4proto->nlattr_to_tuple)) {
 		ret = nla_validate_nested(attr, CTA_PROTO_MAX,
-					  l4proto->nla_policy, NULL);
+					  l4proto->nla_policy);
 		if (ret == 0)
 			ret = l4proto->nlattr_to_tuple(tb, tuple);
 	}

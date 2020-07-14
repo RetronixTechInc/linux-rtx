@@ -181,7 +181,8 @@ static void loopback_timer_start(struct loopback_pcm *dpcm)
 	}
 	tick = dpcm->period_size_frac - dpcm->irq_pos;
 	tick = (tick + dpcm->pcm_bps - 1) / dpcm->pcm_bps;
-	mod_timer(&dpcm->timer, jiffies + tick);
+	dpcm->timer.expires = jiffies + tick;
+	add_timer(&dpcm->timer);
 }
 
 /* call in cable->lock */
@@ -1141,8 +1142,8 @@ static int loopback_probe(struct platform_device *devptr)
 	int dev = devptr->id;
 	int err;
 
-	err = snd_card_new(&devptr->dev, index[dev], id[dev], THIS_MODULE,
-			   sizeof(struct loopback), &card);
+	err = snd_card_create(index[dev], id[dev], THIS_MODULE,
+			      sizeof(struct loopback), &card);
 	if (err < 0)
 		return err;
 	loopback = card->private_data;
@@ -1219,6 +1220,7 @@ static struct platform_driver loopback_driver = {
 	.remove		= loopback_remove,
 	.driver		= {
 		.name	= SND_LOOPBACK_DRIVER,
+		.owner	= THIS_MODULE,
 		.pm	= LOOPBACK_PM_OPS,
 	},
 };

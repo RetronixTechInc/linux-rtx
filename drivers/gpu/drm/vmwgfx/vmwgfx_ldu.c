@@ -26,7 +26,6 @@
  **************************************************************************/
 
 #include "vmwgfx_kms.h"
-#include <drm/drm_plane_helper.h>
 
 
 #define vmw_crtc_to_ldu(x) \
@@ -94,7 +93,7 @@ static int vmw_ldu_commit_list(struct vmw_private *dev_priv)
 
 		if (crtc == NULL)
 			return 0;
-		fb = entry->base.crtc.primary->fb;
+		fb = entry->base.crtc.fb;
 
 		return vmw_kms_write_svga(dev_priv, w, h, fb->pitches[0],
 					  fb->bits_per_pixel, fb->depth);
@@ -102,7 +101,7 @@ static int vmw_ldu_commit_list(struct vmw_private *dev_priv)
 
 	if (!list_empty(&lds->active)) {
 		entry = list_entry(lds->active.next, typeof(*entry), active);
-		fb = entry->base.crtc.primary->fb;
+		fb = entry->base.crtc.fb;
 
 		vmw_kms_write_svga(dev_priv, fb->width, fb->height, fb->pitches[0],
 				   fb->bits_per_pixel, fb->depth);
@@ -260,7 +259,7 @@ static int vmw_ldu_crtc_set_config(struct drm_mode_set *set)
 
 		connector->encoder = NULL;
 		encoder->crtc = NULL;
-		crtc->primary->fb = NULL;
+		crtc->fb = NULL;
 		crtc->enabled = false;
 
 		vmw_ldu_del_active(dev_priv, ldu);
@@ -281,7 +280,7 @@ static int vmw_ldu_crtc_set_config(struct drm_mode_set *set)
 
 	vmw_fb_off(dev_priv);
 
-	crtc->primary->fb = fb;
+	crtc->fb = fb;
 	encoder->crtc = crtc;
 	connector->encoder = encoder;
 	crtc->x = set->x;
@@ -372,7 +371,7 @@ static int vmw_ldu_init(struct vmw_private *dev_priv, unsigned unit)
 	encoder->possible_crtcs = (1 << unit);
 	encoder->possible_clones = 0;
 
-	(void) drm_connector_register(connector);
+	(void) drm_sysfs_connector_add(connector);
 
 	drm_crtc_init(dev, crtc, &vmw_legacy_crtc_funcs);
 

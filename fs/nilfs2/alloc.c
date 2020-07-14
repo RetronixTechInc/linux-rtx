@@ -405,14 +405,13 @@ nilfs_palloc_rest_groups_in_desc_block(const struct inode *inode,
 static int nilfs_palloc_count_desc_blocks(struct inode *inode,
 					    unsigned long *desc_blocks)
 {
-	__u64 blknum;
+	unsigned long blknum;
 	int ret;
 
 	ret = nilfs_bmap_last_key(NILFS_I(inode)->i_bmap, &blknum);
 	if (likely(!ret))
 		*desc_blocks = DIV_ROUND_UP(
-			(unsigned long)blknum,
-			NILFS_MDT(inode)->mi_blocks_per_desc_block);
+			blknum, NILFS_MDT(inode)->mi_blocks_per_desc_block);
 	return ret;
 }
 

@@ -37,7 +37,6 @@
 #include <linux/of_gpio.h>
 #include <linux/of_device.h>
 #include <linux/gpio.h>
-#include <linux/slab.h>
 
 static int system_in_suspend;
 

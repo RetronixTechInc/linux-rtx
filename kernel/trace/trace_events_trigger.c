@@ -373,7 +373,7 @@ event_trigger_print(const char *name, struct seq_file *m,
 {
 	long count = (long)data;
 
-	seq_puts(m, name);
+	seq_printf(m, "%s", name);
 
 	if (count == -1)
 		seq_puts(m, ":unlimited");
@@ -383,7 +383,7 @@ event_trigger_print(const char *name, struct seq_file *m,
 	if (filter_str)
 		seq_printf(m, " if %s\n", filter_str);
 	else
-		seq_putc(m, '\n');
+		seq_puts(m, "\n");
 
 	return 0;
 }
@@ -1095,7 +1095,7 @@ event_enable_trigger_print(struct seq_file *m, struct event_trigger_ops *ops,
 	seq_printf(m, "%s:%s:%s",
 		   enable_data->enable ? ENABLE_EVENT_STR : DISABLE_EVENT_STR,
 		   enable_data->file->event_call->class->system,
-		   ftrace_event_name(enable_data->file->event_call));
+		   enable_data->file->event_call->name);
 
 	if (data->count == -1)
 		seq_puts(m, ":unlimited");
@@ -1105,7 +1105,7 @@ event_enable_trigger_print(struct seq_file *m, struct event_trigger_ops *ops,
 	if (data->filter_str)
 		seq_printf(m, " if %s\n", data->filter_str);
 	else
-		seq_putc(m, '\n');
+		seq_puts(m, "\n");
 
 	return 0;
 }

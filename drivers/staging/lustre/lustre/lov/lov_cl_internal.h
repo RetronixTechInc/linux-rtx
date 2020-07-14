@@ -46,10 +46,10 @@
 #ifndef LOV_CL_INTERNAL_H
 #define LOV_CL_INTERNAL_H
 
-#include "../../include/linux/libcfs/libcfs.h"
+# include <linux/libcfs/libcfs.h>
 
-#include "../include/obd.h"
-#include "../include/cl_object.h"
+#include <obd.h>
+#include <cl_object.h>
 #include "lov_internal.h"
 
 /** \defgroup lov lov
@@ -515,12 +515,12 @@ struct lov_io {
 	 * starting position within a file, for the current io loop iteration
 	 * (stripe), used by ci_io_loop().
 	 */
-	u64	    lis_pos;
+	obd_off	    lis_pos;
 	/**
 	 * end position with in a file, for the current stripe io. This is
 	 * exclusive (i.e., next offset after last byte affected by io).
 	 */
-	u64	    lis_endpos;
+	obd_off	    lis_endpos;
 
 	int		lis_mem_frozen;
 	int		lis_stripe_count;

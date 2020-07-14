@@ -1432,7 +1432,8 @@ out:
 	return err;
 }
 
-static int ax25_sendmsg(struct socket *sock, struct msghdr *msg, size_t len)
+static int ax25_sendmsg(struct kiocb *iocb, struct socket *sock,
+			struct msghdr *msg, size_t len)
 {
 	DECLARE_SOCKADDR(struct sockaddr_ax25 *, usax, msg->msg_name);
 	struct sock *sk = sock->sk;
@@ -1548,7 +1549,7 @@ static int ax25_sendmsg(struct socket *sock, struct msghdr *msg, size_t len)
 	skb_reserve(skb, size - len);
 
 	/* User data follows immediately after the AX.25 data */
-	if (memcpy_from_msg(skb_put(skb, len), msg, len)) {
+	if (memcpy_fromiovec(skb_put(skb, len), msg->msg_iov, len)) {
 		err = -EFAULT;
 		kfree_skb(skb);
 		goto out;
@@ -1598,8 +1599,8 @@ out:
 	return err;
 }
 
-static int ax25_recvmsg(struct socket *sock, struct msghdr *msg, size_t size,
-			int flags)
+static int ax25_recvmsg(struct kiocb *iocb, struct socket *sock,
+	struct msghdr *msg, size_t size, int flags)
 {
 	struct sock *sk = sock->sk;
 	struct sk_buff *skb;
@@ -1633,7 +1634,7 @@ static int ax25_recvmsg(struct socket *sock, struct msghdr *msg, size_t size,
 		msg->msg_flags |= MSG_TRUNC;
 	}
 
-	skb_copy_datagram_msg(skb, 0, msg, copied);
+	skb_copy_datagram_iovec(skb, 0, msg->msg_iov, copied);
 
 	if (msg->msg_name) {
 		ax25_digi digi;

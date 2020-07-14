@@ -347,6 +347,9 @@ void sptlrpc_conf_log_stop(const char *logname);
 void sptlrpc_conf_log_update_begin(const char *logname);
 void sptlrpc_conf_log_update_end(const char *logname);
 void sptlrpc_conf_client_adapt(struct obd_device *obd);
+int  sptlrpc_conf_target_get_rules(struct obd_device *obd,
+				   struct sptlrpc_rule_set *rset,
+				   int initial);
 void sptlrpc_target_choose_flavor(struct sptlrpc_rule_set *rset,
 				  enum lustre_sec_part from,
 				  lnet_nid_t nid,
@@ -384,7 +387,7 @@ struct ptlrpc_ctx_ops {
 	/**
 	 * Force the \a ctx to die.
 	 */
-	void    (*force_die)   (struct ptlrpc_cli_ctx *ctx,
+	void    (*die)	 (struct ptlrpc_cli_ctx *ctx,
 				int grace);
 	int     (*display)     (struct ptlrpc_cli_ctx *ctx,
 				char *buf, int bufsize);
@@ -507,7 +510,7 @@ struct ptlrpc_cli_ctx {
 	atomic_t	    cc_refcount;
 	struct ptlrpc_sec      *cc_sec;
 	struct ptlrpc_ctx_ops  *cc_ops;
-	unsigned long	      cc_expire;     /* in seconds */
+	cfs_time_t	      cc_expire;     /* in seconds */
 	unsigned int	    cc_early_expire:1;
 	unsigned long	   cc_flags;
 	struct vfs_cred	 cc_vcred;
@@ -569,7 +572,7 @@ struct ptlrpc_sec_cops {
 	/**
 	 * Called then the reference of \a ctx dropped to 0. The policy module
 	 * is supposed to destroy this context or whatever else according to
-	 * its cache maintenance mechanism.
+	 * its cache maintainance mechamism.
 	 *
 	 * \param sync if zero, we shouldn't wait for the context being
 	 * destroyed completely.
@@ -832,8 +835,8 @@ struct ptlrpc_sec {
 	 * garbage collection
 	 */
 	struct list_head		      ps_gc_list;
-	unsigned long		      ps_gc_interval; /* in seconds */
-	unsigned long		      ps_gc_next;     /* in seconds */
+	cfs_time_t		      ps_gc_interval; /* in seconds */
+	cfs_time_t		      ps_gc_next;     /* in seconds */
 };
 
 static inline int sec_is_reverse(struct ptlrpc_sec *sec)
@@ -882,7 +885,7 @@ enum sptlrpc_bulk_hash_alg {
 	BULK_HASH_ALG_MAX
 };
 
-const char *sptlrpc_get_hash_name(__u8 hash_alg);
+const char * sptlrpc_get_hash_name(__u8 hash_alg);
 __u8 sptlrpc_get_hash_alg(const char *algname);
 
 enum {
@@ -999,7 +1002,7 @@ struct ptlrpc_sec *sptlrpc_sec_get(struct ptlrpc_sec *sec);
 void sptlrpc_sec_put(struct ptlrpc_sec *sec);
 
 /*
- * internal apis which only used by policy implementation
+ * internal apis which only used by policy impelentation
  */
 int  sptlrpc_get_next_secid(void);
 void sptlrpc_sec_destroy(struct ptlrpc_sec *sec);
@@ -1057,11 +1060,11 @@ void sptlrpc_gc_del_sec(struct ptlrpc_sec *sec);
 void sptlrpc_gc_add_ctx(struct ptlrpc_cli_ctx *ctx);
 
 /* misc */
-const char *sec2target_str(struct ptlrpc_sec *sec);
+const char * sec2target_str(struct ptlrpc_sec *sec);
 /*
  * lprocfs
  */
-#if defined (CONFIG_PROC_FS)
+#ifdef LPROCFS
 struct proc_dir_entry;
 extern struct proc_dir_entry *sptlrpc_proc_root;
 int sptlrpc_lprocfs_cliobd_attach(struct obd_device *dev);

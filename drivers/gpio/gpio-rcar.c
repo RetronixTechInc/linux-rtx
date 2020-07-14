@@ -1,7 +1,6 @@
 /*
  * Renesas R-Car GPIO Support
  *
- *  Copyright (C) 2014 Renesas Electronics Corporation
  *  Copyright (C) 2013 Magnus Damm
  *
  * This program is free software; you can redistribute it and/or modify
@@ -14,7 +13,6 @@
  * GNU General Public License for more details.
  */
 
-#include <linux/clk.h>
 #include <linux/err.h>
 #include <linux/gpio.h>
 #include <linux/init.h>
@@ -22,12 +20,12 @@
 #include <linux/io.h>
 #include <linux/ioport.h>
 #include <linux/irq.h>
+#include <linux/irqdomain.h>
 #include <linux/module.h>
 #include <linux/of.h>
 #include <linux/pinctrl/consumer.h>
 #include <linux/platform_data/gpio-rcar.h>
 #include <linux/platform_device.h>
-#include <linux/pm_runtime.h>
 #include <linux/spinlock.h>
 #include <linux/slab.h>
 
@@ -38,22 +36,21 @@ struct gpio_rcar_priv {
 	struct platform_device *pdev;
 	struct gpio_chip gpio_chip;
 	struct irq_chip irq_chip;
-	unsigned int irq_parent;
-	struct clk *clk;
+	struct irq_domain *irq_domain;
 };
 
-#define IOINTSEL 0x00	/* General IO/Interrupt Switching Register */
-#define INOUTSEL 0x04	/* General Input/Output Switching Register */
-#define OUTDT 0x08	/* General Output Register */
-#define INDT 0x0c	/* General Input Register */
-#define INTDT 0x10	/* Interrupt Display Register */
-#define INTCLR 0x14	/* Interrupt Clear Register */
-#define INTMSK 0x18	/* Interrupt Mask Register */
-#define MSKCLR 0x1c	/* Interrupt Mask Clear Register */
-#define POSNEG 0x20	/* Positive/Negative Logic Select Register */
-#define EDGLEVEL 0x24	/* Edge/level Select Register */
-#define FILONOFF 0x28	/* Chattering Prevention On/Off Register */
-#define BOTHEDGE 0x4c	/* One Edge/Both Edge Select Register */
+#define IOINTSEL 0x00
+#define INOUTSEL 0x04
+#define OUTDT 0x08
+#define INDT 0x0c
+#define INTDT 0x10
+#define INTCLR 0x14
+#define INTMSK 0x18
+#define MSKCLR 0x1c
+#define POSNEG 0x20
+#define EDGLEVEL 0x24
+#define FILONOFF 0x28
+#define BOTHEDGE 0x4c
 
 #define RCAR_MAX_GPIO_PER_BANK		32
 
@@ -83,18 +80,14 @@ static void gpio_rcar_modify_bit(struct gpio_rcar_priv *p, int offs,
 
 static void gpio_rcar_irq_disable(struct irq_data *d)
 {
-	struct gpio_chip *gc = irq_data_get_irq_chip_data(d);
-	struct gpio_rcar_priv *p = container_of(gc, struct gpio_rcar_priv,
-						gpio_chip);
+	struct gpio_rcar_priv *p = irq_data_get_irq_chip_data(d);
 
 	gpio_rcar_write(p, INTMSK, ~BIT(irqd_to_hwirq(d)));
 }
 
 static void gpio_rcar_irq_enable(struct irq_data *d)
 {
-	struct gpio_chip *gc = irq_data_get_irq_chip_data(d);
-	struct gpio_rcar_priv *p = container_of(gc, struct gpio_rcar_priv,
-						gpio_chip);
+	struct gpio_rcar_priv *p = irq_data_get_irq_chip_data(d);
 
 	gpio_rcar_write(p, MSKCLR, BIT(irqd_to_hwirq(d)));
 }
@@ -136,9 +129,7 @@ static void gpio_rcar_config_interrupt_input_mode(struct gpio_rcar_priv *p,
 
 static int gpio_rcar_irq_set_type(struct irq_data *d, unsigned int type)
 {
-	struct gpio_chip *gc = irq_data_get_irq_chip_data(d);
-	struct gpio_rcar_priv *p = container_of(gc, struct gpio_rcar_priv,
-						gpio_chip);
+	struct gpio_rcar_priv *p = irq_data_get_irq_chip_data(d);
 	unsigned int hwirq = irqd_to_hwirq(d);
 
 	dev_dbg(&p->pdev->dev, "sense irq = %d, type = %d\n", hwirq, type);
@@ -172,34 +163,6 @@ static int gpio_rcar_irq_set_type(struct irq_data *d, unsigned int type)
 	return 0;
 }
 
-static int gpio_rcar_irq_set_wake(struct irq_data *d, unsigned int on)
-{
-	struct gpio_chip *gc = irq_data_get_irq_chip_data(d);
-	struct gpio_rcar_priv *p = container_of(gc, struct gpio_rcar_priv,
-						gpio_chip);
-	int error;
-
-	if (p->irq_parent) {
-		error = irq_set_irq_wake(p->irq_parent, on);
-		if (error) {
-			dev_dbg(&p->pdev->dev,
-				"irq %u doesn't support irq_set_wake\n",
-				p->irq_parent);
-			p->irq_parent = 0;
-		}
-	}
-
-	if (!p->clk)
-		return 0;
-
-	if (on)
-		clk_enable(p->clk);
-	else
-		clk_disable(p->clk);
-
-	return 0;
-}
-
 static irqreturn_t gpio_rcar_irq_handler(int irq, void *dev_id)
 {
 	struct gpio_rcar_priv *p = dev_id;
@@ -210,8 +173,7 @@ static irqreturn_t gpio_rcar_irq_handler(int irq, void *dev_id)
 			  gpio_rcar_read(p, INTMSK))) {
 		offset = __ffs(pending);
 		gpio_rcar_write(p, INTCLR, BIT(offset));
-		generic_handle_irq(irq_find_mapping(p->gpio_chip.irqdomain,
-						    offset));
+		generic_handle_irq(irq_find_mapping(p->irq_domain, offset));
 		irqs_handled++;
 	}
 
@@ -277,9 +239,9 @@ static int gpio_rcar_get(struct gpio_chip *chip, unsigned offset)
 	/* testing on r8a7790 shows that INDT does not show correct pin state
 	 * when configured as output, so use OUTDT in case of output pins */
 	if (gpio_rcar_read(gpio_to_priv(chip), INOUTSEL) & bit)
-		return !!(gpio_rcar_read(gpio_to_priv(chip), OUTDT) & bit);
+		return (int)(gpio_rcar_read(gpio_to_priv(chip), OUTDT) & bit);
 	else
-		return !!(gpio_rcar_read(gpio_to_priv(chip), INDT) & bit);
+		return (int)(gpio_rcar_read(gpio_to_priv(chip), INDT) & bit);
 }
 
 static void gpio_rcar_set(struct gpio_chip *chip, unsigned offset, int value)
@@ -301,34 +263,48 @@ static int gpio_rcar_direction_output(struct gpio_chip *chip, unsigned offset,
 	return 0;
 }
 
+static int gpio_rcar_to_irq(struct gpio_chip *chip, unsigned offset)
+{
+	return irq_create_mapping(gpio_to_priv(chip)->irq_domain, offset);
+}
+
+static int gpio_rcar_irq_domain_map(struct irq_domain *h, unsigned int irq,
+				 irq_hw_number_t hwirq)
+{
+	struct gpio_rcar_priv *p = h->host_data;
+
+	dev_dbg(&p->pdev->dev, "map hw irq = %d, irq = %d\n", (int)hwirq, irq);
+
+	irq_set_chip_data(irq, h->host_data);
+	irq_set_chip_and_handler(irq, &p->irq_chip, handle_level_irq);
+	set_irq_flags(irq, IRQF_VALID); /* kill me now */
+	return 0;
+}
+
+static struct irq_domain_ops gpio_rcar_irq_domain_ops = {
+	.map	= gpio_rcar_irq_domain_map,
+};
+
 struct gpio_rcar_info {
 	bool has_both_edge_trigger;
-};
-
-static const struct gpio_rcar_info gpio_rcar_info_gen1 = {
-	.has_both_edge_trigger = false,
-};
-
-static const struct gpio_rcar_info gpio_rcar_info_gen2 = {
-	.has_both_edge_trigger = true,
 };
 
 static const struct of_device_id gpio_rcar_of_table[] = {
 	{
 		.compatible = "renesas,gpio-r8a7790",
-		.data = &gpio_rcar_info_gen2,
+		.data = (void *)&(const struct gpio_rcar_info) {
+			.has_both_edge_trigger = true,
+		},
 	}, {
 		.compatible = "renesas,gpio-r8a7791",
-		.data = &gpio_rcar_info_gen2,
-	}, {
-		.compatible = "renesas,gpio-r8a7793",
-		.data = &gpio_rcar_info_gen2,
-	}, {
-		.compatible = "renesas,gpio-r8a7794",
-		.data = &gpio_rcar_info_gen2,
+		.data = (void *)&(const struct gpio_rcar_info) {
+			.has_both_edge_trigger = true,
+		},
 	}, {
 		.compatible = "renesas,gpio-rcar",
-		.data = &gpio_rcar_info_gen1,
+		.data = (void *)&(const struct gpio_rcar_info) {
+			.has_both_edge_trigger = false,
+		},
 	}, {
 		/* Terminator */
 	},
@@ -380,13 +356,15 @@ static int gpio_rcar_probe(struct platform_device *pdev)
 	struct resource *io, *irq;
 	struct gpio_chip *gpio_chip;
 	struct irq_chip *irq_chip;
-	struct device *dev = &pdev->dev;
-	const char *name = dev_name(dev);
+	const char *name = dev_name(&pdev->dev);
 	int ret;
 
-	p = devm_kzalloc(dev, sizeof(*p), GFP_KERNEL);
-	if (!p)
-		return -ENOMEM;
+	p = devm_kzalloc(&pdev->dev, sizeof(*p), GFP_KERNEL);
+	if (!p) {
+		dev_err(&pdev->dev, "failed to allocate driver data\n");
+		ret = -ENOMEM;
+		goto err0;
+	}
 
 	p->pdev = pdev;
 	spin_lock_init(&p->lock);
@@ -398,27 +376,19 @@ static int gpio_rcar_probe(struct platform_device *pdev)
 
 	platform_set_drvdata(pdev, p);
 
-	p->clk = devm_clk_get(dev, NULL);
-	if (IS_ERR(p->clk)) {
-		dev_warn(dev, "unable to get clock\n");
-		p->clk = NULL;
-	}
-
-	pm_runtime_enable(dev);
-	pm_runtime_get_sync(dev);
-
 	io = platform_get_resource(pdev, IORESOURCE_MEM, 0);
 	irq = platform_get_resource(pdev, IORESOURCE_IRQ, 0);
 
 	if (!io || !irq) {
-		dev_err(dev, "missing IRQ or IOMEM\n");
+		dev_err(&pdev->dev, "missing IRQ or IOMEM\n");
 		ret = -EINVAL;
 		goto err0;
 	}
 
-	p->base = devm_ioremap_nocache(dev, io->start, resource_size(io));
+	p->base = devm_ioremap_nocache(&pdev->dev, io->start,
+				       resource_size(io));
 	if (!p->base) {
-		dev_err(dev, "failed to remap I/O memory\n");
+		dev_err(&pdev->dev, "failed to remap I/O memory\n");
 		ret = -ENXIO;
 		goto err0;
 	}
@@ -430,8 +400,9 @@ static int gpio_rcar_probe(struct platform_device *pdev)
 	gpio_chip->get = gpio_rcar_get;
 	gpio_chip->direction_output = gpio_rcar_direction_output;
 	gpio_chip->set = gpio_rcar_set;
+	gpio_chip->to_irq = gpio_rcar_to_irq;
 	gpio_chip->label = name;
-	gpio_chip->dev = dev;
+	gpio_chip->dev = &pdev->dev;
 	gpio_chip->owner = THIS_MODULE;
 	gpio_chip->base = p->config.gpio_base;
 	gpio_chip->ngpio = p->config.number_of_pins;
@@ -441,37 +412,39 @@ static int gpio_rcar_probe(struct platform_device *pdev)
 	irq_chip->irq_mask = gpio_rcar_irq_disable;
 	irq_chip->irq_unmask = gpio_rcar_irq_enable;
 	irq_chip->irq_set_type = gpio_rcar_irq_set_type;
-	irq_chip->irq_set_wake = gpio_rcar_irq_set_wake;
-	irq_chip->flags	= IRQCHIP_SET_TYPE_MASKED | IRQCHIP_MASK_ON_SUSPEND;
+	irq_chip->flags	= IRQCHIP_SKIP_SET_WAKE | IRQCHIP_SET_TYPE_MASKED
+			 | IRQCHIP_MASK_ON_SUSPEND;
 
-	ret = gpiochip_add(gpio_chip);
-	if (ret) {
-		dev_err(dev, "failed to add GPIO controller\n");
+	p->irq_domain = irq_domain_add_simple(pdev->dev.of_node,
+					      p->config.number_of_pins,
+					      p->config.irq_base,
+					      &gpio_rcar_irq_domain_ops, p);
+	if (!p->irq_domain) {
+		ret = -ENXIO;
+		dev_err(&pdev->dev, "cannot initialize irq domain\n");
 		goto err0;
 	}
 
-	ret = gpiochip_irqchip_add(gpio_chip, irq_chip, p->config.irq_base,
-				   handle_level_irq, IRQ_TYPE_NONE);
-	if (ret) {
-		dev_err(dev, "cannot add irqchip\n");
-		goto err1;
-	}
-
-	p->irq_parent = irq->start;
-	if (devm_request_irq(dev, irq->start, gpio_rcar_irq_handler,
-			     IRQF_SHARED, name, p)) {
-		dev_err(dev, "failed to request IRQ\n");
+	if (devm_request_irq(&pdev->dev, irq->start,
+			     gpio_rcar_irq_handler, IRQF_SHARED, name, p)) {
+		dev_err(&pdev->dev, "failed to request IRQ\n");
 		ret = -ENOENT;
 		goto err1;
 	}
 
-	dev_info(dev, "driving %d GPIOs\n", p->config.number_of_pins);
+	ret = gpiochip_add(gpio_chip);
+	if (ret) {
+		dev_err(&pdev->dev, "failed to add GPIO controller\n");
+		goto err1;
+	}
+
+	dev_info(&pdev->dev, "driving %d GPIOs\n", p->config.number_of_pins);
 
 	/* warn in case of mismatch if irq base is specified */
 	if (p->config.irq_base) {
-		ret = irq_find_mapping(gpio_chip->irqdomain, 0);
+		ret = irq_find_mapping(p->irq_domain, 0);
 		if (p->config.irq_base != ret)
-			dev_warn(dev, "irq base mismatch (%u/%u)\n",
+			dev_warn(&pdev->dev, "irq base mismatch (%u/%u)\n",
 				 p->config.irq_base, ret);
 	}
 
@@ -479,27 +452,27 @@ static int gpio_rcar_probe(struct platform_device *pdev)
 		ret = gpiochip_add_pin_range(gpio_chip, p->config.pctl_name, 0,
 					     gpio_chip->base, gpio_chip->ngpio);
 		if (ret < 0)
-			dev_warn(dev, "failed to add pin range\n");
+			dev_warn(&pdev->dev, "failed to add pin range\n");
 	}
 
 	return 0;
 
 err1:
-	gpiochip_remove(gpio_chip);
+	irq_domain_remove(p->irq_domain);
 err0:
-	pm_runtime_put(dev);
-	pm_runtime_disable(dev);
 	return ret;
 }
 
 static int gpio_rcar_remove(struct platform_device *pdev)
 {
 	struct gpio_rcar_priv *p = platform_get_drvdata(pdev);
+	int ret;
 
-	gpiochip_remove(&p->gpio_chip);
+	ret = gpiochip_remove(&p->gpio_chip);
+	if (ret)
+		return ret;
 
-	pm_runtime_put(&pdev->dev);
-	pm_runtime_disable(&pdev->dev);
+	irq_domain_remove(p->irq_domain);
 	return 0;
 }
 

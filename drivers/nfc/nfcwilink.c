@@ -566,6 +566,7 @@ static struct platform_driver nfcwilink_driver = {
 	.remove = nfcwilink_remove,
 	.driver = {
 		.name = "nfcwilink",
+		.owner = THIS_MODULE,
 	},
 };
 

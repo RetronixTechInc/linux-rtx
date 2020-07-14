@@ -34,7 +34,6 @@
 #include <linux/of_device.h>
 #include <linux/platform_device.h>
 #include <linux/poll.h>
-#include <linux/regulator/consumer.h>
 #include <linux/sched.h>
 #include <linux/slab.h>
 #include <linux/spinlock.h>
@@ -371,9 +370,6 @@ struct mlb_data {
 	struct cdev cdev;
 	struct class *class;	/* device class */
 	dev_t firstdev;
-#ifdef CONFIG_REGULATOR
-	struct regulator *nvcc;
-#endif
 	void __iomem *membase;	/* mlb module base address */
 	struct gen_pool *iram_pool;
 	u32 iram_size;
@@ -2040,8 +2036,7 @@ static int mxc_mlb150_release(struct inode *inode, struct file *filp)
 static long mxc_mlb150_ioctl(struct file *filp,
 			 unsigned int cmd, unsigned long arg)
 {
-	//struct inode *inode = filp->f_dentry->d_inode;
-	struct inode *inode = file_inode(filp);
+	struct inode *inode = filp->f_dentry->d_inode;
 	struct mlb_data *drvdata = filp->private_data;
 	struct mlb_dev_info *pdevinfo = drvdata->devinfo;
 	void __user *argp = (void __user *)arg;
@@ -2457,7 +2452,7 @@ static unsigned int mxc_mlb150_poll(struct file *filp,
 	unsigned long flags;
 
 
-	minor = MINOR(file_inode(filp)->i_rdev);
+	minor = MINOR(filp->f_dentry->d_inode->i_rdev);
 
 	poll_wait(filp, &pdevinfo->rx_wq, wait);
 	poll_wait(filp, &pdevinfo->tx_wq, wait);
@@ -2638,7 +2633,7 @@ static int mxc_mlb150_probe(struct platform_device *pdev)
 		ret = -ENOENT;
 		goto err_dev;
 	}
-	mlb_base = devm_ioremap_resource(&pdev->dev, res);
+	mlb_base = devm_request_and_ioremap(&pdev->dev, res);
 	dev_dbg(&pdev->dev, "mapped base address: 0x%08x\n", (u32)mlb_base);
 	if (IS_ERR(mlb_base)) {
 		dev_err(&pdev->dev,
@@ -2647,19 +2642,6 @@ static int mxc_mlb150_probe(struct platform_device *pdev)
 		goto err_dev;
 	}
 	drvdata->membase = mlb_base;
-
-#ifdef CONFIG_REGULATOR
-	drvdata->nvcc = devm_regulator_get(&pdev->dev, "reg_nvcc");
-	if (!IS_ERR(drvdata->nvcc)) {
-		regulator_set_voltage(drvdata->nvcc, 2500000, 2500000);
-		dev_err(&pdev->dev, "enalbe regulator\n");
-		ret = regulator_enable(drvdata->nvcc);
-		if (ret) {
-			dev_err(&pdev->dev, "vdd set voltage error\n");
-			goto err_dev;
-		}
-	}
-#endif
 
 	/* enable clock */
 	drvdata->clk_mlb3p = devm_clk_get(&pdev->dev, "mlb");
@@ -2715,12 +2697,6 @@ static int mxc_mlb150_remove(struct platform_device *pdev)
 
 	if (pdevinfo && atomic_read(&pdevinfo->opencnt))
 		clk_disable_unprepare(drvdata->clk_mlb3p);
-
-	/* disable mlb power */
-#ifdef CONFIG_REGULATOR
-	if (!IS_ERR(drvdata->nvcc))
-		regulator_disable(drvdata->nvcc);
-#endif
 
 	/* destroy mlb device class */
 	for (i = MLB_MINOR_DEVICES - 1; i >= 0; i--)

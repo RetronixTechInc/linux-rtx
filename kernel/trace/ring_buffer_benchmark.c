@@ -7,7 +7,7 @@
 #include <linux/completion.h>
 #include <linux/kthread.h>
 #include <linux/module.h>
-#include <linux/ktime.h>
+#include <linux/time.h>
 #include <asm/local.h>
 
 struct rb_page {
@@ -17,7 +17,7 @@ struct rb_page {
 };
 
 /* run time and sleep time in seconds */
-#define RUN_TIME	10ULL
+#define RUN_TIME	10
 #define SLEEP_TIME	10
 
 /* number of events for writer to wake up the reader */
@@ -40,8 +40,8 @@ static int write_iteration = 50;
 module_param(write_iteration, uint, 0644);
 MODULE_PARM_DESC(write_iteration, "# of writes between timestamp readings");
 
-static int producer_nice = MAX_NICE;
-static int consumer_nice = MAX_NICE;
+static int producer_nice = 19;
+static int consumer_nice = 19;
 
 static int producer_fifo = -1;
 static int consumer_fifo = -1;
@@ -205,6 +205,7 @@ static void ring_buffer_consumer(void)
 			break;
 
 		schedule();
+		__set_current_state(TASK_RUNNING);
 	}
 	reader_finish = 0;
 	complete(&read_done);
@@ -212,7 +213,8 @@ static void ring_buffer_consumer(void)
 
 static void ring_buffer_producer(void)
 {
-	ktime_t start_time, end_time, timeout;
+	struct timeval start_tv;
+	struct timeval end_tv;
 	unsigned long long time;
 	unsigned long long entries;
 	unsigned long long overruns;
@@ -226,8 +228,7 @@ static void ring_buffer_producer(void)
 	 * make the system stall)
 	 */
 	trace_printk("Starting ring buffer hammer\n");
-	start_time = ktime_get();
-	timeout = ktime_add_ns(start_time, RUN_TIME * NSEC_PER_SEC);
+	do_gettimeofday(&start_tv);
 	do {
 		struct ring_buffer_event *event;
 		int *entry;
@@ -244,7 +245,7 @@ static void ring_buffer_producer(void)
 				ring_buffer_unlock_commit(buffer, event);
 			}
 		}
-		end_time = ktime_get();
+		do_gettimeofday(&end_tv);
 
 		cnt++;
 		if (consumer && !(cnt % wakeup_interval))
@@ -264,7 +265,7 @@ static void ring_buffer_producer(void)
 			cond_resched();
 #endif
 
-	} while (ktime_before(end_time, timeout) && !kill_test);
+	} while (end_tv.tv_sec < (start_tv.tv_sec + RUN_TIME) && !kill_test);
 	trace_printk("End ring buffer hammer\n");
 
 	if (consumer) {
@@ -280,7 +281,9 @@ static void ring_buffer_producer(void)
 		wait_for_completion(&read_done);
 	}
 
-	time = ktime_us_delta(end_time, start_time);
+	time = end_tv.tv_sec - start_tv.tv_sec;
+	time *= USEC_PER_SEC;
+	time += (long long)((long)end_tv.tv_usec - (long)start_tv.tv_usec);
 
 	entries = ring_buffer_entries(buffer);
 	overruns = ring_buffer_overruns(buffer);
@@ -305,7 +308,7 @@ static void ring_buffer_producer(void)
 
 	/* Let the user know that the test is running at low priority */
 	if (producer_fifo < 0 && consumer_fifo < 0 &&
-	    producer_nice == MAX_NICE && consumer_nice == MAX_NICE)
+	    producer_nice == 19 && consumer_nice == 19)
 		trace_printk("WARNING!!! This test is running at lowest priority.\n");
 
 	trace_printk("Time:     %lld (usecs)\n", time);
@@ -376,6 +379,7 @@ static int ring_buffer_consumer_thread(void *arg)
 			break;
 
 		schedule();
+		__set_current_state(TASK_RUNNING);
 	}
 	__set_current_state(TASK_RUNNING);
 
@@ -403,6 +407,7 @@ static int ring_buffer_producer_thread(void *arg)
 		trace_printk("Sleeping for 10 secs\n");
 		set_current_state(TASK_INTERRUPTIBLE);
 		schedule_timeout(HZ * SLEEP_TIME);
+		__set_current_state(TASK_RUNNING);
 	}
 
 	if (kill_test)

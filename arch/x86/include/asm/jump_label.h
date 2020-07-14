@@ -1,7 +1,7 @@
 #ifndef _ASM_X86_JUMP_LABEL_H
 #define _ASM_X86_JUMP_LABEL_H
 
-#ifndef __ASSEMBLY__
+#ifdef __KERNEL__
 
 #include <linux/stringify.h>
 #include <linux/types.h>
@@ -30,6 +30,8 @@ l_yes:
 	return true;
 }
 
+#endif /* __KERNEL__ */
+
 #ifdef CONFIG_X86_64
 typedef u64 jump_label_t;
 #else
@@ -42,5 +44,4 @@ struct jump_entry {
 	jump_label_t key;
 };
 
-#endif  /* __ASSEMBLY__ */
 #endif

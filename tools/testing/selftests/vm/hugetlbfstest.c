@@ -34,7 +34,6 @@ static void do_mmap(int fd, int extra_flags, int unmap)
 	int *p;
 	int flags = MAP_PRIVATE | MAP_POPULATE | extra_flags;
 	u64 before, after;
-	int ret;
 
 	before = read_rss();
 	p = mmap(NULL, length, PROT_READ | PROT_WRITE, flags, fd, 0);
@@ -45,8 +44,7 @@ static void do_mmap(int fd, int extra_flags, int unmap)
 			!"rss didn't grow as expected");
 	if (!unmap)
 		return;
-	ret = munmap(p, length);
-	assert(!ret || !"munmap returned an unexpected error");
+	munmap(p, length);
 	after = read_rss();
 	assert(llabs(after - before) < 0x40000 ||
 			!"rss didn't shrink as expected");

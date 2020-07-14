@@ -37,7 +37,7 @@
 #include <linux/err.h>
 #include <linux/delay.h>
 #include <linux/usb/musb-omap.h>
-#include <linux/phy/omap_control_phy.h>
+#include <linux/usb/omap_control_usb.h>
 #include <linux/of_platform.h>
 
 #include "musb_core.h"
@@ -162,8 +162,7 @@ static void omap2430_musb_set_vbus(struct musb *musb, int is_on)
 			 * Wait for the musb to set as A device to enable the
 			 * VBUS
 			 */
-			while (musb_readb(musb->mregs, MUSB_DEVCTL) &
-			       MUSB_DEVCTL_BDEVICE) {
+			while (musb_readb(musb->mregs, MUSB_DEVCTL) & 0x80) {
 
 				mdelay(5);
 				cpu_relax();
@@ -317,13 +316,7 @@ static void omap_musb_mailbox_work(struct work_struct *mailbox_work)
 {
 	struct omap2430_glue *glue = container_of(mailbox_work,
 				struct omap2430_glue, omap_musb_mailbox_work);
-	struct musb *musb = glue_to_musb(glue);
-	struct device *dev = musb->controller;
-
-	pm_runtime_get_sync(dev);
 	omap_musb_set_mailbox(glue);
-	pm_runtime_mark_last_busy(dev);
-	pm_runtime_put_autosuspend(dev);
 }
 
 static irqreturn_t omap2430_musb_interrupt(int irq, void *__hci)
@@ -516,11 +509,13 @@ static int omap2430_probe(struct platform_device *pdev)
 	struct omap2430_glue		*glue;
 	struct device_node		*np = pdev->dev.of_node;
 	struct musb_hdrc_config		*config;
-	int				ret = -ENOMEM, val;
+	int				ret = -ENOMEM;
 
 	glue = devm_kzalloc(&pdev->dev, sizeof(*glue), GFP_KERNEL);
-	if (!glue)
+	if (!glue) {
+		dev_err(&pdev->dev, "failed to allocate glue context\n");
 		goto err0;
+	}
 
 	musb = platform_device_alloc("musb-hdrc", PLATFORM_DEVID_AUTO);
 	if (!musb) {
@@ -542,16 +537,25 @@ static int omap2430_probe(struct platform_device *pdev)
 		struct platform_device *control_pdev;
 
 		pdata = devm_kzalloc(&pdev->dev, sizeof(*pdata), GFP_KERNEL);
-		if (!pdata)
+		if (!pdata) {
+			dev_err(&pdev->dev,
+				"failed to allocate musb platform data\n");
 			goto err2;
+		}
 
 		data = devm_kzalloc(&pdev->dev, sizeof(*data), GFP_KERNEL);
-		if (!data)
+		if (!data) {
+			dev_err(&pdev->dev,
+				"failed to allocate musb board data\n");
 			goto err2;
+		}
 
 		config = devm_kzalloc(&pdev->dev, sizeof(*config), GFP_KERNEL);
-		if (!config)
+		if (!config) {
+			dev_err(&pdev->dev,
+				"failed to allocate musb hdrc config\n");
 			goto err2;
+		}
 
 		of_property_read_u32(np, "mode", (u32 *)&pdata->mode);
 		of_property_read_u32(np, "interface-type",
@@ -559,10 +563,7 @@ static int omap2430_probe(struct platform_device *pdev)
 		of_property_read_u32(np, "num-eps", (u32 *)&config->num_eps);
 		of_property_read_u32(np, "ram-bits", (u32 *)&config->ram_bits);
 		of_property_read_u32(np, "power", (u32 *)&pdata->power);
-
-		ret = of_property_read_u32(np, "multipoint", &val);
-		if (!ret && val)
-			config->multipoint = true;
+		config->multipoint = of_property_read_bool(np, "multipoint");
 
 		pdata->board_data	= data;
 		pdata->config		= config;

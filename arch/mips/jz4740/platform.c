@@ -59,7 +59,7 @@ struct platform_device jz4740_usb_ohci_device = {
 
 /* USB Device Controller */
 struct platform_device jz4740_udc_xceiv_device = {
-	.name = "usb_phy_generic",
+	.name = "usb_phy_gen_xceiv",
 	.id   = 0,
 };
 

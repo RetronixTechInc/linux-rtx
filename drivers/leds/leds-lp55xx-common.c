@@ -127,12 +127,15 @@ static DEVICE_ATTR(led_current, S_IRUGO | S_IWUSR, lp55xx_show_current,
 		lp55xx_store_current);
 static DEVICE_ATTR(max_current, S_IRUGO , lp55xx_show_max_current, NULL);
 
-static struct attribute *lp55xx_led_attrs[] = {
+static struct attribute *lp55xx_led_attributes[] = {
 	&dev_attr_led_current.attr,
 	&dev_attr_max_current.attr,
 	NULL,
 };
-ATTRIBUTE_GROUPS(lp55xx_led);
+
+static struct attribute_group lp55xx_led_attr_group = {
+	.attrs = lp55xx_led_attributes
+};
 
 static void lp55xx_set_brightness(struct led_classdev *cdev,
 			     enum led_brightness brightness)
@@ -173,7 +176,6 @@ static int lp55xx_init_led(struct lp55xx_led *led,
 	}
 
 	led->cdev.brightness_set = lp55xx_set_brightness;
-	led->cdev.groups = lp55xx_led_groups;
 
 	if (pdata->led_config[chan].name) {
 		led->cdev.name = pdata->led_config[chan].name;
@@ -183,9 +185,21 @@ static int lp55xx_init_led(struct lp55xx_led *led,
 		led->cdev.name = name;
 	}
 
+	/*
+	 * register led class device for each channel and
+	 * add device attributes
+	 */
+
 	ret = led_classdev_register(dev, &led->cdev);
 	if (ret) {
 		dev_err(dev, "led register err: %d\n", ret);
+		return ret;
+	}
+
+	ret = sysfs_create_group(&led->cdev.dev->kobj, &lp55xx_led_attr_group);
+	if (ret) {
+		dev_err(dev, "led sysfs err: %d\n", ret);
+		led_classdev_unregister(&led->cdev);
 		return ret;
 	}
 

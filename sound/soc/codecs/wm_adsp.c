@@ -21,7 +21,6 @@
 #include <linux/regmap.h>
 #include <linux/regulator/consumer.h>
 #include <linux/slab.h>
-#include <linux/vmalloc.h>
 #include <linux/workqueue.h>
 #include <sound/core.h>
 #include <sound/pcm.h>
@@ -170,12 +169,11 @@ static struct wm_adsp_buf *wm_adsp_buf_alloc(const void *src, size_t len,
 	if (buf == NULL)
 		return NULL;
 
-	buf->buf = vmalloc(len);
+	buf->buf = kmemdup(src, len, GFP_KERNEL | GFP_DMA);
 	if (!buf->buf) {
-		vfree(buf);
+		kfree(buf);
 		return NULL;
 	}
-	memcpy(buf->buf, src, len);
 
 	if (list)
 		list_add_tail(&buf->list, list);
@@ -190,7 +188,7 @@ static void wm_adsp_buf_free(struct list_head *list)
 							   struct wm_adsp_buf,
 							   list);
 		list_del(&buf->list);
-		vfree(buf->buf);
+		kfree(buf->buf);
 		kfree(buf);
 	}
 }
@@ -244,7 +242,7 @@ struct wm_coeff_ctl {
 static int wm_adsp_fw_get(struct snd_kcontrol *kcontrol,
 			  struct snd_ctl_elem_value *ucontrol)
 {
-	struct snd_soc_codec *codec = snd_soc_kcontrol_codec(kcontrol);
+	struct snd_soc_codec *codec = snd_kcontrol_chip(kcontrol);
 	struct soc_enum *e = (struct soc_enum *)kcontrol->private_value;
 	struct wm_adsp *adsp = snd_soc_codec_get_drvdata(codec);
 
@@ -256,7 +254,7 @@ static int wm_adsp_fw_get(struct snd_kcontrol *kcontrol,
 static int wm_adsp_fw_put(struct snd_kcontrol *kcontrol,
 			  struct snd_ctl_elem_value *ucontrol)
 {
-	struct snd_soc_codec *codec = snd_soc_kcontrol_codec(kcontrol);
+	struct snd_soc_codec *codec = snd_kcontrol_chip(kcontrol);
 	struct soc_enum *e = (struct soc_enum *)kcontrol->private_value;
 	struct wm_adsp *adsp = snd_soc_codec_get_drvdata(codec);
 
@@ -420,9 +418,10 @@ static int wm_coeff_put(struct snd_kcontrol *kcontrol,
 
 	memcpy(ctl->cache, p, ctl->len);
 
-	ctl->set = 1;
-	if (!ctl->enabled)
+	if (!ctl->enabled) {
+		ctl->set = 1;
 		return 0;
+	}
 
 	return wm_coeff_write_control(kcontrol, p, ctl->len);
 }
@@ -1052,10 +1051,8 @@ static int wm_adsp_setup_algs(struct wm_adsp *dsp)
 				  be32_to_cpu(adsp1_alg[i].zm));
 
 			region = kzalloc(sizeof(*region), GFP_KERNEL);
-			if (!region) {
-				ret = -ENOMEM;
-				goto out;
-			}
+			if (!region)
+				return -ENOMEM;
 			region->type = WMFW_ADSP1_DM;
 			region->alg = be32_to_cpu(adsp1_alg[i].alg.id);
 			region->base = be32_to_cpu(adsp1_alg[i].dm);
@@ -1072,10 +1069,8 @@ static int wm_adsp_setup_algs(struct wm_adsp *dsp)
 			}
 
 			region = kzalloc(sizeof(*region), GFP_KERNEL);
-			if (!region) {
-				ret = -ENOMEM;
-				goto out;
-			}
+			if (!region)
+				return -ENOMEM;
 			region->type = WMFW_ADSP1_ZM;
 			region->alg = be32_to_cpu(adsp1_alg[i].alg.id);
 			region->base = be32_to_cpu(adsp1_alg[i].zm);
@@ -1104,10 +1099,8 @@ static int wm_adsp_setup_algs(struct wm_adsp *dsp)
 				  be32_to_cpu(adsp2_alg[i].zm));
 
 			region = kzalloc(sizeof(*region), GFP_KERNEL);
-			if (!region) {
-				ret = -ENOMEM;
-				goto out;
-			}
+			if (!region)
+				return -ENOMEM;
 			region->type = WMFW_ADSP2_XM;
 			region->alg = be32_to_cpu(adsp2_alg[i].alg.id);
 			region->base = be32_to_cpu(adsp2_alg[i].xm);
@@ -1124,10 +1117,8 @@ static int wm_adsp_setup_algs(struct wm_adsp *dsp)
 			}
 
 			region = kzalloc(sizeof(*region), GFP_KERNEL);
-			if (!region) {
-				ret = -ENOMEM;
-				goto out;
-			}
+			if (!region)
+				return -ENOMEM;
 			region->type = WMFW_ADSP2_YM;
 			region->alg = be32_to_cpu(adsp2_alg[i].alg.id);
 			region->base = be32_to_cpu(adsp2_alg[i].ym);
@@ -1144,10 +1135,8 @@ static int wm_adsp_setup_algs(struct wm_adsp *dsp)
 			}
 
 			region = kzalloc(sizeof(*region), GFP_KERNEL);
-			if (!region) {
-				ret = -ENOMEM;
-				goto out;
-			}
+			if (!region)
+				return -ENOMEM;
 			region->type = WMFW_ADSP2_ZM;
 			region->alg = be32_to_cpu(adsp2_alg[i].alg.id);
 			region->base = be32_to_cpu(adsp2_alg[i].zm);
@@ -1184,6 +1173,7 @@ static int wm_adsp_load_coeff(struct wm_adsp *dsp)
 	int ret, pos, blocks, type, offset, reg;
 	char *file;
 	struct wm_adsp_buf *buf;
+	int tmp;
 
 	file = kzalloc(PAGE_SIZE, GFP_KERNEL);
 	if (file == NULL)
@@ -1333,7 +1323,12 @@ static int wm_adsp_load_coeff(struct wm_adsp *dsp)
 			}
 		}
 
-		pos += (le32_to_cpu(blk->len) + sizeof(*blk) + 3) & ~0x03;
+		tmp = le32_to_cpu(blk->len) % 4;
+		if (tmp)
+			pos += le32_to_cpu(blk->len) + (4 - tmp) + sizeof(*blk);
+		else
+			pos += le32_to_cpu(blk->len) + sizeof(*blk);
+
 		blocks++;
 	}
 
@@ -1366,7 +1361,7 @@ int wm_adsp1_event(struct snd_soc_dapm_widget *w,
 		   struct snd_kcontrol *kcontrol,
 		   int event)
 {
-	struct snd_soc_codec *codec = snd_soc_dapm_to_codec(w->dapm);
+	struct snd_soc_codec *codec = w->codec;
 	struct wm_adsp *dsps = snd_soc_codec_get_drvdata(codec);
 	struct wm_adsp *dsp = &dsps[w->shift];
 	struct wm_adsp_alg_region *alg_region;
@@ -1374,7 +1369,7 @@ int wm_adsp1_event(struct snd_soc_dapm_widget *w,
 	int ret;
 	int val;
 
-	dsp->card = codec->component.card;
+	dsp->card = codec->card;
 
 	switch (event) {
 	case SND_SOC_DAPM_POST_PMU:
@@ -1535,16 +1530,16 @@ static void wm_adsp2_boot_work(struct work_struct *work)
 		ret = regmap_read(dsp->regmap,
 				  dsp->base + ADSP2_CLOCKING, &val);
 		if (ret != 0) {
-			adsp_err(dsp, "Failed to read clocking: %d\n", ret);
+			dev_err(dsp->dev, "Failed to read clocking: %d\n", ret);
 			return;
 		}
 
 		if ((val & ADSP2_CLK_SEL_MASK) >= 3) {
 			ret = regulator_enable(dsp->dvfs);
 			if (ret != 0) {
-				adsp_err(dsp,
-					 "Failed to enable supply: %d\n",
-					 ret);
+				dev_err(dsp->dev,
+					"Failed to enable supply: %d\n",
+					ret);
 				return;
 			}
 
@@ -1552,9 +1547,9 @@ static void wm_adsp2_boot_work(struct work_struct *work)
 						    1800000,
 						    1800000);
 			if (ret != 0) {
-				adsp_err(dsp,
-					 "Failed to raise supply: %d\n",
-					 ret);
+				dev_err(dsp->dev,
+					"Failed to raise supply: %d\n",
+					ret);
 				return;
 			}
 		}
@@ -1586,6 +1581,13 @@ static void wm_adsp2_boot_work(struct work_struct *work)
 	if (ret != 0)
 		goto err;
 
+	ret = regmap_update_bits_async(dsp->regmap,
+				       dsp->base + ADSP2_CONTROL,
+				       ADSP2_CORE_ENA,
+				       ADSP2_CORE_ENA);
+	if (ret != 0)
+		goto err;
+
 	dsp->running = true;
 
 	return;
@@ -1598,11 +1600,11 @@ err:
 int wm_adsp2_early_event(struct snd_soc_dapm_widget *w,
 		   struct snd_kcontrol *kcontrol, int event)
 {
-	struct snd_soc_codec *codec = snd_soc_dapm_to_codec(w->dapm);
+	struct snd_soc_codec *codec = w->codec;
 	struct wm_adsp *dsps = snd_soc_codec_get_drvdata(codec);
 	struct wm_adsp *dsp = &dsps[w->shift];
 
-	dsp->card = codec->component.card;
+	dsp->card = codec->card;
 
 	switch (event) {
 	case SND_SOC_DAPM_PRE_PMU:
@@ -1610,7 +1612,7 @@ int wm_adsp2_early_event(struct snd_soc_dapm_widget *w,
 		break;
 	default:
 		break;
-	}
+	};
 
 	return 0;
 }
@@ -1619,7 +1621,7 @@ EXPORT_SYMBOL_GPL(wm_adsp2_early_event);
 int wm_adsp2_event(struct snd_soc_dapm_widget *w,
 		   struct snd_kcontrol *kcontrol, int event)
 {
-	struct snd_soc_codec *codec = snd_soc_dapm_to_codec(w->dapm);
+	struct snd_soc_codec *codec = w->codec;
 	struct wm_adsp *dsps = snd_soc_codec_get_drvdata(codec);
 	struct wm_adsp *dsp = &dsps[w->shift];
 	struct wm_adsp_alg_region *alg_region;
@@ -1635,8 +1637,8 @@ int wm_adsp2_event(struct snd_soc_dapm_widget *w,
 
 		ret = regmap_update_bits(dsp->regmap,
 					 dsp->base + ADSP2_CONTROL,
-					 ADSP2_CORE_ENA | ADSP2_START,
-					 ADSP2_CORE_ENA | ADSP2_START);
+					 ADSP2_START,
+					 ADSP2_START);
 		if (ret != 0)
 			goto err;
 		break;
@@ -1657,15 +1659,15 @@ int wm_adsp2_event(struct snd_soc_dapm_widget *w,
 			ret = regulator_set_voltage(dsp->dvfs, 1200000,
 						    1800000);
 			if (ret != 0)
-				adsp_warn(dsp,
-					  "Failed to lower supply: %d\n",
-					  ret);
+				dev_warn(dsp->dev,
+					 "Failed to lower supply: %d\n",
+					 ret);
 
 			ret = regulator_disable(dsp->dvfs);
 			if (ret != 0)
-				adsp_err(dsp,
-					 "Failed to enable supply: %d\n",
-					 ret);
+				dev_err(dsp->dev,
+					"Failed to enable supply: %d\n",
+					ret);
 		}
 
 		list_for_each_entry(ctl, &dsp->ctl_list, list)
@@ -1678,8 +1680,6 @@ int wm_adsp2_event(struct snd_soc_dapm_widget *w,
 			list_del(&alg_region->list);
 			kfree(alg_region);
 		}
-
-		adsp_dbg(dsp, "Shutdown complete\n");
 		break;
 
 	default:
@@ -1717,25 +1717,28 @@ int wm_adsp2_init(struct wm_adsp *adsp, bool dvfs)
 		adsp->dvfs = devm_regulator_get(adsp->dev, "DCVDD");
 		if (IS_ERR(adsp->dvfs)) {
 			ret = PTR_ERR(adsp->dvfs);
-			adsp_err(adsp, "Failed to get DCVDD: %d\n", ret);
+			dev_err(adsp->dev, "Failed to get DCVDD: %d\n", ret);
 			return ret;
 		}
 
 		ret = regulator_enable(adsp->dvfs);
 		if (ret != 0) {
-			adsp_err(adsp, "Failed to enable DCVDD: %d\n", ret);
+			dev_err(adsp->dev, "Failed to enable DCVDD: %d\n",
+				ret);
 			return ret;
 		}
 
 		ret = regulator_set_voltage(adsp->dvfs, 1200000, 1800000);
 		if (ret != 0) {
-			adsp_err(adsp, "Failed to initialise DVFS: %d\n", ret);
+			dev_err(adsp->dev, "Failed to initialise DVFS: %d\n",
+				ret);
 			return ret;
 		}
 
 		ret = regulator_disable(adsp->dvfs);
 		if (ret != 0) {
-			adsp_err(adsp, "Failed to disable DCVDD: %d\n", ret);
+			dev_err(adsp->dev, "Failed to disable DCVDD: %d\n",
+				ret);
 			return ret;
 		}
 	}

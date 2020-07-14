@@ -774,8 +774,6 @@ enum {
 
 	TCA_FQ_FLOW_REFILL_DELAY,	/* flow credit refill delay in usec */
 
-	TCA_FQ_ORPHAN_MASK,	/* mask applied to orphaned skb hashes */
-
 	__TCA_FQ_MAX
 };
 

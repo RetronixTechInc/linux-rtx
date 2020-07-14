@@ -50,13 +50,14 @@ static void zevio_irq_ack(struct irq_data *irqd)
 	readl(gc->reg_base + regs->ack);
 }
 
-static void __exception_irq_entry zevio_handle_irq(struct pt_regs *regs)
+static asmlinkage void __exception_irq_entry zevio_handle_irq(struct pt_regs *regs)
 {
 	int irqnr;
 
 	while (readl(zevio_irq_io + IO_STATUS)) {
 		irqnr = readl(zevio_irq_io + IO_CURRENT);
-		handle_domain_irq(zevio_irq_domain, irqnr, regs);
+		irqnr = irq_find_mapping(zevio_irq_domain, irqnr);
+		handle_IRQ(irqnr, regs);
 	};
 }
 

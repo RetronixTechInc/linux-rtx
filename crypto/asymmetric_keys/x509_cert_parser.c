@@ -11,7 +11,6 @@
 
 #define pr_fmt(fmt) "X.509: "fmt
 #include <linux/kernel.h>
-#include <linux/export.h>
 #include <linux/slab.h>
 #include <linux/err.h>
 #include <linux/oid_registry.h>
@@ -46,15 +45,13 @@ void x509_free_certificate(struct x509_certificate *cert)
 		public_key_destroy(cert->pub);
 		kfree(cert->issuer);
 		kfree(cert->subject);
-		kfree(cert->id);
-		kfree(cert->skid);
+		kfree(cert->fingerprint);
 		kfree(cert->authority);
 		kfree(cert->sig.digest);
 		mpi_free(cert->sig.rsa.s);
 		kfree(cert);
 	}
 }
-EXPORT_SYMBOL_GPL(x509_free_certificate);
 
 /*
  * Parse an X.509 certificate
@@ -63,7 +60,6 @@ struct x509_certificate *x509_cert_parse(const void *data, size_t datalen)
 {
 	struct x509_certificate *cert;
 	struct x509_parse_context *ctx;
-	struct asymmetric_key_id *kid;
 	long ret;
 
 	ret = -ENOMEM;
@@ -91,17 +87,6 @@ struct x509_certificate *x509_cert_parse(const void *data, size_t datalen)
 	if (ret < 0)
 		goto error_decode;
 
-	/* Generate cert issuer + serial number key ID */
-	kid = asymmetric_key_generate_id(cert->raw_serial,
-					 cert->raw_serial_size,
-					 cert->raw_issuer,
-					 cert->raw_issuer_size);
-	if (IS_ERR(kid)) {
-		ret = PTR_ERR(kid);
-		goto error_decode;
-	}
-	cert->id = kid;
-
 	kfree(ctx);
 	return cert;
 
@@ -112,7 +97,6 @@ error_no_ctx:
 error_no_cert:
 	return ERR_PTR(ret);
 }
-EXPORT_SYMBOL_GPL(x509_cert_parse);
 
 /*
  * Note an OID when we find one for later processing when we know how
@@ -223,19 +207,6 @@ int x509_note_signature(void *context, size_t hdrlen,
 
 	ctx->cert->raw_sig = value;
 	ctx->cert->raw_sig_size = vlen;
-	return 0;
-}
-
-/*
- * Note the certificate serial number
- */
-int x509_note_serial(void *context, size_t hdrlen,
-		     unsigned char tag,
-		     const void *value, size_t vlen)
-{
-	struct x509_parse_context *ctx = context;
-	ctx->cert->raw_serial = value;
-	ctx->cert->raw_serial_size = vlen;
 	return 0;
 }
 
@@ -351,8 +322,6 @@ int x509_note_issuer(void *context, size_t hdrlen,
 		     const void *value, size_t vlen)
 {
 	struct x509_parse_context *ctx = context;
-	ctx->cert->raw_issuer = value;
-	ctx->cert->raw_issuer_size = vlen;
 	return x509_fabricate_name(ctx, hdrlen, tag, &ctx->cert->issuer, vlen);
 }
 
@@ -361,8 +330,6 @@ int x509_note_subject(void *context, size_t hdrlen,
 		      const void *value, size_t vlen)
 {
 	struct x509_parse_context *ctx = context;
-	ctx->cert->raw_subject = value;
-	ctx->cert->raw_subject_size = vlen;
 	return x509_fabricate_name(ctx, hdrlen, tag, &ctx->cert->subject, vlen);
 }
 
@@ -420,36 +387,36 @@ int x509_process_extension(void *context, size_t hdrlen,
 			   const void *value, size_t vlen)
 {
 	struct x509_parse_context *ctx = context;
-	struct asymmetric_key_id *kid;
 	const unsigned char *v = value;
+	char *f;
 	int i;
 
 	pr_debug("Extension: %u\n", ctx->last_oid);
 
 	if (ctx->last_oid == OID_subjectKeyIdentifier) {
 		/* Get hold of the key fingerprint */
-		if (ctx->cert->skid || vlen < 3)
+		if (vlen < 3)
 			return -EBADMSG;
 		if (v[0] != ASN1_OTS || v[1] != vlen - 2)
 			return -EBADMSG;
 		v += 2;
 		vlen -= 2;
 
-		ctx->cert->raw_skid_size = vlen;
-		ctx->cert->raw_skid = v;
-		kid = asymmetric_key_generate_id(ctx->cert->raw_subject,
-						 ctx->cert->raw_subject_size,
-						 v, vlen);
-		if (IS_ERR(kid))
-			return PTR_ERR(kid);
-		ctx->cert->skid = kid;
-		pr_debug("subjkeyid %*phN\n", kid->len, kid->data);
+		f = kmalloc(vlen * 2 + 1, GFP_KERNEL);
+		if (!f)
+			return -ENOMEM;
+		for (i = 0; i < vlen; i++)
+			sprintf(f + i * 2, "%02x", v[i]);
+		pr_debug("fingerprint %s\n", f);
+		ctx->cert->fingerprint = f;
 		return 0;
 	}
 
 	if (ctx->last_oid == OID_authorityKeyIdentifier) {
+		size_t key_len;
+
 		/* Get hold of the CA key fingerprint */
-		if (ctx->cert->authority || vlen < 5)
+		if (vlen < 5)
 			return -EBADMSG;
 
 		/* Authority Key Identifier must be a Constructed SEQUENCE */
@@ -467,7 +434,7 @@ int x509_process_extension(void *context, size_t hdrlen,
 			    v[3] > vlen - 4)
 				return -EBADMSG;
 
-			vlen = v[3];
+			key_len = v[3];
 			v += 4;
 		} else {
 			/* Long Form length */
@@ -489,17 +456,17 @@ int x509_process_extension(void *context, size_t hdrlen,
 			    v[sub + 1] > vlen - 4 - sub)
 				return -EBADMSG;
 
-			vlen = v[sub + 1];
+			key_len = v[sub + 1];
 			v += (sub + 2);
 		}
 
-		kid = asymmetric_key_generate_id(ctx->cert->raw_issuer,
-						 ctx->cert->raw_issuer_size,
-						 v, vlen);
-		if (IS_ERR(kid))
-			return PTR_ERR(kid);
-		pr_debug("authkeyid %*phN\n", kid->len, kid->data);
-		ctx->cert->authority = kid;
+		f = kmalloc(key_len * 2 + 1, GFP_KERNEL);
+		if (!f)
+			return -ENOMEM;
+		for (i = 0; i < key_len; i++)
+			sprintf(f + i * 2, "%02x", v[i]);
+		pr_debug("authority   %s\n", f);
+		ctx->cert->authority = f;
 		return 0;
 	}
 

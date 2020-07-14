@@ -17,20 +17,17 @@ static int cap_binder_set_context_mgr(struct task_struct *mgr)
 	return 0;
 }
 
-static int cap_binder_transaction(struct task_struct *from,
-				  struct task_struct *to)
+static int cap_binder_transaction(struct task_struct *from, struct task_struct *to)
 {
 	return 0;
 }
 
-static int cap_binder_transfer_binder(struct task_struct *from,
-				      struct task_struct *to)
+static int cap_binder_transfer_binder(struct task_struct *from, struct task_struct *to)
 {
 	return 0;
 }
 
-static int cap_binder_transfer_file(struct task_struct *from,
-				    struct task_struct *to, struct file *file)
+static int cap_binder_transfer_file(struct task_struct *from, struct task_struct *to, struct file *file)
 {
 	return 0;
 }
@@ -139,7 +136,7 @@ static int cap_dentry_init_security(struct dentry *dentry, int mode,
 					struct qstr *name, void **ctx,
 					u32 *ctxlen)
 {
-	return -EOPNOTSUPP;
+	return 0;
 }
 
 static int cap_inode_alloc_security(struct inode *inode)
@@ -225,7 +222,7 @@ static int cap_inode_setattr(struct dentry *dentry, struct iattr *iattr)
 	return 0;
 }
 
-static int cap_inode_getattr(const struct path *path)
+static int cap_inode_getattr(struct vfsmount *mnt, struct dentry *dentry)
 {
 	return 0;
 }
@@ -366,9 +363,9 @@ static int cap_file_fcntl(struct file *file, unsigned int cmd,
 	return 0;
 }
 
-static void cap_file_set_fowner(struct file *file)
+static int cap_file_set_fowner(struct file *file)
 {
-	return;
+	return 0;
 }
 
 static int cap_file_send_sigiotask(struct task_struct *tsk,
@@ -420,11 +417,6 @@ static int cap_kernel_act_as(struct cred *new, u32 secid)
 }
 
 static int cap_kernel_create_files_as(struct cred *new, struct inode *inode)
-{
-	return 0;
-}
-
-static int cap_kernel_fw_from_file(struct file *file, char *buf, size_t size)
 {
 	return 0;
 }
@@ -776,6 +768,11 @@ static int cap_tun_dev_open(void *security)
 {
 	return 0;
 }
+
+static void cap_skb_owned_by(struct sk_buff *skb, struct sock *sk)
+{
+}
+
 #endif	/* CONFIG_SECURITY_NETWORK */
 
 #ifdef CONFIG_SECURITY_NETWORK_XFRM
@@ -902,7 +899,7 @@ static void cap_key_free(struct key *key)
 }
 
 static int cap_key_permission(key_ref_t key_ref, const struct cred *cred,
-			      unsigned perm)
+			      key_perm_t perm)
 {
 	return 0;
 }
@@ -1042,7 +1039,6 @@ void __init security_fixup_ops(struct security_operations *ops)
 	set_to_cap_if_null(ops, cred_transfer);
 	set_to_cap_if_null(ops, kernel_act_as);
 	set_to_cap_if_null(ops, kernel_create_files_as);
-	set_to_cap_if_null(ops, kernel_fw_from_file);
 	set_to_cap_if_null(ops, kernel_module_request);
 	set_to_cap_if_null(ops, kernel_module_from_file);
 	set_to_cap_if_null(ops, task_fix_setuid);
@@ -1129,6 +1125,7 @@ void __init security_fixup_ops(struct security_operations *ops)
 	set_to_cap_if_null(ops, tun_dev_open);
 	set_to_cap_if_null(ops, tun_dev_attach_queue);
 	set_to_cap_if_null(ops, tun_dev_attach);
+	set_to_cap_if_null(ops, skb_owned_by);
 #endif	/* CONFIG_SECURITY_NETWORK */
 #ifdef CONFIG_SECURITY_NETWORK_XFRM
 	set_to_cap_if_null(ops, xfrm_policy_alloc_security);

@@ -74,8 +74,6 @@ struct imx7_cpuidle_pm_info {
 	struct imx7_pm_base anatop_base;
 	struct imx7_pm_base src_base;
 	struct imx7_pm_base iomuxc_gpr_base;
-	struct imx7_pm_base gpc_base;
-	struct imx7_pm_base gic_dist_base;
 } __aligned(8);
 
 static atomic_t master_lpi = ATOMIC_INIT(0);
@@ -141,16 +139,18 @@ static struct cpuidle_driver imx7d_cpuidle_driver = {
 		{
 			.exit_latency = 50,
 			.target_residency = 75,
-			.flags = CPUIDLE_FLAG_TIMER_STOP,
+			.flags = CPUIDLE_FLAG_TIME_VALID |
+				CPUIDLE_FLAG_TIMER_STOP,
 			.enter = imx7d_enter_low_power_idle,
 			.name = "WAIT",
 			.desc = "Clock off",
 		},
 		/* LOW POWER IDLE */
 		{
-			.exit_latency = 500,
-			.target_residency = 800,
-			.flags = CPUIDLE_FLAG_TIMER_STOP,
+			.exit_latency = 150,
+			.target_residency = 300,
+			.flags = CPUIDLE_FLAG_TIME_VALID |
+				CPUIDLE_FLAG_TIMER_STOP,
 			.enter = imx7d_enter_low_power_idle,
 			.name = "LOW-POWER-IDLE",
 			.desc = "ARM power off",
@@ -281,14 +281,6 @@ int __init imx7d_cpuidle_init(void)
 	cpuidle_pm_info->iomuxc_gpr_base.pbase = MX7D_IOMUXC_GPR_BASE_ADDR;
 	cpuidle_pm_info->iomuxc_gpr_base.vbase =
 		(void __iomem *)IMX_IO_P2V(MX7D_IOMUXC_GPR_BASE_ADDR);
-
-	cpuidle_pm_info->gpc_base.pbase = MX7D_GPC_BASE_ADDR;
-	cpuidle_pm_info->gpc_base.vbase =
-		(void __iomem *)IMX_IO_P2V(MX7D_GPC_BASE_ADDR);
-
-	cpuidle_pm_info->gic_dist_base.pbase = MX7D_GIC_BASE_ADDR;
-	cpuidle_pm_info->gic_dist_base.vbase =
-		(void __iomem *)IMX_IO_P2V(MX7D_GIC_BASE_ADDR);
 
 	imx7d_enable_rcosc();
 

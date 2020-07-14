@@ -332,7 +332,6 @@ static void ehci_turn_off_all_ports(struct ehci_hcd *ehci)
 
 	while (port--) {
 		u32 portsc = ehci_readl(ehci, &ehci->regs->port_status[port]);
-
 		ehci_writel(ehci, portsc,
 				&ehci->regs->port_status[port]);
 		spin_unlock_irq(&ehci->lock);
@@ -597,11 +596,16 @@ static int ehci_run (struct usb_hcd *hcd)
 	 */
 	hcc_params = ehci_readl(ehci, &ehci->caps->hcc_params);
 	if (HCC_64BIT_ADDR(hcc_params)) {
-		ehci_writel(ehci, 0, &ehci->regs->segment);
-#if 0
-// this is deeply broken on almost all architectures
+#ifdef CONFIG_ARM64
+		ehci_writel(ehci, ehci->periodic_dma >> 32, &ehci->regs->segment);
+		/*
+		 * this is deeply broken on almost all architectures
+		 * but arm64 can use it so enable it
+		 */
 		if (!dma_set_mask(hcd->self.controller, DMA_BIT_MASK(64)))
 			ehci_info(ehci, "enabled 64bit DMA\n");
+#else
+		ehci_writel(ehci, 0, &ehci->regs->segment);
 #endif
 	}
 
@@ -1112,7 +1116,7 @@ int ehci_suspend(struct usb_hcd *hcd, bool do_wakeup)
 EXPORT_SYMBOL_GPL(ehci_suspend);
 
 /* Returns 0 if power was preserved, 1 if power was lost */
-int ehci_resume(struct usb_hcd *hcd, bool force_reset)
+int ehci_resume(struct usb_hcd *hcd, bool hibernated)
 {
 	struct ehci_hcd		*ehci = hcd_to_ehci(hcd);
 
@@ -1126,12 +1130,12 @@ int ehci_resume(struct usb_hcd *hcd, bool force_reset)
 		return 0;		/* Controller is dead */
 
 	/*
-	 * If CF is still set and reset isn't forced
+	 * If CF is still set and we aren't resuming from hibernation
 	 * then we maintained suspend power.
 	 * Just undo the effect of ehci_suspend().
 	 */
 	if (ehci_readl(ehci, &ehci->regs->configured_flag) == FLAG_CF &&
-			!force_reset) {
+			!hibernated) {
 		int	mask = INTR_MASK;
 
 		ehci_prepare_ports_for_controller_resume(ehci);
@@ -1275,6 +1279,11 @@ MODULE_LICENSE ("GPL");
 #ifdef CONFIG_XPS_USB_HCD_XILINX
 #include "ehci-xilinx-of.c"
 #define XILINX_OF_PLATFORM_DRIVER	ehci_hcd_xilinx_of_driver
+#endif
+
+#ifdef CONFIG_USB_OCTEON_EHCI
+#include "ehci-octeon.c"
+#define PLATFORM_DRIVER		ehci_octeon_driver
 #endif
 
 #ifdef CONFIG_TILE_USB

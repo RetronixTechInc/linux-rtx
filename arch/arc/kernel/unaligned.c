@@ -12,7 +12,6 @@
  */
 
 #include <linux/types.h>
-#include <linux/perf_event.h>
 #include <linux/ptrace.h>
 #include <linux/uaccess.h>
 #include <asm/disasm.h>
@@ -254,7 +253,6 @@ int misaligned_fixup(unsigned long address, struct pt_regs *regs,
 		}
 	}
 
-	perf_sw_event(PERF_COUNT_SW_ALIGNMENT_FAULTS, 1, regs, address);
 	return 0;
 
 fault:

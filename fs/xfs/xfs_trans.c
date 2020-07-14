@@ -22,6 +22,8 @@
 #include "xfs_format.h"
 #include "xfs_log_format.h"
 #include "xfs_trans_resv.h"
+#include "xfs_sb.h"
+#include "xfs_ag.h"
 #include "xfs_mount.h"
 #include "xfs_inode.h"
 #include "xfs_extent_busy.h"
@@ -173,7 +175,7 @@ xfs_trans_reserve(
 	uint			rtextents)
 {
 	int		error = 0;
-	bool		rsvd = (tp->t_flags & XFS_TRANS_RESERVE) != 0;
+	int		rsvd = (tp->t_flags & XFS_TRANS_RESERVE) != 0;
 
 	/* Mark this thread as being in a transaction */
 	current_set_flags_nested(&tp->t_pflags, PF_FSTRANS);
@@ -184,10 +186,11 @@ xfs_trans_reserve(
 	 * fail if the count would go below zero.
 	 */
 	if (blocks > 0) {
-		error = xfs_mod_fdblocks(tp->t_mountp, -((int64_t)blocks), rsvd);
+		error = xfs_icsb_modify_counters(tp->t_mountp, XFS_SBS_FDBLOCKS,
+					  -((int64_t)blocks), rsvd);
 		if (error != 0) {
 			current_restore_flags_nested(&tp->t_pflags, PF_FSTRANS);
-			return -ENOSPC;
+			return (XFS_ERROR(ENOSPC));
 		}
 		tp->t_blk_res += blocks;
 	}
@@ -235,9 +238,10 @@ xfs_trans_reserve(
 	 * fail if the count would go below zero.
 	 */
 	if (rtextents > 0) {
-		error = xfs_mod_frextents(tp->t_mountp, -((int64_t)rtextents));
+		error = xfs_mod_incore_sb(tp->t_mountp, XFS_SBS_FREXTENTS,
+					  -((int64_t)rtextents), rsvd);
 		if (error) {
-			error = -ENOSPC;
+			error = XFS_ERROR(ENOSPC);
 			goto undo_log;
 		}
 		tp->t_rtx_res += rtextents;
@@ -266,7 +270,8 @@ undo_log:
 
 undo_blocks:
 	if (blocks > 0) {
-		xfs_mod_fdblocks(tp->t_mountp, -((int64_t)blocks), rsvd);
+		xfs_icsb_modify_counters(tp->t_mountp, XFS_SBS_FDBLOCKS,
+					 (int64_t)blocks, rsvd);
 		tp->t_blk_res = 0;
 	}
 
@@ -485,60 +490,19 @@ xfs_trans_apply_sb_deltas(
 				  sizeof(sbp->sb_frextents) - 1);
 }
 
-STATIC int
-xfs_sb_mod8(
-	uint8_t			*field,
-	int8_t			delta)
-{
-	int8_t			counter = *field;
-
-	counter += delta;
-	if (counter < 0) {
-		ASSERT(0);
-		return -EINVAL;
-	}
-	*field = counter;
-	return 0;
-}
-
-STATIC int
-xfs_sb_mod32(
-	uint32_t		*field,
-	int32_t			delta)
-{
-	int32_t			counter = *field;
-
-	counter += delta;
-	if (counter < 0) {
-		ASSERT(0);
-		return -EINVAL;
-	}
-	*field = counter;
-	return 0;
-}
-
-STATIC int
-xfs_sb_mod64(
-	uint64_t		*field,
-	int64_t			delta)
-{
-	int64_t			counter = *field;
-
-	counter += delta;
-	if (counter < 0) {
-		ASSERT(0);
-		return -EINVAL;
-	}
-	*field = counter;
-	return 0;
-}
-
 /*
  * xfs_trans_unreserve_and_mod_sb() is called to release unused reservations
  * and apply superblock counter changes to the in-core superblock.  The
  * t_res_fdblocks_delta and t_res_frextents_delta fields are explicitly NOT
  * applied to the in-core superblock.  The idea is that that has already been
  * done.
+ *
+ * This is done efficiently with a single call to xfs_mod_incore_sb_batch().
+ * However, we have to ensure that we only modify each superblock field only
+ * once because the application of the delta values may not be atomic. That can
+ * lead to ENOSPC races occurring if we have two separate modifcations of the
+ * free space counter to put back the entire reservation and then take away
+ * what we used.
  *
  * If we are not logging superblock counters, then the inode allocated/free and
  * used block counts are not updated in the on disk superblock. In this case,
@@ -547,15 +511,21 @@ xfs_sb_mod64(
  */
 void
 xfs_trans_unreserve_and_mod_sb(
-	struct xfs_trans	*tp)
+	xfs_trans_t	*tp)
 {
-	struct xfs_mount	*mp = tp->t_mountp;
-	bool			rsvd = (tp->t_flags & XFS_TRANS_RESERVE) != 0;
-	int64_t			blkdelta = 0;
-	int64_t			rtxdelta = 0;
-	int64_t			idelta = 0;
-	int64_t			ifreedelta = 0;
-	int			error;
+	xfs_mod_sb_t	msb[9];	/* If you add cases, add entries */
+	xfs_mod_sb_t	*msbp;
+	xfs_mount_t	*mp = tp->t_mountp;
+	/* REFERENCED */
+	int		error;
+	int		rsvd;
+	int64_t		blkdelta = 0;
+	int64_t		rtxdelta = 0;
+	int64_t		idelta = 0;
+	int64_t		ifreedelta = 0;
+
+	msbp = msb;
+	rsvd = (tp->t_flags & XFS_TRANS_RESERVE) != 0;
 
 	/* calculate deltas */
 	if (tp->t_blk_res > 0)
@@ -579,115 +549,97 @@ xfs_trans_unreserve_and_mod_sb(
 
 	/* apply the per-cpu counters */
 	if (blkdelta) {
-		error = xfs_mod_fdblocks(mp, blkdelta, rsvd);
+		error = xfs_icsb_modify_counters(mp, XFS_SBS_FDBLOCKS,
+						 blkdelta, rsvd);
 		if (error)
 			goto out;
 	}
 
 	if (idelta) {
-		error = xfs_mod_icount(mp, idelta);
+		error = xfs_icsb_modify_counters(mp, XFS_SBS_ICOUNT,
+						 idelta, rsvd);
 		if (error)
 			goto out_undo_fdblocks;
 	}
 
 	if (ifreedelta) {
-		error = xfs_mod_ifree(mp, ifreedelta);
+		error = xfs_icsb_modify_counters(mp, XFS_SBS_IFREE,
+						 ifreedelta, rsvd);
 		if (error)
 			goto out_undo_icount;
 	}
 
-	if (rtxdelta == 0 && !(tp->t_flags & XFS_TRANS_SB_DIRTY))
-		return;
-
 	/* apply remaining deltas */
-	spin_lock(&mp->m_sb_lock);
-	if (rtxdelta) {
-		error = xfs_sb_mod64(&mp->m_sb.sb_frextents, rtxdelta);
-		if (error)
-			goto out_undo_ifree;
+	if (rtxdelta != 0) {
+		msbp->msb_field = XFS_SBS_FREXTENTS;
+		msbp->msb_delta = rtxdelta;
+		msbp++;
 	}
 
-	if (tp->t_dblocks_delta != 0) {
-		error = xfs_sb_mod64(&mp->m_sb.sb_dblocks, tp->t_dblocks_delta);
-		if (error)
-			goto out_undo_frextents;
+	if (tp->t_flags & XFS_TRANS_SB_DIRTY) {
+		if (tp->t_dblocks_delta != 0) {
+			msbp->msb_field = XFS_SBS_DBLOCKS;
+			msbp->msb_delta = tp->t_dblocks_delta;
+			msbp++;
+		}
+		if (tp->t_agcount_delta != 0) {
+			msbp->msb_field = XFS_SBS_AGCOUNT;
+			msbp->msb_delta = tp->t_agcount_delta;
+			msbp++;
+		}
+		if (tp->t_imaxpct_delta != 0) {
+			msbp->msb_field = XFS_SBS_IMAX_PCT;
+			msbp->msb_delta = tp->t_imaxpct_delta;
+			msbp++;
+		}
+		if (tp->t_rextsize_delta != 0) {
+			msbp->msb_field = XFS_SBS_REXTSIZE;
+			msbp->msb_delta = tp->t_rextsize_delta;
+			msbp++;
+		}
+		if (tp->t_rbmblocks_delta != 0) {
+			msbp->msb_field = XFS_SBS_RBMBLOCKS;
+			msbp->msb_delta = tp->t_rbmblocks_delta;
+			msbp++;
+		}
+		if (tp->t_rblocks_delta != 0) {
+			msbp->msb_field = XFS_SBS_RBLOCKS;
+			msbp->msb_delta = tp->t_rblocks_delta;
+			msbp++;
+		}
+		if (tp->t_rextents_delta != 0) {
+			msbp->msb_field = XFS_SBS_REXTENTS;
+			msbp->msb_delta = tp->t_rextents_delta;
+			msbp++;
+		}
+		if (tp->t_rextslog_delta != 0) {
+			msbp->msb_field = XFS_SBS_REXTSLOG;
+			msbp->msb_delta = tp->t_rextslog_delta;
+			msbp++;
+		}
 	}
-	if (tp->t_agcount_delta != 0) {
-		error = xfs_sb_mod32(&mp->m_sb.sb_agcount, tp->t_agcount_delta);
+
+	/*
+	 * If we need to change anything, do it.
+	 */
+	if (msbp > msb) {
+		error = xfs_mod_incore_sb_batch(tp->t_mountp, msb,
+			(uint)(msbp - msb), rsvd);
 		if (error)
-			goto out_undo_dblocks;
+			goto out_undo_ifreecount;
 	}
-	if (tp->t_imaxpct_delta != 0) {
-		error = xfs_sb_mod8(&mp->m_sb.sb_imax_pct, tp->t_imaxpct_delta);
-		if (error)
-			goto out_undo_agcount;
-	}
-	if (tp->t_rextsize_delta != 0) {
-		error = xfs_sb_mod32(&mp->m_sb.sb_rextsize,
-				     tp->t_rextsize_delta);
-		if (error)
-			goto out_undo_imaxpct;
-	}
-	if (tp->t_rbmblocks_delta != 0) {
-		error = xfs_sb_mod32(&mp->m_sb.sb_rbmblocks,
-				     tp->t_rbmblocks_delta);
-		if (error)
-			goto out_undo_rextsize;
-	}
-	if (tp->t_rblocks_delta != 0) {
-		error = xfs_sb_mod64(&mp->m_sb.sb_rblocks, tp->t_rblocks_delta);
-		if (error)
-			goto out_undo_rbmblocks;
-	}
-	if (tp->t_rextents_delta != 0) {
-		error = xfs_sb_mod64(&mp->m_sb.sb_rextents,
-				     tp->t_rextents_delta);
-		if (error)
-			goto out_undo_rblocks;
-	}
-	if (tp->t_rextslog_delta != 0) {
-		error = xfs_sb_mod8(&mp->m_sb.sb_rextslog,
-				     tp->t_rextslog_delta);
-		if (error)
-			goto out_undo_rextents;
-	}
-	spin_unlock(&mp->m_sb_lock);
+
 	return;
 
-out_undo_rextents:
-	if (tp->t_rextents_delta)
-		xfs_sb_mod64(&mp->m_sb.sb_rextents, -tp->t_rextents_delta);
-out_undo_rblocks:
-	if (tp->t_rblocks_delta)
-		xfs_sb_mod64(&mp->m_sb.sb_rblocks, -tp->t_rblocks_delta);
-out_undo_rbmblocks:
-	if (tp->t_rbmblocks_delta)
-		xfs_sb_mod32(&mp->m_sb.sb_rbmblocks, -tp->t_rbmblocks_delta);
-out_undo_rextsize:
-	if (tp->t_rextsize_delta)
-		xfs_sb_mod32(&mp->m_sb.sb_rextsize, -tp->t_rextsize_delta);
-out_undo_imaxpct:
-	if (tp->t_rextsize_delta)
-		xfs_sb_mod8(&mp->m_sb.sb_imax_pct, -tp->t_imaxpct_delta);
-out_undo_agcount:
-	if (tp->t_agcount_delta)
-		xfs_sb_mod32(&mp->m_sb.sb_agcount, -tp->t_agcount_delta);
-out_undo_dblocks:
-	if (tp->t_dblocks_delta)
-		xfs_sb_mod64(&mp->m_sb.sb_dblocks, -tp->t_dblocks_delta);
-out_undo_frextents:
-	if (rtxdelta)
-		xfs_sb_mod64(&mp->m_sb.sb_frextents, -rtxdelta);
-out_undo_ifree:
-	spin_unlock(&mp->m_sb_lock);
+out_undo_ifreecount:
 	if (ifreedelta)
-		xfs_mod_ifree(mp, -ifreedelta);
+		xfs_icsb_modify_counters(mp, XFS_SBS_IFREE, -ifreedelta, rsvd);
 out_undo_icount:
 	if (idelta)
-		xfs_mod_icount(mp, -idelta);
+		xfs_icsb_modify_counters(mp, XFS_SBS_ICOUNT, -idelta, rsvd);
 out_undo_fdblocks:
 	if (blkdelta)
-		xfs_mod_fdblocks(mp, -blkdelta, rsvd);
+		xfs_icsb_modify_counters(mp, XFS_SBS_FDBLOCKS, -blkdelta, rsvd);
 out:
 	ASSERT(error == 0);
 	return;
@@ -876,7 +828,7 @@ xfs_trans_committed_bulk(
 		xfs_log_item_batch_insert(ailp, &cur, log_items, i, commit_lsn);
 
 	spin_lock(&ailp->xa_lock);
-	xfs_trans_ail_cursor_done(&cur);
+	xfs_trans_ail_cursor_done(ailp, &cur);
 	spin_unlock(&ailp->xa_lock);
 }
 
@@ -923,7 +875,7 @@ xfs_trans_commit(
 		goto out_unreserve;
 
 	if (XFS_FORCED_SHUTDOWN(mp)) {
-		error = -EIO;
+		error = XFS_ERROR(EIO);
 		goto out_unreserve;
 	}
 
@@ -936,7 +888,12 @@ xfs_trans_commit(
 		xfs_trans_apply_sb_deltas(tp);
 	xfs_trans_apply_dquot_deltas(tp);
 
-	xfs_log_commit_cil(mp, tp, &commit_lsn, flags);
+	error = xfs_log_commit_cil(mp, tp, &commit_lsn, flags);
+	if (error == ENOMEM) {
+		xfs_force_shutdown(mp, SHUTDOWN_LOG_IO_ERROR);
+		error = XFS_ERROR(EIO);
+		goto out_unreserve;
+	}
 
 	current_restore_flags_nested(&tp->t_pflags, PF_FSTRANS);
 	xfs_trans_free(tp);
@@ -946,7 +903,10 @@ xfs_trans_commit(
 	 * log out now and wait for it.
 	 */
 	if (sync) {
-		error = _xfs_log_force_lsn(mp, commit_lsn, XFS_LOG_SYNC, NULL);
+		if (!error) {
+			error = _xfs_log_force_lsn(mp, commit_lsn,
+				      XFS_LOG_SYNC, NULL);
+		}
 		XFS_STATS_INC(xs_trans_sync);
 	} else {
 		XFS_STATS_INC(xs_trans_async);
@@ -966,7 +926,7 @@ out_unreserve:
 	if (tp->t_ticket) {
 		commit_lsn = xfs_log_done(mp, tp->t_ticket, NULL, log_flags);
 		if (commit_lsn == -1 && !error)
-			error = -EIO;
+			error = XFS_ERROR(EIO);
 	}
 	current_restore_flags_nested(&tp->t_pflags, PF_FSTRANS);
 	xfs_trans_free_items(tp, NULLCOMMITLSN, error ? XFS_TRANS_ABORT : 0);
@@ -1073,7 +1033,7 @@ xfs_trans_roll(
 	 */
 	error = xfs_trans_commit(trans, 0);
 	if (error)
-		return error;
+		return (error);
 
 	trans = *tpp;
 

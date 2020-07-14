@@ -73,9 +73,13 @@
 #include <asm/setup.h>
 #include <asm/uv/uv.h>
 #include <linux/mc146818rtc.h>
+#include <asm/smpboot_hooks.h>
 #include <asm/i8259.h>
 #include <asm/realmode.h>
 #include <asm/misc.h>
+
+/* State of each CPU */
+DEFINE_PER_CPU(int, cpu_state) = { 0 };
 
 /* Number of siblings per CPU package */
 int smp_num_siblings = 1;
@@ -95,47 +99,10 @@ EXPORT_PER_CPU_SYMBOL(cpu_core_map);
 DEFINE_PER_CPU_READ_MOSTLY(cpumask_var_t, cpu_llc_shared_map);
 
 /* Per CPU bogomips and other parameters */
-DEFINE_PER_CPU_READ_MOSTLY(struct cpuinfo_x86, cpu_info);
+DEFINE_PER_CPU_SHARED_ALIGNED(struct cpuinfo_x86, cpu_info);
 EXPORT_PER_CPU_SYMBOL(cpu_info);
 
 atomic_t init_deasserted;
-
-static inline void smpboot_setup_warm_reset_vector(unsigned long start_eip)
-{
-	unsigned long flags;
-
-	spin_lock_irqsave(&rtc_lock, flags);
-	CMOS_WRITE(0xa, 0xf);
-	spin_unlock_irqrestore(&rtc_lock, flags);
-	local_flush_tlb();
-	pr_debug("1.\n");
-	*((volatile unsigned short *)phys_to_virt(TRAMPOLINE_PHYS_HIGH)) =
-							start_eip >> 4;
-	pr_debug("2.\n");
-	*((volatile unsigned short *)phys_to_virt(TRAMPOLINE_PHYS_LOW)) =
-							start_eip & 0xf;
-	pr_debug("3.\n");
-}
-
-static inline void smpboot_restore_warm_reset_vector(void)
-{
-	unsigned long flags;
-
-	/*
-	 * Install writable page 0 entry to set BIOS data area.
-	 */
-	local_flush_tlb();
-
-	/*
-	 * Paranoid:  Set warm reset code and vector here back
-	 * to default values.
-	 */
-	spin_lock_irqsave(&rtc_lock, flags);
-	CMOS_WRITE(0, 0xf);
-	spin_unlock_irqrestore(&rtc_lock, flags);
-
-	*((volatile u32 *)phys_to_virt(TRAMPOLINE_PHYS_LOW)) = 0;
-}
 
 /*
  * Report back to the Boot Processor during boot time or to the caller processor
@@ -144,6 +111,7 @@ static inline void smpboot_restore_warm_reset_vector(void)
 static void smp_callin(void)
 {
 	int cpuid, phys_id;
+	unsigned long timeout;
 
 	/*
 	 * If waken up by an INIT in an 82489DX configuration
@@ -154,14 +122,44 @@ static void smp_callin(void)
 	 * Since CPU0 is not wakened up by INIT, it doesn't wait for the IPI.
 	 */
 	cpuid = smp_processor_id();
-	if (apic->wait_for_init_deassert && cpuid)
-		while (!atomic_read(&init_deasserted))
-			cpu_relax();
+	if (apic->wait_for_init_deassert && cpuid != 0)
+		apic->wait_for_init_deassert(&init_deasserted);
 
 	/*
 	 * (This works even if the APIC is not enabled.)
 	 */
 	phys_id = read_apic_id();
+	if (cpumask_test_cpu(cpuid, cpu_callin_mask)) {
+		panic("%s: phys CPU#%d, CPU#%d already present??\n", __func__,
+					phys_id, cpuid);
+	}
+	pr_debug("CPU#%d (phys ID: %d) waiting for CALLOUT\n", cpuid, phys_id);
+
+	/*
+	 * STARTUP IPIs are fragile beasts as they might sometimes
+	 * trigger some glue motherboard logic. Complete APIC bus
+	 * silence for 1 second, this overestimates the time the
+	 * boot CPU is spending to send the up to 2 STARTUP IPIs
+	 * by a factor of two. This should be enough.
+	 */
+
+	/*
+	 * Waiting 2s total for startup (udelay is not yet working)
+	 */
+	timeout = jiffies + 2*HZ;
+	while (time_before(jiffies, timeout)) {
+		/*
+		 * Has the boot CPU finished it's STARTUP sequence?
+		 */
+		if (cpumask_test_cpu(cpuid, cpu_callout_mask))
+			break;
+		cpu_relax();
+	}
+
+	if (!time_before(jiffies, timeout)) {
+		panic("%s: CPU%d started up but did not get a callout!\n",
+		      __func__, cpuid);
+	}
 
 	/*
 	 * the boot CPU has finished the init stage and is spinning
@@ -169,7 +167,12 @@ static void smp_callin(void)
 	 * CPU, first the APIC. (this is probably redundant on most
 	 * boards)
 	 */
-	apic_ap_setup();
+
+	pr_debug("CALLIN, before setup_local_APIC()\n");
+	if (apic->smp_callin_clear_local_apic)
+		apic->smp_callin_clear_local_apic();
+	setup_local_APIC();
+	end_local_APIC_setup();
 
 	/*
 	 * Need to setup vector mappings before we enable interrupts.
@@ -254,7 +257,7 @@ static void notrace start_secondary(void *unused)
 	lock_vector_lock();
 	set_cpu_online(smp_processor_id(), true);
 	unlock_vector_lock();
-	cpu_set_state_online(smp_processor_id());
+	per_cpu(cpu_state, smp_processor_id()) = CPU_ONLINE;
 	x86_platform.nmi_init();
 
 	/* enable local interrupts */
@@ -296,19 +299,11 @@ void smp_store_cpu_info(int id)
 }
 
 static bool
-topology_same_node(struct cpuinfo_x86 *c, struct cpuinfo_x86 *o)
-{
-	int cpu1 = c->cpu_index, cpu2 = o->cpu_index;
-
-	return (cpu_to_node(cpu1) == cpu_to_node(cpu2));
-}
-
-static bool
 topology_sane(struct cpuinfo_x86 *c, struct cpuinfo_x86 *o, const char *name)
 {
 	int cpu1 = c->cpu_index, cpu2 = o->cpu_index;
 
-	return !WARN_ONCE(!topology_same_node(c, o),
+	return !WARN_ONCE(cpu_to_node(cpu1) != cpu_to_node(cpu2),
 		"sched: CPU #%d's %s-sibling CPU #%d is not on the same node! "
 		"[node: %d != %d]. Ignoring dependency.\n",
 		cpu1, name, cpu2, cpu_to_node(cpu1), cpu_to_node(cpu2));
@@ -349,42 +344,15 @@ static bool match_llc(struct cpuinfo_x86 *c, struct cpuinfo_x86 *o)
 	return false;
 }
 
-/*
- * Unlike the other levels, we do not enforce keeping a
- * multicore group inside a NUMA node.  If this happens, we will
- * discard the MC level of the topology later.
- */
-static bool match_die(struct cpuinfo_x86 *c, struct cpuinfo_x86 *o)
+static bool match_mc(struct cpuinfo_x86 *c, struct cpuinfo_x86 *o)
 {
-	if (c->phys_proc_id == o->phys_proc_id)
-		return true;
-	return false;
-}
+	if (c->phys_proc_id == o->phys_proc_id) {
+		if (cpu_has(c, X86_FEATURE_AMD_DCM))
+			return true;
 
-static struct sched_domain_topology_level numa_inside_package_topology[] = {
-#ifdef CONFIG_SCHED_SMT
-	{ cpu_smt_mask, cpu_smt_flags, SD_INIT_NAME(SMT) },
-#endif
-#ifdef CONFIG_SCHED_MC
-	{ cpu_coregroup_mask, cpu_core_flags, SD_INIT_NAME(MC) },
-#endif
-	{ NULL, },
-};
-/*
- * set_sched_topology() sets the topology internal to a CPU.  The
- * NUMA topologies are layered on top of it to build the full
- * system topology.
- *
- * If NUMA nodes are observed to occur within a CPU package, this
- * function should be called.  It forces the sched domain code to
- * only use the SMT level for the CPU portion of the topology.
- * This essentially falls back to relying on NUMA information
- * from the SRAT table to describe the entire system topology
- * (except for hyperthreads).
- */
-static void primarily_use_numa_for_topology(void)
-{
-	set_sched_topology(numa_inside_package_topology);
+		return topology_sane(c, o, "mc");
+	}
+	return false;
 }
 
 void set_cpu_sibling_map(int cpu)
@@ -423,7 +391,7 @@ void set_cpu_sibling_map(int cpu)
 	for_each_cpu(i, cpu_sibling_setup_mask) {
 		o = &cpu_data(i);
 
-		if ((i == cpu) || (has_mp && match_die(c, o))) {
+		if ((i == cpu) || (has_mp && match_mc(c, o))) {
 			link_mask(core, cpu, i);
 
 			/*
@@ -445,8 +413,6 @@ void set_cpu_sibling_map(int cpu)
 			} else if (i != cpu && !c->booted_cores)
 				c->booted_cores = cpu_data(i).booted_cores;
 		}
-		if (match_die(c, o) && !topology_same_node(c, o))
-			primarily_use_numa_for_topology();
 	}
 }
 
@@ -742,15 +708,11 @@ wakeup_cpu_via_init_nmi(int cpu, unsigned long start_ip, int apicid,
 	int id;
 	int boot_error;
 
-	preempt_disable();
-
 	/*
 	 * Wake up AP by INIT, INIT, STARTUP sequence.
 	 */
-	if (cpu) {
-		boot_error = wakeup_secondary_cpu_via_init(apicid, start_ip);
-		goto out;
-	}
+	if (cpu)
+		return wakeup_secondary_cpu_via_init(apicid, start_ip);
 
 	/*
 	 * Wake up BSP by nmi.
@@ -770,30 +732,7 @@ wakeup_cpu_via_init_nmi(int cpu, unsigned long start_ip, int apicid,
 		boot_error = wakeup_secondary_cpu_via_nmi(id, start_ip);
 	}
 
-out:
-	preempt_enable();
-
 	return boot_error;
-}
-
-void common_cpu_up(unsigned int cpu, struct task_struct *idle)
-{
-	/* Just in case we booted with a single CPU. */
-	alternatives_enable_smp();
-
-	per_cpu(current_task, cpu) = idle;
-
-#ifdef CONFIG_X86_32
-	/* Stack for startup_32 can be just as for start_secondary onwards */
-	irq_ctx_init(cpu);
-	per_cpu(cpu_current_top_of_stack, cpu) =
-		(unsigned long)task_stack_page(idle) + THREAD_SIZE;
-#else
-	clear_tsk_thread_flag(idle, TIF_FORK);
-	initial_gs = per_cpu_offset(cpu);
-#endif
-	per_cpu(kernel_stack, cpu) =
-		(unsigned long)task_stack_page(idle) + THREAD_SIZE;
 }
 
 /*
@@ -810,12 +749,26 @@ static int do_boot_cpu(int apicid, int cpu, struct task_struct *idle)
 	unsigned long start_ip = real_mode_header->trampoline_start;
 
 	unsigned long boot_error = 0;
+	int timeout;
 	int cpu0_nmi_registered = 0;
-	unsigned long timeout;
+
+	/* Just in case we booted with a single CPU. */
+	alternatives_enable_smp();
 
 	idle->thread.sp = (unsigned long) (((struct pt_regs *)
 			  (THREAD_SIZE +  task_stack_page(idle))) - 1);
+	per_cpu(current_task, cpu) = idle;
 
+#ifdef CONFIG_X86_32
+	/* Stack for startup_32 can be just as for start_secondary onwards */
+	irq_ctx_init(cpu);
+#else
+	clear_tsk_thread_flag(idle, TIF_FORK);
+	initial_gs = per_cpu_offset(cpu);
+	per_cpu(kernel_stack, cpu) =
+		(unsigned long)task_stack_page(idle) -
+		KERNEL_STACK_OFFSET + THREAD_SIZE;
+#endif
 	early_gdt_descr.address = (unsigned long)get_cpu_gdt_table(cpu);
 	initial_code = (unsigned long)start_secondary;
 	stack_start  = idle->thread.sp;
@@ -845,15 +798,6 @@ static int do_boot_cpu(int apicid, int cpu, struct task_struct *idle)
 	}
 
 	/*
-	 * AP might wait on cpu_callout_mask in cpu_init() with
-	 * cpu_initialized_mask set if previous attempt to online
-	 * it timed-out. Clear cpu_initialized_mask so that after
-	 * INIT/SIPI it could start with a clean state.
-	 */
-	cpumask_clear_cpu(cpu, cpu_initialized_mask);
-	smp_mb();
-
-	/*
 	 * Wake up a CPU in difference cases:
 	 * - Use the method in the APIC driver if it's defined
 	 * Otherwise,
@@ -867,38 +811,56 @@ static int do_boot_cpu(int apicid, int cpu, struct task_struct *idle)
 
 	if (!boot_error) {
 		/*
-		 * Wait 10s total for a response from AP
+		 * allow APs to start initializing.
 		 */
-		boot_error = -1;
-		timeout = jiffies + 10*HZ;
-		while (time_before(jiffies, timeout)) {
-			if (cpumask_test_cpu(cpu, cpu_initialized_mask)) {
-				/*
-				 * Tell AP to proceed with initialization
-				 */
-				cpumask_set_cpu(cpu, cpu_callout_mask);
-				boot_error = 0;
-				break;
-			}
-			udelay(100);
-			schedule();
-		}
-	}
+		pr_debug("Before Callout %d\n", cpu);
+		cpumask_set_cpu(cpu, cpu_callout_mask);
+		pr_debug("After Callout %d\n", cpu);
 
-	if (!boot_error) {
 		/*
-		 * Wait till AP completes initial initialization
+		 * Wait 5s total for a response
 		 */
-		while (!cpumask_test_cpu(cpu, cpu_callin_mask)) {
+		for (timeout = 0; timeout < 50000; timeout++) {
+			if (cpumask_test_cpu(cpu, cpu_callin_mask))
+				break;	/* It has booted */
+			udelay(100);
 			/*
 			 * Allow other tasks to run while we wait for the
 			 * AP to come online. This also gives a chance
 			 * for the MTRR work(triggered by the AP coming online)
 			 * to be completed in the stop machine context.
 			 */
-			udelay(100);
 			schedule();
 		}
+
+		if (cpumask_test_cpu(cpu, cpu_callin_mask)) {
+			print_cpu_msr(&cpu_data(cpu));
+			pr_debug("CPU%d: has booted.\n", cpu);
+		} else {
+			boot_error = 1;
+			if (*trampoline_status == 0xA5A5A5A5)
+				/* trampoline started but...? */
+				pr_err("CPU%d: Stuck ??\n", cpu);
+			else
+				/* trampoline code not run */
+				pr_err("CPU%d: Not responding\n", cpu);
+			if (apic->inquire_remote_apic)
+				apic->inquire_remote_apic(apicid);
+		}
+	}
+
+	if (boot_error) {
+		/* Try to put things back the way they were before ... */
+		numa_remove_cpu(cpu); /* was set by numa_add_cpu */
+
+		/* was set by do_boot_cpu() */
+		cpumask_clear_cpu(cpu, cpu_callout_mask);
+
+		/* was set by cpu_init() */
+		cpumask_clear_cpu(cpu, cpu_initialized_mask);
+
+		set_cpu_present(cpu, false);
+		per_cpu(x86_cpu_to_apicid, cpu) = BAD_APICID;
 	}
 
 	/* mark "stuck" area as not stuck */
@@ -951,19 +913,14 @@ int native_cpu_up(unsigned int cpu, struct task_struct *tidle)
 	 */
 	mtrr_save_state();
 
-	/* x86 CPUs take themselves offline, so delayed offline is OK. */
-	err = cpu_check_up_prepare(cpu);
-	if (err && err != -EBUSY)
-		return err;
+	per_cpu(cpu_state, cpu) = CPU_UP_PREPARE;
 
 	/* the FPU context is blank, nobody can own it */
 	__cpu_disable_lazy_restore(cpu);
 
-	common_cpu_up(cpu, tidle);
-
 	err = do_boot_cpu(apicid, cpu, tidle);
 	if (err) {
-		pr_err("do_boot_cpu failed(%d) to wakeup CPU#%u\n", err, cpu);
+		pr_debug("do_boot_cpu failed %d\n", err);
 		return -EIO;
 	}
 
@@ -998,12 +955,9 @@ void arch_disable_smp_support(void)
  */
 static __init void disable_smp(void)
 {
-	pr_info("SMP disabled\n");
-
-	disable_ioapic_support();
-
 	init_cpu_present(cpumask_of(0));
 	init_cpu_possible(cpumask_of(0));
+	smpboot_clear_io_apic_irqs();
 
 	if (smp_found_config)
 		physid_set_mask_of_physid(boot_cpu_physical_apicid, &phys_cpu_present_map);
@@ -1012,13 +966,6 @@ static __init void disable_smp(void)
 	cpumask_set_cpu(0, cpu_sibling_mask(0));
 	cpumask_set_cpu(0, cpu_core_mask(0));
 }
-
-enum {
-	SMP_OK,
-	SMP_NO_CONFIG,
-	SMP_NO_APIC,
-	SMP_FORCE_UP,
-};
 
 /*
  * Various sanity checks.
@@ -1067,7 +1014,10 @@ static int __init smp_sanity_check(unsigned max_cpus)
 	if (!smp_found_config && !acpi_lapic) {
 		preempt_enable();
 		pr_notice("SMP motherboard not detected\n");
-		return SMP_NO_CONFIG;
+		disable_smp();
+		if (APIC_init_uniprocessor())
+			pr_notice("Local APIC not detected. Using dummy APIC emulation.\n");
+		return -1;
 	}
 
 	/*
@@ -1091,18 +1041,27 @@ static int __init smp_sanity_check(unsigned max_cpus)
 				boot_cpu_physical_apicid);
 			pr_err("... forcing use of dummy APIC emulation (tell your hw vendor)\n");
 		}
-		return SMP_NO_APIC;
+		smpboot_clear_io_apic();
+		disable_ioapic_support();
+		return -1;
 	}
+
+	verify_local_APIC();
 
 	/*
 	 * If SMP should be disabled, then really disable it!
 	 */
 	if (!max_cpus) {
 		pr_info("SMP mode deactivated\n");
-		return SMP_FORCE_UP;
+		smpboot_clear_io_apic();
+
+		connect_bsp_APIC();
+		setup_local_APIC();
+		bsp_end_local_APIC_setup();
+		return -1;
 	}
 
-	return SMP_OK;
+	return 0;
 }
 
 static void __init smp_cpu_index_default(void)
@@ -1125,6 +1084,7 @@ void __init native_smp_prepare_cpus(unsigned int max_cpus)
 {
 	unsigned int i;
 
+	preempt_disable();
 	smp_cpu_index_default();
 
 	/*
@@ -1142,40 +1102,61 @@ void __init native_smp_prepare_cpus(unsigned int max_cpus)
 	}
 	set_cpu_sibling_map(0);
 
-	switch (smp_sanity_check(max_cpus)) {
-	case SMP_NO_CONFIG:
+
+	if (smp_sanity_check(max_cpus) < 0) {
+		pr_info("SMP disabled\n");
 		disable_smp();
-		if (APIC_init_uniprocessor())
-			pr_notice("Local APIC not detected. Using dummy APIC emulation.\n");
-		return;
-	case SMP_NO_APIC:
-		disable_smp();
-		return;
-	case SMP_FORCE_UP:
-		disable_smp();
-		apic_bsp_setup(false);
-		return;
-	case SMP_OK:
-		break;
+		goto out;
 	}
 
 	default_setup_apic_routing();
 
+	preempt_disable();
 	if (read_apic_id() != boot_cpu_physical_apicid) {
 		panic("Boot APIC ID in local APIC unexpected (%d vs %d)",
 		     read_apic_id(), boot_cpu_physical_apicid);
 		/* Or can we switch back to PIC here? */
 	}
+	preempt_enable();
 
-	cpu0_logical_apicid = apic_bsp_setup(false);
+	connect_bsp_APIC();
+
+	/*
+	 * Switch from PIC to APIC mode.
+	 */
+	setup_local_APIC();
+
+	if (x2apic_mode)
+		cpu0_logical_apicid = apic_read(APIC_LDR);
+	else
+		cpu0_logical_apicid = GET_APIC_LOGICAL_ID(apic_read(APIC_LDR));
+
+	/*
+	 * Enable IO APIC before setting up error vector
+	 */
+	if (!skip_ioapic_setup && nr_ioapics)
+		enable_IO_APIC();
+
+	bsp_end_local_APIC_setup();
+
+	if (apic->setup_portio_remap)
+		apic->setup_portio_remap();
+
+	smpboot_setup_io_apic();
+	/*
+	 * Set up local APIC timer on boot CPU.
+	 */
 
 	pr_info("CPU%d: ", 0);
 	print_cpu_info(&cpu_data(0));
+	x86_init.timers.setup_percpu_clockev();
 
 	if (is_uv_system())
 		uv_system_init();
 
 	set_mtrr_aps_delayed_init();
+out:
+	preempt_enable();
 }
 
 void arch_enable_nonboot_cpus_begin(void)
@@ -1197,7 +1178,7 @@ void __init native_smp_prepare_boot_cpu(void)
 	switch_to_new_gdt(me);
 	/* already set me in cpu_online_mask in boot_cpu_init() */
 	cpumask_set_cpu(me, cpu_callout_mask);
-	cpu_set_state_online(me);
+	per_cpu(cpu_state, me) = CPU_ONLINE;
 }
 
 void __init native_smp_cpus_done(unsigned int max_cpus)
@@ -1206,7 +1187,9 @@ void __init native_smp_cpus_done(unsigned int max_cpus)
 
 	nmi_selftest();
 	impress_friends();
+#ifdef CONFIG_X86_IO_APIC
 	setup_ioapic_dest();
+#endif
 	mtrr_aps_init();
 }
 
@@ -1346,32 +1329,26 @@ int native_cpu_disable(void)
 		return ret;
 
 	clear_local_APIC();
+
 	cpu_disable_common();
-
 	return 0;
-}
-
-int common_cpu_die(unsigned int cpu)
-{
-	int ret = 0;
-
-	/* We don't do anything here: idle task is faking death itself. */
-
-	/* They ack this in play_dead() by setting CPU_DEAD */
-	if (cpu_wait_death(cpu, 5)) {
-		if (system_state == SYSTEM_RUNNING)
-			pr_info("CPU %u is now offline\n", cpu);
-	} else {
-		pr_err("CPU %u didn't die...\n", cpu);
-		ret = -1;
-	}
-
-	return ret;
 }
 
 void native_cpu_die(unsigned int cpu)
 {
-	common_cpu_die(cpu);
+	/* We don't do anything here: idle task is faking death itself. */
+	unsigned int i;
+
+	for (i = 0; i < 10; i++) {
+		/* They ack this in play_dead by setting CPU_DEAD */
+		if (per_cpu(cpu_state, cpu) == CPU_DEAD) {
+			if (system_state == SYSTEM_RUNNING)
+				pr_info("CPU %u is now offline\n", cpu);
+			return;
+		}
+		msleep(100);
+	}
+	pr_err("CPU %u didn't die...\n", cpu);
 }
 
 void play_dead_common(void)
@@ -1380,8 +1357,9 @@ void play_dead_common(void)
 	reset_lazy_tlbstate();
 	amd_e400_remove_cpu(raw_smp_processor_id());
 
+	mb();
 	/* Ack it */
-	(void)cpu_report_death();
+	__this_cpu_write(cpu_state, CPU_DEAD);
 
 	/*
 	 * With physical CPU hotplug, we should halt the cpu
@@ -1411,7 +1389,7 @@ static inline void mwait_play_dead(void)
 
 	if (!this_cpu_has(X86_FEATURE_MWAIT))
 		return;
-	if (!this_cpu_has(X86_FEATURE_CLFLUSH))
+	if (!this_cpu_has(X86_FEATURE_CLFLSH))
 		return;
 	if (__this_cpu_read(cpu_info.cpuid_level) < CPUID_MWAIT_LEAF)
 		return;

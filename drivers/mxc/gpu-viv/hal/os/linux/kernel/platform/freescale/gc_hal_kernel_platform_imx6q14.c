@@ -2,7 +2,7 @@
 *
 *    The MIT License (MIT)
 *
-*    Copyright (c) 2014 - 2016 Vivante Corporation
+*    Copyright (c) 2014 - 2015 Vivante Corporation
 *
 *    Permission is hereby granted, free of charge, to any person obtaining a
 *    copy of this software and associated documentation files (the "Software"),
@@ -26,7 +26,7 @@
 *
 *    The GPL License (GPL)
 *
-*    Copyright (C) 2014 - 2016 Vivante Corporation
+*    Copyright (C) 2014 - 2015 Vivante Corporation
 *
 *    This program is free software; you can redistribute it and/or
 *    modify it under the terms of the GNU General Public License
@@ -119,7 +119,6 @@ struct platform_device *pdevice;
 #    include <linux/mm.h>
 #    include <linux/oom.h>
 #    include <linux/sched.h>
-#    include <linux/profile.h>
 
 struct task_struct *lowmem_deathpending;
 
@@ -138,7 +137,7 @@ task_notify_func(struct notifier_block *self, unsigned long val, void *data)
 	if (task == lowmem_deathpending)
 		lowmem_deathpending = NULL;
 
-	return NOTIFY_DONE;
+	return NOTIFY_OK;
 }
 
 extern struct task_struct *lowmem_deathpending;
@@ -490,11 +489,7 @@ _AllocPriv(
     Platform->priv = &imxPriv;
 
 #ifdef CONFIG_GPU_LOW_MEMORY_KILLER
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4,1,0)
     task_free_register(&task_nb);
-#else
-    task_handoff_register(&task_nb);
-#endif
 #endif
 
     return gcvSTATUS_OK;
@@ -506,11 +501,7 @@ _FreePriv(
     )
 {
 #ifdef CONFIG_GPU_LOW_MEMORY_KILLER
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4,1,0)
     task_free_unregister(&task_nb);
-#else
-    task_handoff_unregister(&task_nb);
-#endif
 #endif
 
     return gcvSTATUS_OK;
@@ -878,6 +869,7 @@ _SetClock(
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(3,5,0)
 #ifdef CONFIG_PM
+#ifdef CONFIG_PM_RUNTIME
 static int gpu_runtime_suspend(struct device *dev)
 {
     release_bus_freq(BUS_FREQ_HIGH);
@@ -889,6 +881,7 @@ static int gpu_runtime_resume(struct device *dev)
     request_bus_freq(BUS_FREQ_HIGH);
     return 0;
 }
+#endif
 
 static struct dev_pm_ops gpu_pm_ops;
 #endif
@@ -913,7 +906,7 @@ _AdjustDriver(
     memcpy(&gpu_pm_ops, driver->driver.pm, sizeof(struct dev_pm_ops));
 
     /* Add runtime PM callback. */
-#ifdef CONFIG_PM
+#ifdef CONFIG_PM_RUNTIME
     gpu_pm_ops.runtime_suspend = gpu_runtime_suspend;
     gpu_pm_ops.runtime_resume = gpu_runtime_resume;
     gpu_pm_ops.runtime_idle = NULL;

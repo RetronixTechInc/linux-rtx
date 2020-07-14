@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005 - 2014 Emulex
+ * Copyright (C) 2005 - 2013 Emulex
  * All rights reserved.
  *
  * This program is free software; you can redistribute it and/or
@@ -35,12 +35,6 @@ static void _be_roce_dev_add(struct be_adapter *adapter)
 
 	if (!ocrdma_drv)
 		return;
-
-	if (ocrdma_drv->be_abi_version != BE_ROCE_ABI_VERSION) {
-		dev_warn(&pdev->dev, "Cannot initialize RoCE due to ocrdma ABI mismatch\n");
-		return;
-	}
-
 	if (pdev->device == OC_DEVICE_ID5) {
 		/* only msix is supported on these devices */
 		if (!msix_enabled(adapter))
@@ -120,8 +114,7 @@ static void _be_roce_dev_open(struct be_adapter *adapter)
 {
 	if (ocrdma_drv && adapter->ocrdma_dev &&
 	    ocrdma_drv->state_change_handler)
-		ocrdma_drv->state_change_handler(adapter->ocrdma_dev,
-						 BE_DEV_UP);
+		ocrdma_drv->state_change_handler(adapter->ocrdma_dev, 0);
 }
 
 void be_roce_dev_open(struct be_adapter *adapter)
@@ -137,8 +130,7 @@ static void _be_roce_dev_close(struct be_adapter *adapter)
 {
 	if (ocrdma_drv && adapter->ocrdma_dev &&
 	    ocrdma_drv->state_change_handler)
-		ocrdma_drv->state_change_handler(adapter->ocrdma_dev,
-						 BE_DEV_DOWN);
+		ocrdma_drv->state_change_handler(adapter->ocrdma_dev, 1);
 }
 
 void be_roce_dev_close(struct be_adapter *adapter)
@@ -146,18 +138,6 @@ void be_roce_dev_close(struct be_adapter *adapter)
 	if (be_roce_supported(adapter)) {
 		mutex_lock(&be_adapter_list_lock);
 		_be_roce_dev_close(adapter);
-		mutex_unlock(&be_adapter_list_lock);
-	}
-}
-
-void be_roce_dev_shutdown(struct be_adapter *adapter)
-{
-	if (be_roce_supported(adapter)) {
-		mutex_lock(&be_adapter_list_lock);
-		if (ocrdma_drv && adapter->ocrdma_dev &&
-		    ocrdma_drv->state_change_handler)
-			ocrdma_drv->state_change_handler(adapter->ocrdma_dev,
-							 BE_DEV_SHUTDOWN);
 		mutex_unlock(&be_adapter_list_lock);
 	}
 }
@@ -174,7 +154,6 @@ int be_roce_register_driver(struct ocrdma_driver *drv)
 	ocrdma_drv = drv;
 	list_for_each_entry(dev, &be_adapter_list, entry) {
 		struct net_device *netdev;
-
 		_be_roce_dev_add(dev);
 		netdev = dev->netdev;
 		if (netif_running(netdev) && netif_oper_up(netdev))

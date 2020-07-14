@@ -48,15 +48,15 @@
 #define DEBUG_SUBSYSTEM S_LOG
 
 
-#include "../include/obd_class.h"
-#include "../include/lustre_log.h"
+#include <obd_class.h>
+#include <lustre_log.h>
 #include "llog_internal.h"
 
 /*
  * Allocate a new log or catalog handle
  * Used inside llog_open().
  */
-static struct llog_handle *llog_alloc_handle(void)
+struct llog_handle *llog_alloc_handle(void)
 {
 	struct llog_handle *loghandle;
 
@@ -75,7 +75,7 @@ static struct llog_handle *llog_alloc_handle(void)
 /*
  * Free llog handle and header data if exists. Used in llog_close() only
  */
-static void llog_free_handle(struct llog_handle *loghandle)
+void llog_free_handle(struct llog_handle *loghandle)
 {
 	LASSERT(loghandle != NULL);
 
@@ -140,7 +140,7 @@ int llog_cancel_rec(const struct lu_env *env, struct llog_handle *loghandle,
 			       loghandle->lgh_ctxt->loc_obd->obd_name,
 			       POSTID(&loghandle->lgh_id.lgl_oi),
 			       loghandle->lgh_id.lgl_ogen, rc);
-			goto out_err;
+			GOTO(out_err, rc);
 		}
 		return 1;
 	}
@@ -153,7 +153,7 @@ int llog_cancel_rec(const struct lu_env *env, struct llog_handle *loghandle,
 		       loghandle->lgh_ctxt->loc_obd->obd_name,
 		       POSTID(&loghandle->lgh_id.lgl_oi),
 		       loghandle->lgh_id.lgl_ogen, rc);
-		goto out_err;
+		GOTO(out_err, rc);
 	}
 	return 0;
 out_err:
@@ -188,7 +188,7 @@ static int llog_read_header(const struct lu_env *env,
 		llh->llh_hdr.lrh_type = LLOG_HDR_MAGIC;
 		llh->llh_hdr.lrh_len = llh->llh_tail.lrt_len = LLOG_CHUNK_SIZE;
 		llh->llh_hdr.lrh_index = llh->llh_tail.lrt_index = 0;
-		llh->llh_timestamp = get_seconds();
+		llh->llh_timestamp = cfs_time_current_sec();
 		if (uuid)
 			memcpy(&llh->llh_tgtuuid, uuid,
 			       sizeof(llh->llh_tgtuuid));
@@ -224,8 +224,7 @@ int llog_init_handle(const struct lu_env *env, struct llog_handle *handle,
 			       llh->llh_flags & LLOG_F_IS_CAT ?
 			       "catalog" : "plain",
 			       flags & LLOG_F_IS_CAT ? "catalog" : "plain");
-			rc = -EINVAL;
-			goto out;
+			GOTO(out, rc = -EINVAL);
 		} else if (llh->llh_flags &
 			   (LLOG_F_IS_PLAIN | LLOG_F_IS_CAT)) {
 			/*
@@ -236,8 +235,7 @@ int llog_init_handle(const struct lu_env *env, struct llog_handle *handle,
 		} else {
 			/* for some reason the llh_flags has no type set */
 			CERROR("llog type is not specified!\n");
-			rc = -EINVAL;
-			goto out;
+			GOTO(out, rc = -EINVAL);
 		}
 		if (unlikely(uuid &&
 			     !obd_uuid_equals(uuid, &llh->llh_tgtuuid))) {
@@ -245,8 +243,7 @@ int llog_init_handle(const struct lu_env *env, struct llog_handle *handle,
 			       handle->lgh_ctxt->loc_obd->obd_name,
 			       (char *)uuid->uuid,
 			       (char *)llh->llh_tgtuuid.uuid);
-			rc = -EEXIST;
-			goto out;
+			GOTO(out, rc = -EEXIST);
 		}
 	}
 	if (flags & LLOG_F_IS_CAT) {
@@ -319,7 +316,7 @@ repeat:
 		rc = llog_next_block(lpi->lpi_env, loghandle, &saved_index,
 				     index, &cur_offset, buf, LLOG_CHUNK_SIZE);
 		if (rc)
-			goto out;
+			GOTO(out, rc);
 
 		/* NB: when rec->lrh_len is accessed it is already swabbed
 		 * since it is used at the "end" of the loop and the rec
@@ -339,18 +336,16 @@ repeat:
 
 			if (rec->lrh_index == 0) {
 				/* probably another rec just got added? */
-				rc = 0;
 				if (index <= loghandle->lgh_last_idx)
-					goto repeat;
-				goto out; /* no more records */
+					GOTO(repeat, rc = 0);
+				GOTO(out, rc = 0); /* no more records */
 			}
 			if (rec->lrh_len == 0 ||
 			    rec->lrh_len > LLOG_CHUNK_SIZE) {
-				CWARN("invalid length %d in llog record for index %d/%d\n",
-				      rec->lrh_len,
+				CWARN("invalid length %d in llog record for "
+				      "index %d/%d\n", rec->lrh_len,
 				      rec->lrh_index, index);
-				rc = -EINVAL;
-				goto out;
+				GOTO(out, rc = -EINVAL);
 			}
 
 			if (rec->lrh_index < index) {
@@ -374,7 +369,7 @@ repeat:
 						 lpi->lpi_cbdata);
 				last_called_index = index;
 				if (rc == LLOG_PROC_BREAK) {
-					goto out;
+					GOTO(out, rc);
 				} else if (rc == LLOG_DEL_RECORD) {
 					llog_cancel_rec(lpi->lpi_env,
 							loghandle,
@@ -382,17 +377,15 @@ repeat:
 					rc = 0;
 				}
 				if (rc)
-					goto out;
+					GOTO(out, rc);
 			} else {
 				CDEBUG(D_OTHER, "Skipped index %d\n", index);
 			}
 
 			/* next record, still in buffer? */
 			++index;
-			if (index > last_index) {
-				rc = 0;
-				goto out;
-			}
+			if (index > last_index)
+				GOTO(out, rc = 0);
 		}
 	}
 
@@ -513,7 +506,7 @@ int llog_reverse_process(const struct lu_env *env,
 		rc = llog_prev_block(env, loghandle, index, buf,
 				     LLOG_CHUNK_SIZE);
 		if (rc)
-			goto out;
+			GOTO(out, rc);
 
 		rec = buf;
 		idx = rec->lrh_index;
@@ -529,11 +522,8 @@ int llog_reverse_process(const struct lu_env *env,
 
 		/* process records in buffer, starting where we found one */
 		while ((void *)tail > buf) {
-			if (tail->lrt_index == 0) {
-				/* no more records */
-				rc = 0;
-				goto out;
-			}
+			if (tail->lrt_index == 0)
+				GOTO(out, rc = 0); /* no more records */
 
 			/* if set, process the callback on this record */
 			if (ext2_test_bit(index, llh->llh_bitmap)) {
@@ -542,22 +532,20 @@ int llog_reverse_process(const struct lu_env *env,
 
 				rc = cb(env, loghandle, rec, data);
 				if (rc == LLOG_PROC_BREAK) {
-					goto out;
+					GOTO(out, rc);
 				} else if (rc == LLOG_DEL_RECORD) {
 					llog_cancel_rec(env, loghandle,
 							tail->lrt_index);
 					rc = 0;
 				}
 				if (rc)
-					goto out;
+					GOTO(out, rc);
 			}
 
 			/* previous record, still in buffer? */
 			--index;
-			if (index < first_index) {
-				rc = 0;
-				goto out;
-			}
+			if (index < first_index)
+				GOTO(out, rc = 0);
 			tail = (void *)tail - tail->lrt_len;
 		}
 	}
@@ -762,10 +750,8 @@ int llog_open_create(const struct lu_env *env, struct llog_ctxt *ctxt,
 	d = lu2dt_dev((*res)->lgh_obj->do_lu.lo_dev);
 
 	th = dt_trans_create(env, d);
-	if (IS_ERR(th)) {
-		rc = PTR_ERR(th);
-		goto out;
-	}
+	if (IS_ERR(th))
+		GOTO(out, rc = PTR_ERR(th));
 
 	rc = llog_declare_create(env, *res, th);
 	if (rc == 0) {
@@ -834,11 +820,11 @@ int llog_write(const struct lu_env *env, struct llog_handle *loghandle,
 
 	rc = llog_declare_write_rec(env, loghandle, rec, idx, th);
 	if (rc)
-		goto out_trans;
+		GOTO(out_trans, rc);
 
 	rc = dt_trans_start_local(env, dt, th);
 	if (rc)
-		goto out_trans;
+		GOTO(out_trans, rc);
 
 	down_write(&loghandle->lgh_lock);
 	rc = llog_write_rec(env, loghandle, rec, reccookie,
@@ -892,11 +878,9 @@ int llog_close(const struct lu_env *env, struct llog_handle *loghandle)
 
 	rc = llog_handle2ops(loghandle, &lop);
 	if (rc)
-		goto out;
-	if (lop->lop_close == NULL) {
-		rc = -EOPNOTSUPP;
-		goto out;
-	}
+		GOTO(out, rc);
+	if (lop->lop_close == NULL)
+		GOTO(out, rc = -EOPNOTSUPP);
 	rc = lop->lop_close(env, loghandle);
 out:
 	llog_handle_put(loghandle);
@@ -914,12 +898,12 @@ int llog_is_empty(const struct lu_env *env, struct llog_ctxt *ctxt,
 	if (rc < 0) {
 		if (likely(rc == -ENOENT))
 			rc = 0;
-		goto out;
+		GOTO(out, rc);
 	}
 
 	rc = llog_init_handle(env, llh, LLOG_F_IS_PLAIN, NULL);
 	if (rc)
-		goto out_close;
+		GOTO(out_close, rc);
 	rc = llog_get_size(llh);
 
 out_close:
@@ -964,19 +948,19 @@ int llog_backup(const struct lu_env *env, struct obd_device *obd,
 
 	rc = llog_init_handle(env, llh, LLOG_F_IS_PLAIN, NULL);
 	if (rc)
-		goto out_close;
+		GOTO(out_close, rc);
 
 	/* Make sure there's no old backup log */
 	rc = llog_erase(env, bctxt, NULL, backup);
 	if (rc < 0 && rc != -ENOENT)
-		goto out_close;
+		GOTO(out_close, rc);
 
 	/* open backup log */
 	rc = llog_open_create(env, bctxt, &bllh, NULL, backup);
 	if (rc) {
 		CERROR("%s: failed to open backup logfile %s: rc = %d\n",
 		       obd->obd_name, backup, rc);
-		goto out_close;
+		GOTO(out_close, rc);
 	}
 
 	/* check that backup llog is not the same object as original one */
@@ -984,13 +968,12 @@ int llog_backup(const struct lu_env *env, struct obd_device *obd,
 		CERROR("%s: backup llog %s to itself (%s), objects %p/%p\n",
 		       obd->obd_name, name, backup, llh->lgh_obj,
 		       bllh->lgh_obj);
-		rc = -EEXIST;
-		goto out_backup;
+		GOTO(out_backup, rc = -EEXIST);
 	}
 
 	rc = llog_init_handle(env, bllh, LLOG_F_IS_PLAIN, NULL);
 	if (rc)
-		goto out_backup;
+		GOTO(out_backup, rc);
 
 	/* Copy log record by record */
 	rc = llog_process_or_fork(env, llh, llog_copy_handler, (void *)bllh,

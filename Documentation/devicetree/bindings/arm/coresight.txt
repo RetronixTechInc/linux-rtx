@@ -38,6 +38,8 @@ its hardware characteristcs.
 	  AMBA markee):
 		- "arm,coresight-replicator"
 
+	* id: a unique number that will identify this replicator.
+
 	* port or ports: same as above.
 
 * Optional properties for ETM/PTMs:
@@ -61,6 +63,7 @@ Example:
 		compatible = "arm,coresight-etb10", "arm,primecell";
 		reg = <0 0x20010000 0 0x1000>;
 
+		coresight-default-sink;
 		clocks = <&oscclk6a>;
 		clock-names = "apb_pclk";
 		port {
@@ -91,6 +94,8 @@ Example:
 		 * AMBA bus.  As such no need to add "arm,primecell".
 		 */
 		compatible = "arm,coresight-replicator";
+		/* this will show up in debugfs as "0.replicator" */
+		id = <0>;
 
 		ports {
 			#address-cells = <1>;

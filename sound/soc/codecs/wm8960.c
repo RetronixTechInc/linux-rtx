@@ -196,7 +196,7 @@ static int wm8960_set_deemph(struct snd_soc_codec *codec)
 static int wm8960_get_deemph(struct snd_kcontrol *kcontrol,
 			     struct snd_ctl_elem_value *ucontrol)
 {
-	struct snd_soc_codec *codec = snd_soc_kcontrol_codec(kcontrol);
+	struct snd_soc_codec *codec = snd_kcontrol_chip(kcontrol);
 	struct wm8960_priv *wm8960 = snd_soc_codec_get_drvdata(codec);
 
 	ucontrol->value.integer.value[0] = wm8960->deemph;
@@ -206,7 +206,7 @@ static int wm8960_get_deemph(struct snd_kcontrol *kcontrol,
 static int wm8960_put_deemph(struct snd_kcontrol *kcontrol,
 			     struct snd_ctl_elem_value *ucontrol)
 {
-	struct snd_soc_codec *codec = snd_soc_kcontrol_codec(kcontrol);
+	struct snd_soc_codec *codec = snd_kcontrol_chip(kcontrol);
 	struct wm8960_priv *wm8960 = snd_soc_codec_get_drvdata(codec);
 	int deemph = ucontrol->value.integer.value[0];
 
@@ -502,7 +502,7 @@ static int wm8960_add_widgets(struct snd_soc_codec *codec)
 	 * list each time to find the desired power state do so now
 	 * and save the result.
 	 */
-	list_for_each_entry(w, &codec->component.card->widgets, list) {
+	list_for_each_entry(w, &codec->card->widgets, list) {
 		if (w->dapm != &codec->dapm)
 			continue;
 		if (strcmp(w->name, "LOUT1 PGA") == 0)
@@ -761,7 +761,8 @@ static int wm8960_hw_params(struct snd_pcm_substream *substream,
 
 	wm8960->is_stream_in_use[tx] = true;
 
-	if (!wm8960->is_stream_in_use[!tx])
+	if (codec->dapm.bias_level == SND_SOC_BIAS_ON &&
+	    !wm8960->is_stream_in_use[!tx])
 		return wm8960_configure_clocking(codec);
 
 	return 0;
@@ -813,6 +814,10 @@ static int wm8960_set_bias_level_out3(struct snd_soc_codec *codec,
 					return ret;
 				}
 			}
+
+			ret = wm8960_configure_clocking(codec);
+			if (ret)
+				return ret;
 
 			/* Set VMID to 2x50k */
 			snd_soc_update_bits(codec, WM8960_POWER1, 0x180, 0x80);
@@ -1245,11 +1250,18 @@ static int wm8960_probe(struct snd_soc_codec *codec)
 {
 	struct wm8960_priv *wm8960 = snd_soc_codec_get_drvdata(codec);
 	struct wm8960_data *pdata = &wm8960->pdata;
+	int ret;
 
 	if (pdata->capless)
 		wm8960->set_bias_level = wm8960_set_bias_level_capless;
 	else
 		wm8960->set_bias_level = wm8960_set_bias_level_out3;
+
+	ret = snd_soc_codec_set_cache_io(codec, 7, 9, SND_SOC_REGMAP);
+	if (ret < 0) {
+		dev_err(codec->dev, "Failed to set cache I/O: %d\n", ret);
+		return ret;
+	}
 
 	snd_soc_add_codec_controls(codec, wm8960_snd_controls,
 				     ARRAY_SIZE(wm8960_snd_controls));

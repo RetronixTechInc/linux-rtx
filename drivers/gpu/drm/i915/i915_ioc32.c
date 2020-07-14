@@ -189,6 +189,7 @@ static drm_ioctl_compat_t *i915_compat_ioctls[] = {
 	[DRM_I915_ALLOC] = compat_i915_alloc
 };
 
+#ifdef CONFIG_COMPAT
 /**
  * Called whenever a 32-bit process running under a 64-bit kernel
  * performs an ioctl on /dev/dri/card<n>.
@@ -204,10 +205,10 @@ long i915_compat_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 	drm_ioctl_compat_t *fn = NULL;
 	int ret;
 
-	if (nr < DRM_COMMAND_BASE || nr >= DRM_COMMAND_END)
+	if (nr < DRM_COMMAND_BASE)
 		return drm_compat_ioctl(filp, cmd, arg);
 
-	if (nr < DRM_COMMAND_BASE + ARRAY_SIZE(i915_compat_ioctls))
+	if (nr < DRM_COMMAND_BASE + DRM_ARRAY_SIZE(i915_compat_ioctls))
 		fn = i915_compat_ioctls[nr - DRM_COMMAND_BASE];
 
 	if (fn != NULL)
@@ -217,3 +218,4 @@ long i915_compat_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 
 	return ret;
 }
+#endif

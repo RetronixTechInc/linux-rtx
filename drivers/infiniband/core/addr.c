@@ -176,8 +176,8 @@ static void set_timeout(unsigned long time)
 	unsigned long delay;
 
 	delay = time - jiffies;
-	if ((long)delay < 0)
-		delay = 0;
+	if ((long)delay <= 0)
+		delay = 1;
 
 	mod_delayed_work(addr_wq, &work, delay);
 }
@@ -472,8 +472,13 @@ int rdma_addr_find_dmac_by_grh(union ib_gid *sgid, union ib_gid *dgid, u8 *dmac,
 	} sgid_addr, dgid_addr;
 
 
-	rdma_gid2ip(&sgid_addr._sockaddr, sgid);
-	rdma_gid2ip(&dgid_addr._sockaddr, dgid);
+	ret = rdma_gid2ip(&sgid_addr._sockaddr, sgid);
+	if (ret)
+		return ret;
+
+	ret = rdma_gid2ip(&dgid_addr._sockaddr, dgid);
+	if (ret)
+		return ret;
 
 	memset(&dev_addr, 0, sizeof(dev_addr));
 
@@ -507,8 +512,10 @@ int rdma_addr_find_smac_by_sgid(union ib_gid *sgid, u8 *smac, u16 *vlan_id)
 		struct sockaddr_in6 _sockaddr_in6;
 	} gid_addr;
 
-	rdma_gid2ip(&gid_addr._sockaddr, sgid);
+	ret = rdma_gid2ip(&gid_addr._sockaddr, sgid);
 
+	if (ret)
+		return ret;
 	memset(&dev_addr, 0, sizeof(dev_addr));
 	ret = rdma_translate_ip(&gid_addr._sockaddr, &dev_addr, vlan_id);
 	if (ret)

@@ -19,7 +19,6 @@ static inline u16 combine_8_to_16(u8 lower, u8 upper)
 {
 	u16 _lower = lower;
 	u16 _upper = upper;
-
 	return _lower | (_upper << 8);
 }
 
@@ -32,11 +31,10 @@ irqreturn_t lis3l02dq_data_rdy_trig_poll(int irq, void *private)
 	struct lis3l02dq_state *st = iio_priv(indio_dev);
 
 	if (st->trigger_on) {
-		iio_trigger_poll(st->trig);
+		iio_trigger_poll(st->trig, iio_get_time_ns());
 		return IRQ_HANDLED;
-	}
-
-	return IRQ_WAKE_THREAD;
+	} else
+		return IRQ_WAKE_THREAD;
 }
 
 static const u8 read_all_tx_array[] = {
@@ -110,7 +108,7 @@ static int lis3l02dq_read_all(struct iio_dev *indio_dev, u8 *rx_array)
 }
 
 static int lis3l02dq_get_buffer_element(struct iio_dev *indio_dev,
-					u8 *buf)
+				u8 *buf)
 {
 	int ret, i;
 	u8 *rx_array;
@@ -118,8 +116,8 @@ static int lis3l02dq_get_buffer_element(struct iio_dev *indio_dev,
 	int scan_count = bitmap_weight(indio_dev->active_scan_mask,
 				       indio_dev->masklength);
 
-	rx_array = kcalloc(4, scan_count, GFP_KERNEL);
-	if (!rx_array)
+	rx_array = kzalloc(4 * scan_count, GFP_KERNEL);
+	if (rx_array == NULL)
 		return -ENOMEM;
 	ret = lis3l02dq_read_all(indio_dev, rx_array);
 	if (ret < 0) {
@@ -142,7 +140,7 @@ static irqreturn_t lis3l02dq_trigger_handler(int irq, void *p)
 	char *data;
 
 	data = kmalloc(indio_dev->scan_bytes, GFP_KERNEL);
-	if (!data)
+	if (data == NULL)
 		goto done;
 
 	if (!bitmap_empty(indio_dev->active_scan_mask, indio_dev->masklength))
@@ -330,21 +328,19 @@ static int lis3l02dq_buffer_postenable(struct iio_dev *indio_dev)
 	if (test_bit(0, indio_dev->active_scan_mask)) {
 		t |= LIS3L02DQ_REG_CTRL_1_AXES_X_ENABLE;
 		oneenabled = true;
-	} else {
+	} else
 		t &= ~LIS3L02DQ_REG_CTRL_1_AXES_X_ENABLE;
-	}
 	if (test_bit(1, indio_dev->active_scan_mask)) {
 		t |= LIS3L02DQ_REG_CTRL_1_AXES_Y_ENABLE;
 		oneenabled = true;
-	} else {
+	} else
 		t &= ~LIS3L02DQ_REG_CTRL_1_AXES_Y_ENABLE;
-	}
 	if (test_bit(2, indio_dev->active_scan_mask)) {
 		t |= LIS3L02DQ_REG_CTRL_1_AXES_Z_ENABLE;
 		oneenabled = true;
-	} else {
+	} else
 		t &= ~LIS3L02DQ_REG_CTRL_1_AXES_Z_ENABLE;
-	}
+
 	if (!oneenabled) /* what happens in this case is unknown */
 		return -EINVAL;
 	ret = lis3l02dq_spi_write_reg_8(indio_dev,
@@ -395,7 +391,7 @@ int lis3l02dq_configure_buffer(struct iio_dev *indio_dev)
 	int ret;
 	struct iio_buffer *buffer;
 
-	buffer = iio_kfifo_allocate();
+	buffer = iio_kfifo_allocate(indio_dev);
 	if (!buffer)
 		return -ENOMEM;
 
@@ -412,7 +408,7 @@ int lis3l02dq_configure_buffer(struct iio_dev *indio_dev)
 						 "lis3l02dq_consumer%d",
 						 indio_dev->id);
 
-	if (!indio_dev->pollfunc) {
+	if (indio_dev->pollfunc == NULL) {
 		ret = -ENOMEM;
 		goto error_iio_sw_rb_free;
 	}

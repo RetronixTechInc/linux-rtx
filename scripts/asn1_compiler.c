@@ -311,9 +311,6 @@ struct token {
 
 static struct token *token_list;
 static unsigned nr_tokens;
-static _Bool verbose;
-
-#define debug(fmt, ...) do { if (verbose) printf(fmt, ## __VA_ARGS__); } while (0)
 
 static int directive_compare(const void *_key, const void *_pdir)
 {
@@ -325,21 +322,21 @@ static int directive_compare(const void *_key, const void *_pdir)
 	dlen = strlen(dir);
 	clen = (dlen < token->size) ? dlen : token->size;
 
-	//debug("cmp(%*.*s,%s) = ",
+	//printf("cmp(%*.*s,%s) = ",
 	//       (int)token->size, (int)token->size, token->value,
 	//       dir);
 
 	val = memcmp(token->value, dir, clen);
 	if (val != 0) {
-		//debug("%d [cmp]\n", val);
+		//printf("%d [cmp]\n", val);
 		return val;
 	}
 
 	if (dlen == token->size) {
-		//debug("0\n");
+		//printf("0\n");
 		return 0;
 	}
-	//debug("%d\n", (int)dlen - (int)token->size);
+	//printf("%d\n", (int)dlen - (int)token->size);
 	return dlen - token->size; /* shorter -> negative */
 }
 
@@ -518,13 +515,13 @@ static void tokenise(char *buffer, char *end)
 	}
 
 	nr_tokens = tix;
-	debug("Extracted %u tokens\n", nr_tokens);
+	printf("Extracted %u tokens\n", nr_tokens);
 
 #if 0
 	{
 		int n;
 		for (n = 0; n < nr_tokens; n++)
-			debug("Token %3u: '%*.*s'\n",
+			printf("Token %3u: '%*.*s'\n",
 			       n,
 			       (int)token_list[n].size, (int)token_list[n].size,
 			       token_list[n].value);
@@ -545,7 +542,6 @@ int main(int argc, char **argv)
 	ssize_t readlen;
 	FILE *out, *hdr;
 	char *buffer, *p;
-	char *kbuild_verbose;
 	int fd;
 
 	if (argc != 4) {
@@ -553,10 +549,6 @@ int main(int argc, char **argv)
 			argv[0]);
 		exit(2);
 	}
-
-	kbuild_verbose = getenv("KBUILD_VERBOSE");
-	if (kbuild_verbose)
-		verbose = atoi(kbuild_verbose);
 
 	filename = argv[1];
 	outputname = argv[2];
@@ -756,11 +748,11 @@ static void build_type_list(void)
 
 	qsort(type_index, nr, sizeof(type_index[0]), type_index_compare);
 
-	debug("Extracted %u types\n", nr_types);
+	printf("Extracted %u types\n", nr_types);
 #if 0
 	for (n = 0; n < nr_types; n++) {
 		struct type *type = type_index[n];
-		debug("- %*.*s\n",
+		printf("- %*.*s\n",
 		       (int)type->name->size,
 		       (int)type->name->size,
 		       type->name->value);
@@ -801,7 +793,7 @@ static void parse(void)
 
 	} while (type++, !(type->flags & TYPE_STOP_MARKER));
 
-	debug("Extracted %u actions\n", nr_actions);
+	printf("Extracted %u actions\n", nr_actions);
 }
 
 static struct element *element_list;
@@ -1292,7 +1284,7 @@ static void render(FILE *out, FILE *hdr)
 	}
 
 	/* We do two passes - the first one calculates all the offsets */
-	debug("Pass 1\n");
+	printf("Pass 1\n");
 	nr_entries = 0;
 	root = &type_list[0];
 	render_element(NULL, root->element, NULL);
@@ -1303,7 +1295,7 @@ static void render(FILE *out, FILE *hdr)
 		e->flags &= ~ELEMENT_RENDERED;
 
 	/* And then we actually render */
-	debug("Pass 2\n");
+	printf("Pass 2\n");
 	fprintf(out, "\n");
 	fprintf(out, "static const unsigned char %s_machine[] = {\n",
 		grammar_name);

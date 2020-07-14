@@ -50,7 +50,6 @@
 #include <linux/platform_data/asoc-imx-ssi.h>
 
 #include "imx-ssi.h"
-#include "fsl_utils.h"
 
 #define SSI_SACNT_DEFAULT (SSI_SACNT_AC97EN | SSI_SACNT_FV)
 
@@ -74,8 +73,8 @@ static int imx_ssi_set_dai_tdm_slot(struct snd_soc_dai *cpu_dai,
 	sccr |= SSI_STCCR_DC(slots - 1);
 	writel(sccr, ssi->base + SSI_SRCCR);
 
-	writel(~tx_mask, ssi->base + SSI_STMSK);
-	writel(~rx_mask, ssi->base + SSI_SRMSK);
+	writel(tx_mask, ssi->base + SSI_STMSK);
+	writel(rx_mask, ssi->base + SSI_SRMSK);
 
 	return 0;
 }
@@ -381,7 +380,7 @@ static struct snd_soc_dai_driver imx_ssi_dai = {
 
 static struct snd_soc_dai_driver imx_ac97_dai = {
 	.probe = imx_ssi_dai_probe,
-	.bus_control = true,
+	.ac97_control = 1,
 	.playback = {
 		.stream_name = "AC97 Playback",
 		.channels_min = 2,
@@ -646,6 +645,7 @@ static struct platform_driver imx_ssi_driver = {
 
 	.driver = {
 		.name = "imx-ssi",
+		.owner = THIS_MODULE,
 	},
 };
 

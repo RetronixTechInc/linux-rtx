@@ -421,7 +421,7 @@ static int udl_user_framebuffer_dirty(struct drm_framebuffer *fb,
 				  clips[i].x2 - clips[i].x1,
 				  clips[i].y2 - clips[i].y1);
 		if (ret)
-			break;
+			goto unlock;
 	}
 
 	if (ufb->obj->base.import_attach) {
@@ -472,8 +472,7 @@ udl_framebuffer_init(struct drm_device *dev,
 static int udlfb_create(struct drm_fb_helper *helper,
 			struct drm_fb_helper_surface_size *sizes)
 {
-	struct udl_fbdev *ufbdev =
-		container_of(helper, struct udl_fbdev, helper);
+	struct udl_fbdev *ufbdev = (struct udl_fbdev *)helper;
 	struct drm_device *dev = ufbdev->helper.dev;
 	struct fb_info *info;
 	struct device *device = dev->dev;
@@ -551,7 +550,7 @@ out:
 	return ret;
 }
 
-static const struct drm_fb_helper_funcs udl_fb_helper_funcs = {
+static struct drm_fb_helper_funcs udl_fb_helper_funcs = {
 	.fb_probe = udlfb_create,
 };
 
@@ -584,32 +583,23 @@ int udl_fbdev_init(struct drm_device *dev)
 		return -ENOMEM;
 
 	udl->fbdev = ufbdev;
-
-	drm_fb_helper_prepare(dev, &ufbdev->helper, &udl_fb_helper_funcs);
+	ufbdev->helper.funcs = &udl_fb_helper_funcs;
 
 	ret = drm_fb_helper_init(dev, &ufbdev->helper,
 				 1, 1);
-	if (ret)
-		goto free;
+	if (ret) {
+		kfree(ufbdev);
+		return ret;
 
-	ret = drm_fb_helper_single_add_all_connectors(&ufbdev->helper);
-	if (ret)
-		goto fini;
+	}
+
+	drm_fb_helper_single_add_all_connectors(&ufbdev->helper);
 
 	/* disable all the possible outputs/crtcs before entering KMS mode */
 	drm_helper_disable_unused_functions(dev);
 
-	ret = drm_fb_helper_initial_config(&ufbdev->helper, bpp_sel);
-	if (ret)
-		goto fini;
-
+	drm_fb_helper_initial_config(&ufbdev->helper, bpp_sel);
 	return 0;
-
-fini:
-	drm_fb_helper_fini(&ufbdev->helper);
-free:
-	kfree(ufbdev);
-	return ret;
 }
 
 void udl_fbdev_cleanup(struct drm_device *dev)

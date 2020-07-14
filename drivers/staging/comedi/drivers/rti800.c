@@ -19,7 +19,8 @@
 /*
  * Driver: rti800
  * Description: Analog Devices RTI-800/815
- * Devices: [Analog Devices] RTI-800 (rti800), RTI-815 (rti815)
+ * Devices: (Analog Devices) RTI-800 [rti800]
+ *	    (Analog Devices) RTI-815 [rti815]
  * Author: David A. Schleef <ds@schleef.org>
  * Status: unknown
  * Updated: Fri, 05 Sep 2008 14:50:44 +0100
@@ -80,6 +81,10 @@
 #define RTI800_9513A_CNTRL	0x0d
 #define RTI800_9513A_STATUS	0x0d
 
+#define RTI800_IOSIZE		0x10
+
+#define RTI800_AI_TIMEOUT	100
+
 static const struct comedi_lrange range_rti800_ai_10_bipolar = {
 	4, {
 		BIP_RANGE(10),
@@ -136,24 +141,27 @@ struct rti800_private {
 	bool adc_2comp;
 	bool dac_2comp[2];
 	const struct comedi_lrange *ao_range_type_list[2];
+	unsigned int ao_readback[2];
 	unsigned char muxgain_bits;
 };
 
-static int rti800_ai_eoc(struct comedi_device *dev,
-			 struct comedi_subdevice *s,
-			 struct comedi_insn *insn,
-			 unsigned long context)
+static int rti800_ai_wait_for_conversion(struct comedi_device *dev,
+					 int timeout)
 {
 	unsigned char status;
+	int i;
 
-	status = inb(dev->iobase + RTI800_CSR);
-	if (status & RTI800_CSR_OVERRUN) {
-		outb(0, dev->iobase + RTI800_CLRFLAGS);
-		return -EOVERFLOW;
+	for (i = 0; i < timeout; i++) {
+		status = inb(dev->iobase + RTI800_CSR);
+		if (status & RTI800_CSR_OVERRUN) {
+			outb(0, dev->iobase + RTI800_CLRFLAGS);
+			return -EIO;
+		}
+		if (status & RTI800_CSR_DONE)
+			return 0;
+		udelay(1);
 	}
-	if (status & RTI800_CSR_DONE)
-		return 0;
-	return -EBUSY;
+	return -ETIME;
 }
 
 static int rti800_ai_insn_read(struct comedi_device *dev,
@@ -190,8 +198,7 @@ static int rti800_ai_insn_read(struct comedi_device *dev,
 
 	for (i = 0; i < insn->n; i++) {
 		outb(0, dev->iobase + RTI800_CONVERT);
-
-		ret = comedi_timeout(dev, s, insn, rti800_ai_eoc, 0);
+		ret = rti800_ai_wait_for_conversion(dev, RTI800_AI_TIMEOUT);
 		if (ret)
 			return ret;
 
@@ -205,6 +212,21 @@ static int rti800_ai_insn_read(struct comedi_device *dev,
 	return insn->n;
 }
 
+static int rti800_ao_insn_read(struct comedi_device *dev,
+			       struct comedi_subdevice *s,
+			       struct comedi_insn *insn,
+			       unsigned int *data)
+{
+	struct rti800_private *devpriv = dev->private;
+	unsigned int chan = CR_CHAN(insn->chanspec);
+	int i;
+
+	for (i = 0; i < insn->n; i++)
+		data[i] = devpriv->ao_readback[chan];
+
+	return insn->n;
+}
+
 static int rti800_ao_insn_write(struct comedi_device *dev,
 				struct comedi_subdevice *s,
 				struct comedi_insn *insn,
@@ -214,19 +236,19 @@ static int rti800_ao_insn_write(struct comedi_device *dev,
 	unsigned int chan = CR_CHAN(insn->chanspec);
 	int reg_lo = chan ? RTI800_DAC1LO : RTI800_DAC0LO;
 	int reg_hi = chan ? RTI800_DAC1HI : RTI800_DAC0HI;
+	int val = devpriv->ao_readback[chan];
 	int i;
 
 	for (i = 0; i < insn->n; i++) {
-		unsigned int val = data[i];
-
-		s->readback[chan] = val;
-
+		val = data[i];
 		if (devpriv->dac_2comp[chan])
 			val ^= 0x800;
 
 		outb(val & 0xff, dev->iobase + reg_lo);
 		outb((val >> 8) & 0xff, dev->iobase + reg_hi);
 	}
+
+	devpriv->ao_readback[chan] = val;
 
 	return insn->n;
 }
@@ -257,12 +279,12 @@ static int rti800_do_insn_bits(struct comedi_device *dev,
 
 static int rti800_attach(struct comedi_device *dev, struct comedi_devconfig *it)
 {
-	const struct rti800_board *board = dev->board_ptr;
+	const struct rti800_board *board = comedi_board(dev);
 	struct rti800_private *devpriv;
 	struct comedi_subdevice *s;
 	int ret;
 
-	ret = comedi_request_region(dev, it->options[0], 0x10);
+	ret = comedi_request_region(dev, it->options[0], RTI800_IOSIZE);
 	if (ret)
 		return ret;
 
@@ -301,6 +323,8 @@ static int rti800_attach(struct comedi_device *dev, struct comedi_devconfig *it)
 		s->type		= COMEDI_SUBD_AO;
 		s->subdev_flags	= SDF_WRITABLE;
 		s->n_chan	= 2;
+		s->insn_read	= rti800_ao_insn_read;
+		s->insn_write	= rti800_ao_insn_write;
 		s->maxdata	= 0x0fff;
 		s->range_table_list = devpriv->ao_range_type_list;
 		devpriv->ao_range_type_list[0] =
@@ -311,11 +335,6 @@ static int rti800_attach(struct comedi_device *dev, struct comedi_devconfig *it)
 			(it->options[7] < ARRAY_SIZE(rti800_ao_ranges))
 				? rti800_ao_ranges[it->options[7]]
 				: &range_unknown;
-		s->insn_write	= rti800_ao_insn_write;
-
-		ret = comedi_alloc_subdev_readback(s);
-		if (ret)
-			return ret;
 	} else {
 		s->type		= COMEDI_SUBD_UNUSED;
 	}

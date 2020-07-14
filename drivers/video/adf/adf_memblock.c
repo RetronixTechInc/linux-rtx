@@ -28,7 +28,7 @@ static struct sg_table *adf_memblock_map(struct dma_buf_attachment *attach,
 	unsigned long pfn = PFN_DOWN(pdata->base);
 	struct page *page = pfn_to_page(pfn);
 	struct sg_table *table;
-	int nents, ret;
+	int ret;
 
 	table = kzalloc(sizeof(*table), GFP_KERNEL);
 	if (!table)
@@ -36,21 +36,12 @@ static struct sg_table *adf_memblock_map(struct dma_buf_attachment *attach,
 
 	ret = sg_alloc_table(table, 1, GFP_KERNEL);
 	if (ret < 0)
-		goto err_alloc;
+		goto err;
 
 	sg_set_page(table->sgl, page, attach->dmabuf->size, 0);
-
-	nents = dma_map_sg(attach->dev, table->sgl, 1, direction);
-	if (!nents) {
-		ret = -EINVAL;
-		goto err_map;
-	}
-
 	return table;
 
-err_map:
-	sg_free_table(table);
-err_alloc:
+err:
 	kfree(table);
 	return ERR_PTR(ret);
 }
@@ -58,7 +49,6 @@ err_alloc:
 static void adf_memblock_unmap(struct dma_buf_attachment *attach,
 		struct sg_table *table, enum dma_data_direction direction)
 {
-	dma_unmap_sg(attach->dev, table->sgl, 1, direction);
 	sg_free_table(table);
 }
 
@@ -142,7 +132,6 @@ struct dma_buf *adf_memblock_export(phys_addr_t base, size_t size, int flags)
 {
 	struct adf_memblock_pdata *pdata;
 	struct dma_buf *buf;
-	DEFINE_DMA_BUF_EXPORT_INFO(exp_info);
 
 	if (PAGE_ALIGN(base) != base || PAGE_ALIGN(size) != size)
 		return ERR_PTR(-EINVAL);
@@ -152,15 +141,9 @@ struct dma_buf *adf_memblock_export(phys_addr_t base, size_t size, int flags)
 		return ERR_PTR(-ENOMEM);
 
 	pdata->base = base;
-	exp_info.ops = &adf_memblock_ops;
-	exp_info.size = size;
-	exp_info.flags = flags;
-	exp_info.priv = pdata;
-
-	buf = dma_buf_export(&exp_info);
+	buf = dma_buf_export(pdata, &adf_memblock_ops, size, flags);
 	if (IS_ERR(buf))
 		kfree(pdata);
 
 	return buf;
 }
-EXPORT_SYMBOL(adf_memblock_export);

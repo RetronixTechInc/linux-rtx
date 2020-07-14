@@ -61,13 +61,16 @@ enum otg_fsm_timer {
 	/* Auxiliary timers */
 	B_SE0_SRP,
 	B_SRP_FAIL,
-	A_WAIT_ENUM,
 	B_DATA_PLS,
 	B_SSEND_SRP,
+	A_WAIT_ENUM,
 	A_DP_END,
 	A_TST_MAINT,
 	B_SRP_REQD,
 	B_TST_SUSP,
+	A_ADP_PRB,
+	B_ADP_PRB,
+	B_ADP_SNS,
 	HNP_POLLING,
 
 	NUM_OTG_FSM_TIMERS,

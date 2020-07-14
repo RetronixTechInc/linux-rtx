@@ -90,7 +90,6 @@ int class_create_file_ns(struct class *cls, const struct class_attribute *attr,
 			 const void *ns)
 {
 	int error;
-
 	if (cls)
 		error = sysfs_create_file_ns(&cls->p->subsys.kobj,
 					     &attr->attr, ns);
@@ -489,7 +488,6 @@ ssize_t show_class_attr_string(struct class *class,
 			       struct class_attribute *attr, char *buf)
 {
 	struct class_attribute_string *cs;
-
 	cs = container_of(attr, struct class_attribute_string, attr);
 	return snprintf(buf, PAGE_SIZE, "%s\n", cs->str);
 }

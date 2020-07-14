@@ -93,13 +93,13 @@ static irqreturn_t ip6_action(int cpl, void *dev_id)
 	return IRQ_HANDLED;
 }
 
-static struct irqaction ip6_irqaction = {
+struct irqaction ip6_irqaction = {
 	.handler = ip6_action,
 	.name = "cascade",
 	.flags = IRQF_SHARED | IRQF_NO_THREAD,
 };
 
-static struct irqaction cascade_irqaction = {
+struct irqaction cascade_irqaction = {
 	.handler = no_action,
 	.name = "cascade",
 	.flags = IRQF_NO_THREAD,

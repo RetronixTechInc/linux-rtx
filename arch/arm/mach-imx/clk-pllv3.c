@@ -19,8 +19,8 @@
 #include <linux/jiffies.h>
 #include <linux/err.h>
 #include "clk.h"
-#include "hardware.h"
 #include "common.h"
+#include "hardware.h"
 
 #define PLL_NUM_OFFSET		0x10
 #define PLL_DENOM_OFFSET	0x20
@@ -40,7 +40,6 @@
  * @powerup_set: set POWER bit to power up the PLL
  * @powerdown:   pll powerdown offset bit
  * @div_mask:	 mask of divider bits
- * @div_shift:	 shift of divider bits
  *
  * IMX PLL clock version 3, found on i.MX6 series.  Divider for pllv3
  * is actually a multiplier, and always sits at bit 0.
@@ -51,7 +50,6 @@ struct clk_pllv3 {
 	bool		powerup_set;
 	u32		powerdown;
 	u32		div_mask;
-	u32		div_shift;
 	u32		num_offset;
 	u32		denom_offset;
 };
@@ -81,8 +79,8 @@ static int clk_pllv3_wait_lock(struct clk_pllv3 *pll)
 static int clk_pllv3_do_hardware(struct clk_hw *hw, bool enable)
 {
 	struct clk_pllv3 *pll = to_clk_pllv3(hw);
-	int ret;
 	u32 val;
+	int ret;
 
 	val = readl_relaxed(pll->base);
 	if (enable) {
@@ -108,7 +106,7 @@ static int clk_pllv3_do_hardware(struct clk_hw *hw, bool enable)
 
 static void clk_pllv3_do_shared_clks(struct clk_hw *hw, bool enable)
 {
-	if (imx_src_is_m4_enabled() && cpu_is_imx6sx()) {
+	if (imx_src_is_m4_enabled()) {
 #ifdef CONFIG_SOC_IMX6SX
 		if (!amp_power_mutex || !shared_mem) {
 			if (enable)
@@ -162,7 +160,7 @@ static unsigned long clk_pllv3_recalc_rate(struct clk_hw *hw,
 					   unsigned long parent_rate)
 {
 	struct clk_pllv3 *pll = to_clk_pllv3(hw);
-	u32 div = (readl_relaxed(pll->base) >> pll->div_shift)  & pll->div_mask;
+	u32 div = readl_relaxed(pll->base)  & pll->div_mask;
 
 	return (div == 1) ? parent_rate * 22 : parent_rate * 20;
 }
@@ -190,8 +188,8 @@ static int clk_pllv3_set_rate(struct clk_hw *hw, unsigned long rate,
 		return -EINVAL;
 
 	val = readl_relaxed(pll->base);
-	val &= ~(pll->div_mask << pll->div_shift);
-	val |= (div << pll->div_shift);
+	val &= ~pll->div_mask;
+	val |= div;
 	writel_relaxed(val, pll->base);
 
 	return clk_pllv3_wait_lock(pll);
@@ -371,11 +369,6 @@ struct clk *imx_clk_pllv3(enum imx_pllv3_type type, const char *name,
 	case IMX_PLLV3_SYS:
 		ops = &clk_pllv3_sys_ops;
 		break;
-	case IMX_PLLV3_SYSV2:
-		ops = &clk_pllv3_ops;
-		break;
-	case IMX_PLLV3_USB_VF610:
-		pll->div_shift = 1;
 	case IMX_PLLV3_USB:
 		ops = &clk_pllv3_ops;
 		pll->powerup_set = true;
@@ -385,6 +378,9 @@ struct clk *imx_clk_pllv3(enum imx_pllv3_type type, const char *name,
 		break;
 	case IMX_PLLV3_ENET:
 		ops = &clk_pllv3_enet_ops;
+		break;
+	case IMX_PLLV3_SYSV2:
+		ops = &clk_pllv3_ops;
 		break;
 	default:
 		ops = &clk_pllv3_ops;
@@ -405,7 +401,7 @@ struct clk *imx_clk_pllv3(enum imx_pllv3_type type, const char *name,
 
 	init.name = name;
 	init.ops = ops;
-	init.flags = 0;
+	init.flags = CLK_SET_RATE_GATE | CLK_GET_RATE_NOCACHE;
 	init.parent_names = &parent_name;
 	init.num_parents = 1;
 

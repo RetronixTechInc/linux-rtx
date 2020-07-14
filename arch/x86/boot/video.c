@@ -17,8 +17,6 @@
 #include "video.h"
 #include "vesa.h"
 
-static u16 video_segment;
-
 static void store_cursor_position(void)
 {
 	struct biosregs ireg, oreg;

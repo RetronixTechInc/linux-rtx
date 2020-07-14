@@ -23,7 +23,6 @@
 #include <linux/efi.h>
 #include <linux/bcd.h>
 #include <linux/highmem.h>
-#include <linux/kprobes.h>
 
 #include <asm/bug.h>
 #include <asm/paravirt.h>
@@ -41,18 +40,10 @@
 #include <asm/timer.h>
 #include <asm/special_insns.h>
 
-/*
- * nop stub, which must not clobber anything *including the stack* to
- * avoid confusing the entry prologues.
- */
-extern void _paravirt_nop(void);
-asm (".pushsection .entry.text, \"ax\"\n"
-     ".global _paravirt_nop\n"
-     "_paravirt_nop:\n\t"
-     "ret\n\t"
-     ".size _paravirt_nop, . - _paravirt_nop\n\t"
-     ".type _paravirt_nop, @function\n\t"
-     ".popsection");
+/* nop stub */
+void _paravirt_nop(void)
+{
+}
 
 /* identity function, which can be inlined */
 u32 _paravirt_ident_32(u32 x)
@@ -398,11 +389,6 @@ __visible struct pv_cpu_ops pv_cpu_ops = {
 	.end_context_switch = paravirt_nop,
 };
 
-/* At this point, native_get/set_debugreg has real function entries */
-NOKPROBE_SYMBOL(native_get_debugreg);
-NOKPROBE_SYMBOL(native_set_debugreg);
-NOKPROBE_SYMBOL(native_load_idt);
-
 struct pv_apic_ops pv_apic_ops = {
 #ifdef CONFIG_X86_LOCAL_APIC
 	.startup_ipi_hook = paravirt_nop,
@@ -451,7 +437,7 @@ struct pv_mmu_ops pv_mmu_ops = {
 	.ptep_modify_prot_start = __ptep_modify_prot_start,
 	.ptep_modify_prot_commit = __ptep_modify_prot_commit,
 
-#if CONFIG_PGTABLE_LEVELS >= 3
+#if PAGETABLE_LEVELS >= 3
 #ifdef CONFIG_X86_PAE
 	.set_pte_atomic = native_set_pte_atomic,
 	.pte_clear = native_pte_clear,
@@ -462,13 +448,13 @@ struct pv_mmu_ops pv_mmu_ops = {
 	.pmd_val = PTE_IDENT,
 	.make_pmd = PTE_IDENT,
 
-#if CONFIG_PGTABLE_LEVELS == 4
+#if PAGETABLE_LEVELS == 4
 	.pud_val = PTE_IDENT,
 	.make_pud = PTE_IDENT,
 
 	.set_pgd = native_set_pgd,
 #endif
-#endif /* CONFIG_PGTABLE_LEVELS >= 3 */
+#endif /* PAGETABLE_LEVELS >= 3 */
 
 	.pte_val = PTE_IDENT,
 	.pgd_val = PTE_IDENT,

@@ -296,7 +296,7 @@ const struct soc_camera_format_xlate *soc_camera_xlate_by_fourcc(
  * format setup.
  */
 struct soc_camera_format_xlate {
-	u32 code;
+	enum v4l2_mbus_pixelcode code;
 	const struct soc_mbus_pixelfmt *host_fmt;
 };
 

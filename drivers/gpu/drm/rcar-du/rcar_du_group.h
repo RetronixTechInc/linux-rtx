@@ -1,7 +1,7 @@
 /*
  * rcar_du_group.c  --  R-Car Display Unit Planes and CRTCs Group
  *
- * Copyright (C) 2013-2014 Renesas Electronics Corporation
+ * Copyright (C) 2013 Renesas Corporation
  *
  * Contact: Laurent Pinchart (laurent.pinchart@ideasonboard.com)
  *
@@ -14,8 +14,6 @@
 #ifndef __RCAR_DU_GROUP_H__
 #define __RCAR_DU_GROUP_H__
 
-#include <linux/mutex.h>
-
 #include "rcar_du_plane.h"
 
 struct rcar_du_device;
@@ -27,7 +25,6 @@ struct rcar_du_device;
  * @index: group index
  * @use_count: number of users of the group (rcar_du_group_(get|put))
  * @used_crtcs: number of CRTCs currently in use
- * @lock: protects the DPTSR register
  * @planes: planes handled by the group
  */
 struct rcar_du_group {
@@ -37,8 +34,6 @@ struct rcar_du_group {
 
 	unsigned int use_count;
 	unsigned int used_crtcs;
-
-	struct mutex lock;
 
 	struct rcar_du_planes planes;
 };

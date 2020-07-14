@@ -760,17 +760,10 @@ static int khvcd(void *unused)
 			if (poll_mask == 0)
 				schedule();
 			else {
-				unsigned long j_timeout;
-
 				if (timeout < MAX_TIMEOUT)
 					timeout += (timeout >> 6) + 1;
 
-				/*
-				 * We don't use msleep_interruptible otherwise
-				 * "kick" will fail to wake us up
-				 */
-				j_timeout = msecs_to_jiffies(timeout) + 1;
-				schedule_timeout_interruptible(j_timeout);
+				msleep_interruptible(timeout);
 			}
 		}
 		__set_current_state(TASK_RUNNING);

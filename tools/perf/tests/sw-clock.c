@@ -22,7 +22,6 @@ static int __test__sw_clock_freq(enum perf_sw_ids clock_id)
 	volatile int tmp = 0;
 	u64 total_periods = 0;
 	int nr_samples = 0;
-	char sbuf[STRERR_BUFSIZE];
 	union perf_event *event;
 	struct perf_evsel *evsel;
 	struct perf_evlist *evlist;
@@ -63,15 +62,14 @@ static int __test__sw_clock_freq(enum perf_sw_ids clock_id)
 
 		err = -errno;
 		pr_debug("Couldn't open evlist: %s\nHint: check %s, using %" PRIu64 " in this test.\n",
-			 strerror_r(errno, sbuf, sizeof(sbuf)),
-			 knob, (u64)attr.sample_freq);
+			 strerror(errno), knob, (u64)attr.sample_freq);
 		goto out_delete_evlist;
 	}
 
 	err = perf_evlist__mmap(evlist, 128, true);
 	if (err < 0) {
 		pr_debug("failed to mmap event: %d (%s)\n", errno,
-			 strerror_r(errno, sbuf, sizeof(sbuf)));
+			 strerror(errno));
 		goto out_delete_evlist;
 	}
 

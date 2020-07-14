@@ -46,8 +46,7 @@ struct netlink_kernel_cfg {
 	unsigned int	flags;
 	void		(*input)(struct sk_buff *skb);
 	struct mutex	*cb_mutex;
-	int		(*bind)(struct net *net, int group);
-	void		(*unbind)(struct net *net, int group);
+	void		(*bind)(int group);
 	bool		(*compare)(struct net *net, struct sock *sk);
 };
 
@@ -134,7 +133,7 @@ struct netlink_callback {
 
 struct netlink_notify {
 	struct net *net;
-	u32 portid;
+	int portid;
 	int protocol;
 };
 

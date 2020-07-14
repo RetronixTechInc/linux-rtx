@@ -134,14 +134,13 @@ struct ib_srq *mlx4_ib_create_srq(struct ib_pd *pd,
 		if (err)
 			goto err_mtt;
 	} else {
-		err = mlx4_db_alloc(dev->dev, &srq->db, 0, GFP_KERNEL);
+		err = mlx4_db_alloc(dev->dev, &srq->db, 0);
 		if (err)
 			goto err_srq;
 
 		*srq->db.db = 0;
 
-		if (mlx4_buf_alloc(dev->dev, buf_size, PAGE_SIZE * 2, &srq->buf,
-				   GFP_KERNEL)) {
+		if (mlx4_buf_alloc(dev->dev, buf_size, PAGE_SIZE * 2, &srq->buf)) {
 			err = -ENOMEM;
 			goto err_db;
 		}
@@ -166,7 +165,7 @@ struct ib_srq *mlx4_ib_create_srq(struct ib_pd *pd,
 		if (err)
 			goto err_buf;
 
-		err = mlx4_buf_write_mtt(dev->dev, &srq->mtt, &srq->buf, GFP_KERNEL);
+		err = mlx4_buf_write_mtt(dev->dev, &srq->mtt, &srq->buf);
 		if (err)
 			goto err_mtt;
 
@@ -316,15 +315,8 @@ int mlx4_ib_post_srq_recv(struct ib_srq *ibsrq, struct ib_recv_wr *wr,
 	int err = 0;
 	int nreq;
 	int i;
-	struct mlx4_ib_dev *mdev = to_mdev(ibsrq->device);
 
 	spin_lock_irqsave(&srq->lock, flags);
-	if (mdev->dev->persist->state & MLX4_DEVICE_STATE_INTERNAL_ERROR) {
-		err = -EIO;
-		*bad_wr = wr;
-		nreq = 0;
-		goto out;
-	}
 
 	for (nreq = 0; wr; ++nreq, wr = wr->next) {
 		if (unlikely(wr->num_sge > srq->msrq.max_gs)) {
@@ -369,7 +361,6 @@ int mlx4_ib_post_srq_recv(struct ib_srq *ibsrq, struct ib_recv_wr *wr,
 
 		*srq->db.db = cpu_to_be32(srq->wqe_ctr);
 	}
-out:
 
 	spin_unlock_irqrestore(&srq->lock, flags);
 

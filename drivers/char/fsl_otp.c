@@ -5,7 +5,17 @@
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License.
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307 USA
  */
 
 #include <linux/clk.h>
@@ -54,6 +64,12 @@
 #define HW_OCOTP_DATA1_MX7D		0x00000030
 #define HW_OCOTP_DATA2_MX7D		0x00000040
 #define HW_OCOTP_DATA3_MX7D		0x00000050
+
+#ifdef CONFIG_FSL_OTP_RW
+#define SYSFS_MODE 0600
+#else
+#define SYSFS_MODE 0400
+#endif
 
 #define HW_OCOTP_CUST_N(n)	(0x00000400 + (n) * 0x10)
 #define BF(value, field)	(((value) << BP_##field) & BM_##field)
@@ -510,7 +526,7 @@ static int fsl_otp_probe(struct platform_device *pdev)
 	for (i = 0; i < num; i++) {
 		sysfs_attr_init(&otp_kattr[i].attr);
 		otp_kattr[i].attr.name = desc[i];
-		otp_kattr[i].attr.mode = 0600;
+		otp_kattr[i].attr.mode = SYSFS_MODE;
 		otp_kattr[i].show = fsl_otp_show;
 		otp_kattr[i].store = fsl_otp_store;
 		attrs[i] = &otp_kattr[i].attr;

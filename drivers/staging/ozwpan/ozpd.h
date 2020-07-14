@@ -22,11 +22,6 @@
 #define OZ_TIMER_HEARTBEAT	2
 #define OZ_TIMER_STOP		3
 
-/*
- *External spinlock variable
- */
-extern spinlock_t g_polling_lock;
-
 /* Data structure that hold information on a frame for transmisson. This is
  * built when the frame is first transmitted and is used to rebuild the frame
  * if a re-transmission is required.
@@ -81,8 +76,8 @@ struct oz_pd {
 	unsigned long	presleep;
 	unsigned long	keep_alive;
 	struct oz_elt_buf elt_buff;
-	void		*app_ctx[OZ_NB_APPS];
-	spinlock_t	app_lock[OZ_NB_APPS];
+	void		*app_ctx[OZ_APPID_MAX];
+	spinlock_t	app_lock[OZ_APPID_MAX];
 	int		max_tx_size;
 	u8		mode;
 	u8		ms_per_isoc;
@@ -90,6 +85,8 @@ struct oz_pd {
 	unsigned	max_stream_buffering;
 	int		nb_queued_frames;
 	int		nb_queued_isoc_frames;
+	struct list_head *tx_pool;
+	int		tx_pool_count;
 	spinlock_t	tx_frame_lock;
 	struct list_head *last_sent_frame;
 	struct list_head tx_queue;
@@ -127,8 +124,5 @@ int oz_send_isoc_unit(struct oz_pd *pd, u8 ep_num, const u8 *data, int len);
 void oz_handle_app_elt(struct oz_pd *pd, u8 app_id, struct oz_elt *elt);
 void oz_apps_init(void);
 void oz_apps_term(void);
-
-extern struct kmem_cache *oz_elt_info_cache;
-extern struct kmem_cache *oz_tx_frame_cache;
 
 #endif /* Sentry */

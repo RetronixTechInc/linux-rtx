@@ -22,6 +22,7 @@
 #define pr_fmt(fmt)	"(stc): " fmt
 #include <linux/module.h>
 #include <linux/kernel.h>
+#include <linux/init.h>
 #include <linux/tty.h>
 
 #include <linux/seq_file.h>
@@ -153,9 +154,8 @@ static void st_reg_complete(struct st_data_s *st_gdata, char err)
 				(st_gdata->list[i]->priv_data, err);
 			pr_info("protocol %d's cb sent %d\n", i, err);
 			if (err) { /* cleanup registered protocol */
+				st_gdata->protos_registered--;
 				st_gdata->is_registered[i] = false;
-				if (st_gdata->protos_registered)
-					st_gdata->protos_registered--;
 			}
 		}
 	}
@@ -343,26 +343,12 @@ void st_int_recv(void *disc_data,
 			/* Unknow packet? */
 		default:
 			type = *ptr;
-
-			/* Default case means non-HCILL packets,
-			 * possibilities are packets for:
-			 * (a) valid protocol -  Supported Protocols within
-			 *     the ST_MAX_CHANNELS.
-			 * (b) registered protocol - Checked by
-			 *     "st_gdata->list[type] == NULL)" are supported
-			 *     protocols only.
-			 *  Rules out any invalid protocol and
-			 *  unregistered protocols with channel ID < 16.
-			 */
-
-			if ((type >= ST_MAX_CHANNELS) ||
-					(st_gdata->list[type] == NULL)) {
-				pr_err("chip/interface misbehavior: "
-						"dropping frame starting "
-						"with 0x%02x\n", type);
+			if (st_gdata->list[type] == NULL) {
+				pr_err("chip/interface misbehavior dropping"
+					" frame starting with 0x%02x", type);
 				goto done;
-			}
 
+			}
 			st_gdata->rx_skb = alloc_skb(
 					st_gdata->list[type]->max_frame_size,
 					GFP_ATOMIC);
@@ -654,11 +640,13 @@ long st_unregister(struct st_proto_s *proto)
 		return -EPROTONOSUPPORT;
 	}
 
-	if (st_gdata->protos_registered)
-		st_gdata->protos_registered--;
-
+	st_gdata->protos_registered--;
 	remove_channel_from_table(st_gdata, proto);
 	spin_unlock_irqrestore(&st_gdata->lock, flags);
+
+	/* paranoid check */
+	if (st_gdata->protos_registered < ST_EMPTY)
+		st_gdata->protos_registered = ST_EMPTY;
 
 	if ((st_gdata->protos_registered == ST_EMPTY) &&
 	    (!test_bit(ST_REG_PENDING, &st_gdata->st_state))) {
@@ -907,3 +895,5 @@ void st_core_exit(struct st_data_s *st_gdata)
 		kfree(st_gdata);
 	}
 }
+
+

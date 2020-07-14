@@ -39,12 +39,14 @@ Status: in development
 #include <linux/poll.h>
 
 struct serial2002_range_table_t {
+
 	/*  HACK... */
 	int length;
 	struct comedi_krange range;
 };
 
 struct serial2002_private {
+
 	int port;		/*  /dev/ttyS<port> */
 	int speed;		/*  baudrate */
 	struct file *tty;
@@ -108,14 +110,22 @@ static int serial2002_tty_write(struct file *f, unsigned char *buf, int count)
 {
 	const char __user *p = (__force const char __user *)buf;
 	int result;
-	loff_t offset = 0;
 	mm_segment_t oldfs;
 
 	oldfs = get_fs();
 	set_fs(KERNEL_DS);
-	result = __vfs_write(f, p, count, &offset);
+	f->f_pos = 0;
+	result = f->f_op->write(f, p, count, &f->f_pos);
 	set_fs(oldfs);
 	return result;
+}
+
+static int serial2002_tty_readb(struct file *f, unsigned char *buf)
+{
+	char __user *p = (__force char __user *)buf;
+
+	f->f_pos = 0;
+	return f->f_op->read(f, p, 1, &f->f_pos);
 }
 
 static void serial2002_tty_read_poll_wait(struct file *f, int timeout)
@@ -135,8 +145,8 @@ static void serial2002_tty_read_poll_wait(struct file *f, int timeout)
 			break;
 		}
 		do_gettimeofday(&now);
-		elapsed = 1000000 * (now.tv_sec - start.tv_sec) +
-			  now.tv_usec - start.tv_usec;
+		elapsed = (1000000 * (now.tv_sec - start.tv_sec) +
+			  now.tv_usec - start.tv_usec);
 		if (elapsed > timeout)
 			break;
 		set_current_state(TASK_INTERRUPTIBLE);
@@ -153,26 +163,23 @@ static int serial2002_tty_read(struct file *f, int timeout)
 	result = -1;
 	if (!IS_ERR(f)) {
 		mm_segment_t oldfs;
-		char __user *p = (__force char __user *)&ch;
-		loff_t offset = 0;
 
 		oldfs = get_fs();
 		set_fs(KERNEL_DS);
 		if (f->f_op->poll) {
 			serial2002_tty_read_poll_wait(f, timeout);
 
-			if (__vfs_read(f, p, 1, &offset) == 1)
+			if (serial2002_tty_readb(f, &ch) == 1)
 				result = ch;
 		} else {
 			/* Device does not support poll, busy wait */
 			int retries = 0;
-
 			while (1) {
 				retries++;
 				if (retries >= timeout)
 					break;
 
-				if (__vfs_read(f, p, 1, &offset) == 1) {
+				if (serial2002_tty_readb(f, &ch) == 1) {
 					result = ch;
 					break;
 				}
@@ -292,6 +299,7 @@ static struct serial_data serial2002_read(struct file *f, int timeout)
 		}
 	}
 	return result;
+
 }
 
 static void serial2002_write(struct file *f, struct serial_data data)
@@ -303,7 +311,6 @@ static void serial2002_write(struct file *f, struct serial_data data)
 	} else {
 		unsigned char ch[6];
 		int i = 0;
-
 		if (data.value >= (1L << 30)) {
 			ch[i] = 0x80 | ((data.value >> 30) & 0x03);
 			i++;
@@ -352,8 +359,7 @@ static int serial2002_setup_subdevice(struct comedi_subdevice *s,
 	s->n_chan = chan;
 	s->maxdata = 0;
 	kfree(s->maxdata_list);
-	maxdata_list = kmalloc_array(s->n_chan, sizeof(unsigned int),
-				     GFP_KERNEL);
+	maxdata_list = kmalloc(sizeof(unsigned int) * s->n_chan, GFP_KERNEL);
 	if (!maxdata_list)
 		return -ENOMEM;
 	s->maxdata_list = maxdata_list;
@@ -363,8 +369,9 @@ static int serial2002_setup_subdevice(struct comedi_subdevice *s,
 	if (kind == 1 || kind == 2) {
 		s->range_table = &range_digital;
 	} else if (range) {
-		range_table_list = kmalloc_array(s->n_chan, sizeof(*range),
-						 GFP_KERNEL);
+		range_table_list =
+			kmalloc(sizeof(struct serial2002_range_table_t) *
+				s->n_chan, GFP_KERNEL);
 		if (!range_table_list)
 			return -ENOMEM;
 		s->range_table_list = range_table_list;
@@ -413,65 +420,67 @@ static int serial2002_setup_subdevs(struct comedi_device *dev)
 	serial2002_tty_setspeed(devpriv->tty, devpriv->speed);
 	serial2002_poll_channel(devpriv->tty, 31);
 	while (1) {
-		struct serial_data data = serial2002_read(devpriv->tty, 1000);
-		int kind = S2002_CFG_KIND(data.value);
-		int channel = S2002_CFG_CHAN(data.value);
-		int range = S2002_CFG_BASE(data.value);
-		int cmd = S2002_CFG_CMD(data.value);
+		struct serial_data data;
 
+		data = serial2002_read(devpriv->tty, 1000);
 		if (data.kind != is_channel || data.index != 31 ||
-		    kind == S2002_CFG_KIND_INVALID)
+		    S2002_CFG_KIND(data.value) == S2002_CFG_KIND_INVALID) {
 			break;
+		} else {
+			int channel = S2002_CFG_CHAN(data.value);
+			int range = S2002_CFG_BASE(data.value);
 
-		switch (kind) {
-		case S2002_CFG_KIND_DIGITAL_IN:
-			cfg = di_cfg;
-			break;
-		case S2002_CFG_KIND_DIGITAL_OUT:
-			cfg = do_cfg;
-			break;
-		case S2002_CFG_KIND_ANALOG_IN:
-			cfg = ai_cfg;
-			break;
-		case S2002_CFG_KIND_ANALOG_OUT:
-			cfg = ao_cfg;
-			break;
-		case S2002_CFG_KIND_ENCODER_IN:
-			cfg = ai_cfg;
-			break;
-		default:
-			cfg = NULL;
-			break;
-		}
-		if (!cfg)
-			continue;	/* unknown kind, skip it */
-
-		cfg[channel].kind = kind;
-
-		switch (cmd) {
-		case S2002_CFG_CMD_BITS:
-			cfg[channel].bits = S2002_CFG_BITS(data.value);
-			break;
-		case S2002_CFG_CMD_MIN:
-		case S2002_CFG_CMD_MAX:
-			switch (S2002_CFG_UNITS(data.value)) {
-			case 0:
-				range *= 1000000;
+			switch (S2002_CFG_KIND(data.value)) {
+			case S2002_CFG_KIND_DIGITAL_IN:
+				cfg = di_cfg;
 				break;
-			case 1:
-				range *= 1000;
+			case S2002_CFG_KIND_DIGITAL_OUT:
+				cfg = do_cfg;
 				break;
-			case 2:
-				range *= 1;
+			case S2002_CFG_KIND_ANALOG_IN:
+				cfg = ai_cfg;
+				break;
+			case S2002_CFG_KIND_ANALOG_OUT:
+				cfg = ao_cfg;
+				break;
+			case S2002_CFG_KIND_ENCODER_IN:
+				cfg = ai_cfg;
+				break;
+			default:
+				cfg = NULL;
 				break;
 			}
-			if (S2002_CFG_SIGN(data.value))
-				range = -range;
-			if (cmd == S2002_CFG_CMD_MIN)
-				cfg[channel].min = range;
-			else
-				cfg[channel].max = range;
-			break;
+			if (!cfg)
+				continue;	/* unknown kind, skip it */
+
+			cfg[channel].kind = S2002_CFG_KIND(data.value);
+
+			switch (S2002_CFG_CMD(data.value)) {
+			case S2002_CFG_CMD_BITS:
+				cfg[channel].bits = S2002_CFG_BITS(data.value);
+				break;
+			case S2002_CFG_CMD_MIN:
+			case S2002_CFG_CMD_MAX:
+				switch (S2002_CFG_UNITS(data.value)) {
+				case 0:
+					range *= 1000000;
+					break;
+				case 1:
+					range *= 1000;
+					break;
+				case 2:
+					range *= 1;
+					break;
+				}
+				if (S2002_CFG_SIGN(data.value))
+					range = -range;
+				if (S2002_CFG_CMD(data.value) ==
+				    S2002_CFG_CMD_MIN)
+					cfg[channel].min = range;
+				else
+					cfg[channel].max = range;
+				break;
+			}
 		}
 	}
 
@@ -733,7 +742,7 @@ static int serial2002_attach(struct comedi_device *dev,
 	/* digital output subdevice */
 	s = &dev->subdevices[1];
 	s->type		= COMEDI_SUBD_DO;
-	s->subdev_flags	= SDF_WRITABLE;
+	s->subdev_flags	= SDF_WRITEABLE;
 	s->n_chan	= 0;
 	s->maxdata	= 1;
 	s->range_table	= &range_digital;
@@ -751,7 +760,7 @@ static int serial2002_attach(struct comedi_device *dev,
 	/* analog output subdevice */
 	s = &dev->subdevices[3];
 	s->type		= COMEDI_SUBD_AO;
-	s->subdev_flags	= SDF_WRITABLE;
+	s->subdev_flags	= SDF_WRITEABLE;
 	s->n_chan	= 0;
 	s->maxdata	= 1;
 	s->range_table	= NULL;

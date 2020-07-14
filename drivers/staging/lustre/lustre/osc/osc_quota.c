@@ -28,10 +28,10 @@
  * Code originally extracted from quota directory
  */
 
-#include "../include/obd_class.h"
+#include <obd_ost.h>
 #include "osc_internal.h"
 
-static inline struct osc_quota_info *osc_oqi_alloc(u32 id)
+static inline struct osc_quota_info *osc_oqi_alloc(obd_uid id)
 {
 	struct osc_quota_info *oqi;
 
@@ -51,8 +51,11 @@ int osc_quota_chkdq(struct client_obd *cli, const unsigned int qid[])
 
 		oqi = cfs_hash_lookup(cli->cl_quota_hash[type], &qid[type]);
 		if (oqi) {
-			/* do not try to access oqi here, it could have been
-			 * freed by osc_quota_setdq() */
+			obd_uid id = oqi->oqi_id;
+
+			LASSERTF(id == qid[type],
+				 "The ids don't match %u != %u\n",
+				 id, qid[type]);
 
 			/* the slot is busy, the user is about to run out of
 			 * quota space on this OST */
@@ -71,7 +74,7 @@ int osc_quota_chkdq(struct client_obd *cli, const unsigned int qid[])
 						: OBD_FL_NO_GRPQUOTA)
 
 int osc_quota_setdq(struct client_obd *cli, const unsigned int qid[],
-		    u32 valid, u32 flags)
+		    obd_flag valid, obd_flag flags)
 {
 	int type;
 	int rc = 0;
@@ -138,17 +141,17 @@ int osc_quota_setdq(struct client_obd *cli, const unsigned int qid[],
 static unsigned
 oqi_hashfn(struct cfs_hash *hs, const void *key, unsigned mask)
 {
-	return cfs_hash_u32_hash(*((__u32 *)key), mask);
+	return cfs_hash_u32_hash(*((__u32*)key), mask);
 }
 
 static int
 oqi_keycmp(const void *key, struct hlist_node *hnode)
 {
 	struct osc_quota_info *oqi;
-	u32 uid;
+	obd_uid uid;
 
 	LASSERT(key != NULL);
-	uid = *((u32 *)key);
+	uid = *((obd_uid*)key);
 	oqi = hlist_entry(hnode, struct osc_quota_info, oqi_hash);
 
 	return uid == oqi->oqi_id;
@@ -265,16 +268,11 @@ int osc_quotactl(struct obd_device *unused, struct obd_export *exp,
 	if (rc)
 		CERROR("ptlrpc_queue_wait failed, rc: %d\n", rc);
 
-	if (req->rq_repmsg) {
-		oqc = req_capsule_server_get(&req->rq_pill, &RMF_OBD_QUOTACTL);
-		if (oqc) {
-			*oqctl = *oqc;
-		} else if (!rc) {
-			CERROR("Can't unpack obd_quotactl\n");
-			rc = -EPROTO;
-		}
+	if (req->rq_repmsg &&
+	    (oqc = req_capsule_server_get(&req->rq_pill, &RMF_OBD_QUOTACTL))) {
+		*oqctl = *oqc;
 	} else if (!rc) {
-		CERROR("Can't unpack obd_quotactl\n");
+		CERROR ("Can't unpack obd_quotactl\n");
 		rc = -EPROTO;
 	}
 	ptlrpc_req_finished(req);

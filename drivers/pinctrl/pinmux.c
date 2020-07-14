@@ -41,7 +41,7 @@ int pinmux_check_ops(struct pinctrl_dev *pctldev)
 	    !ops->get_functions_count ||
 	    !ops->get_function_name ||
 	    !ops->get_function_groups ||
-	    !ops->set_mux) {
+	    !ops->enable) {
 		dev_err(pctldev->dev, "pinmux ops lacks necessary functions\n");
 		return -EINVAL;
 	}
@@ -391,16 +391,14 @@ int pinmux_enable_setting(struct pinctrl_setting const *setting)
 	struct pinctrl_dev *pctldev = setting->pctldev;
 	const struct pinctrl_ops *pctlops = pctldev->desc->pctlops;
 	const struct pinmux_ops *ops = pctldev->desc->pmxops;
-	int ret = 0;
-	const unsigned *pins = NULL;
-	unsigned num_pins = 0;
+	int ret;
+	const unsigned *pins;
+	unsigned num_pins;
 	int i;
 	struct pin_desc *desc;
 
-	if (pctlops->get_group_pins)
-		ret = pctlops->get_group_pins(pctldev, setting->data.mux.group,
-					      &pins, &num_pins);
-
+	ret = pctlops->get_group_pins(pctldev, setting->data.mux.group,
+				      &pins, &num_pins);
 	if (ret) {
 		const char *gname;
 
@@ -445,15 +443,15 @@ int pinmux_enable_setting(struct pinctrl_setting const *setting)
 		desc->mux_setting = &(setting->data.mux);
 	}
 
-	ret = ops->set_mux(pctldev, setting->data.mux.func,
-			   setting->data.mux.group);
+	ret = ops->enable(pctldev, setting->data.mux.func,
+			  setting->data.mux.group);
 
 	if (ret)
-		goto err_set_mux;
+		goto err_enable;
 
 	return 0;
 
-err_set_mux:
+err_enable:
 	for (i = 0; i < num_pins; i++) {
 		desc = pin_desc_get(pctldev, pins[i]);
 		if (desc)
@@ -471,15 +469,15 @@ void pinmux_disable_setting(struct pinctrl_setting const *setting)
 {
 	struct pinctrl_dev *pctldev = setting->pctldev;
 	const struct pinctrl_ops *pctlops = pctldev->desc->pctlops;
-	int ret = 0;
-	const unsigned *pins = NULL;
-	unsigned num_pins = 0;
+	const struct pinmux_ops *ops = pctldev->desc->pmxops;
+	int ret;
+	const unsigned *pins;
+	unsigned num_pins;
 	int i;
 	struct pin_desc *desc;
 
-	if (pctlops->get_group_pins)
-		ret = pctlops->get_group_pins(pctldev, setting->data.mux.group,
-					      &pins, &num_pins);
+	ret = pctlops->get_group_pins(pctldev, setting->data.mux.group,
+				      &pins, &num_pins);
 	if (ret) {
 		const char *gname;
 
@@ -517,6 +515,9 @@ void pinmux_disable_setting(struct pinctrl_setting const *setting)
 				 pins[i], desc->name, gname);
 		}
 	}
+
+	if (ops->disable)
+		ops->disable(pctldev, setting->data.mux.func, setting->data.mux.group);
 }
 
 #ifdef CONFIG_DEBUG_FS

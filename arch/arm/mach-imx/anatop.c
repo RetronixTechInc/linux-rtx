@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2013-2016 Freescale Semiconductor, Inc.
+ * Copyright (C) 2013-2015 Freescale Semiconductor, Inc.
  *
  * The code contained herein is licensed under the GNU General Public
  * License. You may obtain a copy of the GNU General Public License
@@ -28,7 +28,6 @@
 #define ANADIG_ENET_PLL		0xe0
 #define ANADIG_AUDIO_PLL	0xf0
 #define ANADIG_VIDEO_PLL	0x130
-
 #define ANADIG_REG_2P5		0x130
 #define ANADIG_REG_CORE		0x140
 #define ANADIG_ANA_MISC0	0x150

@@ -321,6 +321,7 @@ err:
 static struct platform_driver platform_msic_gpio_driver = {
 	.driver = {
 		.name		= "msic_gpio",
+		.owner		= THIS_MODULE,
 	},
 	.probe		= platform_msic_gpio_probe,
 };

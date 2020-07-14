@@ -12,13 +12,11 @@ virtual org
 virtual report
 
 @r1@
-expression dev;
 expression irq;
 expression thread_fn;
 expression flags;
 position p;
 @@
-(
 request_threaded_irq@p(irq, NULL, thread_fn,
 (
 flags | IRQF_ONESHOT
@@ -26,24 +24,13 @@ flags | IRQF_ONESHOT
 IRQF_ONESHOT
 )
 , ...)
-|
-devm_request_threaded_irq@p(dev, irq, NULL, thread_fn,
-(
-flags | IRQF_ONESHOT
-|
-IRQF_ONESHOT
-)
-, ...)
-)
 
 @depends on patch@
-expression dev;
 expression irq;
 expression thread_fn;
 expression flags;
 position p != r1.p;
 @@
-(
 request_threaded_irq@p(irq, NULL, thread_fn,
 (
 -0
@@ -53,17 +40,6 @@ request_threaded_irq@p(irq, NULL, thread_fn,
 +flags | IRQF_ONESHOT
 )
 , ...)
-|
-devm_request_threaded_irq@p(dev, irq, NULL, thread_fn,
-(
--0
-+IRQF_ONESHOT
-|
--flags
-+flags | IRQF_ONESHOT
-)
-, ...)
-)
 
 @depends on context@
 position p != r1.p;

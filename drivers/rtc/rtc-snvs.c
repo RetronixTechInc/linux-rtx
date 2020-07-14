@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2011-2012 Freescale Semiconductor, Inc.
+ * Copyright (C) 2011-2014 Freescale Semiconductor, Inc.
  *
  * The code contained herein is licensed under the GNU General Public
  * License. You may obtain a copy of the GNU General Public License
@@ -16,12 +16,8 @@
 #include <linux/of.h>
 #include <linux/of_device.h>
 #include <linux/platform_device.h>
-#include <linux/rtc.h>
 #include <linux/clk.h>
-#include <linux/mfd/syscon.h>
-#include <linux/regmap.h>
-
-#define SNVS_LPREGISTER_OFFSET	0x34
+#include <linux/rtc.h>
 
 /* These register offsets are relative to LP (Low Power) range */
 #define SNVS_LPCR		0x04
@@ -30,6 +26,7 @@
 #define SNVS_LPSRTCLR		0x20
 #define SNVS_LPTAR		0x24
 #define SNVS_LPPGDR		0x30
+#define SNVS_LPGPR		0x34
 
 #define SNVS_LPCR_SRTC_ENV	(1 << 0)
 #define SNVS_LPCR_LPTA_EN	(1 << 1)
@@ -41,36 +38,34 @@
 
 struct snvs_rtc_data {
 	struct rtc_device *rtc;
-	struct regmap *regmap;
-	int offset;
-	int irq;
+	void __iomem *ioaddr;
 	struct clk *clk;
+	int irq;
+	spinlock_t lock;
 };
 
-static u32 rtc_read_lp_counter(struct snvs_rtc_data *data)
+static void __iomem *snvs_base;
+static struct clk *clk_snvs;
+
+static u32 rtc_read_lp_counter(void __iomem *ioaddr)
 {
 	u64 read1, read2;
-	u32 val;
 
 	do {
-		regmap_read(data->regmap, data->offset + SNVS_LPSRTCMR, &val);
-		read1 = val;
+		read1 = readl(ioaddr + SNVS_LPSRTCMR);
 		read1 <<= 32;
-		regmap_read(data->regmap, data->offset + SNVS_LPSRTCLR, &val);
-		read1 |= val;
+		read1 |= readl(ioaddr + SNVS_LPSRTCLR);
 
-		regmap_read(data->regmap, data->offset + SNVS_LPSRTCMR, &val);
-		read2 = val;
+		read2 = readl(ioaddr + SNVS_LPSRTCMR);
 		read2 <<= 32;
-		regmap_read(data->regmap, data->offset + SNVS_LPSRTCLR, &val);
-		read2 |= val;
+		read2 |= readl(ioaddr + SNVS_LPSRTCLR);
 	} while (read1 != read2);
 
 	/* Convert 47-bit counter to 32-bit raw second count */
 	return (u32) (read1 >> CNTR_TO_SECS_SH);
 }
 
-static void rtc_write_sync_lp(struct snvs_rtc_data *data)
+static void rtc_write_sync_lp(void __iomem *ioaddr)
 {
 	u32 count1, count2, count3;
 	int i;
@@ -78,15 +73,15 @@ static void rtc_write_sync_lp(struct snvs_rtc_data *data)
 	/* Wait for 3 CKIL cycles */
 	for (i = 0; i < 3; i++) {
 		do {
-			regmap_read(data->regmap, data->offset + SNVS_LPSRTCLR, &count1);
-			regmap_read(data->regmap, data->offset + SNVS_LPSRTCLR, &count2);
+			count1 = readl(ioaddr + SNVS_LPSRTCLR);
+			count2 = readl(ioaddr + SNVS_LPSRTCLR);
 		} while (count1 != count2);
 
 		/* Now wait until counter value changes */
 		do {
 			do {
-				regmap_read(data->regmap, data->offset + SNVS_LPSRTCLR, &count2);
-				regmap_read(data->regmap, data->offset + SNVS_LPSRTCLR, &count3);
+				count2 = readl(ioaddr + SNVS_LPSRTCLR);
+				count3 = readl(ioaddr + SNVS_LPSRTCLR);
 			} while (count2 != count3);
 		} while (count3 == count1);
 	}
@@ -94,14 +89,23 @@ static void rtc_write_sync_lp(struct snvs_rtc_data *data)
 
 static int snvs_rtc_enable(struct snvs_rtc_data *data, bool enable)
 {
+	unsigned long flags;
 	int timeout = 1000;
 	u32 lpcr;
 
-	regmap_update_bits(data->regmap, data->offset + SNVS_LPCR, SNVS_LPCR_SRTC_ENV,
-			   enable ? SNVS_LPCR_SRTC_ENV : 0);
+	spin_lock_irqsave(&data->lock, flags);
+
+	lpcr = readl(data->ioaddr + SNVS_LPCR);
+	if (enable)
+		lpcr |= SNVS_LPCR_SRTC_ENV;
+	else
+		lpcr &= ~SNVS_LPCR_SRTC_ENV;
+	writel(lpcr, data->ioaddr + SNVS_LPCR);
+
+	spin_unlock_irqrestore(&data->lock, flags);
 
 	while (--timeout) {
-		regmap_read(data->regmap, data->offset + SNVS_LPCR, &lpcr);
+		lpcr = readl(data->ioaddr + SNVS_LPCR);
 
 		if (enable) {
 			if (lpcr & SNVS_LPCR_SRTC_ENV)
@@ -121,9 +125,12 @@ static int snvs_rtc_enable(struct snvs_rtc_data *data, bool enable)
 static int snvs_rtc_read_time(struct device *dev, struct rtc_time *tm)
 {
 	struct snvs_rtc_data *data = dev_get_drvdata(dev);
-	unsigned long time = rtc_read_lp_counter(data);
+	unsigned long time;
 
+	clk_enable(data->clk);
+	time = rtc_read_lp_counter(data->ioaddr);
 	rtc_time_to_tm(time, tm);
+	clk_disable(data->clk);
 
 	return 0;
 }
@@ -133,17 +140,19 @@ static int snvs_rtc_set_time(struct device *dev, struct rtc_time *tm)
 	struct snvs_rtc_data *data = dev_get_drvdata(dev);
 	unsigned long time;
 
+	clk_enable(data->clk);
 	rtc_tm_to_time(tm, &time);
 
 	/* Disable RTC first */
 	snvs_rtc_enable(data, false);
 
 	/* Write 32-bit time to 47-bit timer, leaving 15 LSBs blank */
-	regmap_write(data->regmap, data->offset + SNVS_LPSRTCLR, time << CNTR_TO_SECS_SH);
-	regmap_write(data->regmap, data->offset + SNVS_LPSRTCMR, time >> (32 - CNTR_TO_SECS_SH));
+	writel(time << CNTR_TO_SECS_SH, data->ioaddr + SNVS_LPSRTCLR);
+	writel(time >> (32 - CNTR_TO_SECS_SH), data->ioaddr + SNVS_LPSRTCMR);
 
 	/* Enable RTC again */
 	snvs_rtc_enable(data, true);
+	clk_disable(data->clk);
 
 	return 0;
 }
@@ -153,11 +162,13 @@ static int snvs_rtc_read_alarm(struct device *dev, struct rtc_wkalrm *alrm)
 	struct snvs_rtc_data *data = dev_get_drvdata(dev);
 	u32 lptar, lpsr;
 
-	regmap_read(data->regmap, data->offset + SNVS_LPTAR, &lptar);
+	clk_enable(data->clk);
+	lptar = readl(data->ioaddr + SNVS_LPTAR);
 	rtc_time_to_tm(lptar, &alrm->time);
 
-	regmap_read(data->regmap, data->offset + SNVS_LPSR, &lpsr);
+	lpsr = readl(data->ioaddr + SNVS_LPSR);
 	alrm->pending = (lpsr & SNVS_LPSR_LPTA) ? 1 : 0;
+	clk_disable(data->clk);
 
 	return 0;
 }
@@ -165,12 +176,23 @@ static int snvs_rtc_read_alarm(struct device *dev, struct rtc_wkalrm *alrm)
 static int snvs_rtc_alarm_irq_enable(struct device *dev, unsigned int enable)
 {
 	struct snvs_rtc_data *data = dev_get_drvdata(dev);
+	u32 lpcr;
+	unsigned long flags;
 
-	regmap_update_bits(data->regmap, data->offset + SNVS_LPCR,
-			   (SNVS_LPCR_LPTA_EN | SNVS_LPCR_LPWUI_EN),
-			   enable ? (SNVS_LPCR_LPTA_EN | SNVS_LPCR_LPWUI_EN) : 0);
+	clk_enable(data->clk);
+	spin_lock_irqsave(&data->lock, flags);
 
-	rtc_write_sync_lp(data);
+	lpcr = readl(data->ioaddr + SNVS_LPCR);
+	if (enable)
+		lpcr |= (SNVS_LPCR_LPTA_EN | SNVS_LPCR_LPWUI_EN);
+	else
+		lpcr &= ~(SNVS_LPCR_LPTA_EN | SNVS_LPCR_LPWUI_EN);
+	writel(lpcr, data->ioaddr + SNVS_LPCR);
+
+	spin_unlock_irqrestore(&data->lock, flags);
+
+	rtc_write_sync_lp(data->ioaddr);
+	clk_disable(data->clk);
 
 	return 0;
 }
@@ -180,14 +202,26 @@ static int snvs_rtc_set_alarm(struct device *dev, struct rtc_wkalrm *alrm)
 	struct snvs_rtc_data *data = dev_get_drvdata(dev);
 	struct rtc_time *alrm_tm = &alrm->time;
 	unsigned long time;
+	unsigned long flags;
+	u32 lpcr;
 
 	rtc_tm_to_time(alrm_tm, &time);
 
-	regmap_update_bits(data->regmap, data->offset + SNVS_LPCR, SNVS_LPCR_LPTA_EN, 0);
-	regmap_write(data->regmap, data->offset + SNVS_LPTAR, time);
+	clk_enable(data->clk);
+	spin_lock_irqsave(&data->lock, flags);
+
+	/* Have to clear LPTA_EN before programming new alarm time in LPTAR */
+	lpcr = readl(data->ioaddr + SNVS_LPCR);
+	lpcr &= ~SNVS_LPCR_LPTA_EN;
+	writel(lpcr, data->ioaddr + SNVS_LPCR);
+
+	spin_unlock_irqrestore(&data->lock, flags);
+
+	writel(time, data->ioaddr + SNVS_LPTAR);
 
 	/* Clear alarm interrupt status bit */
-	regmap_write(data->regmap, data->offset + SNVS_LPSR, SNVS_LPSR_LPTA);
+	writel(SNVS_LPSR_LPTA, data->ioaddr + SNVS_LPSR);
+	clk_disable(data->clk);
 
 	return snvs_rtc_alarm_irq_enable(dev, alrm->enabled);
 }
@@ -200,6 +234,39 @@ static const struct rtc_class_ops snvs_rtc_ops = {
 	.alarm_irq_enable = snvs_rtc_alarm_irq_enable,
 };
 
+
+static ssize_t snvs_sysfs_show_usr(struct device *dev,
+		       struct device_attribute *attr, char *buf)
+{
+	struct snvs_rtc_data *data = dev_get_drvdata(dev);
+	u32 lpgpr;
+
+	lpgpr = readl(data->ioaddr + SNVS_LPGPR);
+	return sprintf(buf, "0x%08x\n", lpgpr);
+}
+
+static ssize_t snvs_sysfs_store_usr(struct device *dev,
+			struct device_attribute *attr,
+			const char *buf, size_t count)
+{
+	struct snvs_rtc_data *data = dev_get_drvdata(dev);
+	u32 usr = 0;
+
+	if (buf[0] == '0' && (buf[1] == 'x' || buf[1] == 'X')) {
+		if (sscanf(buf, "%x", &usr) != 1)
+			return -EINVAL;
+	} else {
+		if (sscanf(buf, "%d", &usr) != 1)
+			return -EINVAL;
+	}
+
+	writel(usr, data->ioaddr + SNVS_LPGPR);
+	return count;
+}
+
+static DEVICE_ATTR(usr, S_IRUGO | S_IWUSR, snvs_sysfs_show_usr,
+		snvs_sysfs_store_usr);
+
 static irqreturn_t snvs_rtc_irq_handler(int irq, void *dev_id)
 {
 	struct device *dev = dev_id;
@@ -207,7 +274,8 @@ static irqreturn_t snvs_rtc_irq_handler(int irq, void *dev_id)
 	u32 lpsr;
 	u32 events = 0;
 
-	regmap_read(data->regmap, data->offset + SNVS_LPSR, &lpsr);
+	clk_enable(data->clk);
+	lpsr = readl(data->ioaddr + SNVS_LPSR);
 
 	if (lpsr & SNVS_LPSR_LPTA) {
 		events |= (RTC_AF | RTC_IRQF);
@@ -219,84 +287,82 @@ static irqreturn_t snvs_rtc_irq_handler(int irq, void *dev_id)
 	}
 
 	/* clear interrupt status */
-	regmap_write(data->regmap, data->offset + SNVS_LPSR, lpsr);
+	writel(lpsr, data->ioaddr + SNVS_LPSR);
+	clk_disable(data->clk);
 
 	return events ? IRQ_HANDLED : IRQ_NONE;
 }
 
-static const struct regmap_config snvs_rtc_config = {
-	.reg_bits = 32,
-	.val_bits = 32,
-	.reg_stride = 4,
-};
+static void snvs_poweroff(void)
+{
+	u32 value;
+
+	clk_enable(clk_snvs);
+	value = readl(snvs_base + SNVS_LPCR);
+	/* set TOP and DP_EN bit */
+	writel(value | 0x60, snvs_base + SNVS_LPCR);
+	/*
+	 * Do not turn off snvs clock otherwise PMIC_ON_REQ can't be pulled
+	 * high by press ONOFF. This is design limitation.
+	 */
+	/* clk_disable(clk_snvs); */
+}
 
 static int snvs_rtc_probe(struct platform_device *pdev)
 {
 	struct snvs_rtc_data *data;
 	struct resource *res;
 	int ret;
-	void __iomem *mmio;
 
 	data = devm_kzalloc(&pdev->dev, sizeof(*data), GFP_KERNEL);
 	if (!data)
 		return -ENOMEM;
 
-	data->regmap = syscon_regmap_lookup_by_phandle(pdev->dev.of_node, "regmap");
+	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	data->ioaddr = devm_ioremap_resource(&pdev->dev, res);
+	if (IS_ERR(data->ioaddr))
+		return PTR_ERR(data->ioaddr);
 
-	if (IS_ERR(data->regmap)) {
-		dev_warn(&pdev->dev, "snvs rtc: you use old dts file, please update it\n");
-		res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
-
-		mmio = devm_ioremap_resource(&pdev->dev, res);
-		if (IS_ERR(mmio))
-			return PTR_ERR(mmio);
-
-		data->regmap = devm_regmap_init_mmio(&pdev->dev, mmio, &snvs_rtc_config);
-	} else {
-		data->offset = SNVS_LPREGISTER_OFFSET;
-		of_property_read_u32(pdev->dev.of_node, "offset", &data->offset);
+	data->clk = devm_clk_get(&pdev->dev, NULL);
+	if (IS_ERR(data->clk)) {
+		dev_err(&pdev->dev, "can't get snvs-rtc clock\n");
+		data->clk = NULL;
 	}
-
-	if (!data->regmap) {
-		dev_err(&pdev->dev, "Can't find snvs syscon\n");
-		return -ENODEV;
-	}
+	clk_snvs = data->clk;
 
 	data->irq = platform_get_irq(pdev, 0);
 	if (data->irq < 0)
 		return data->irq;
 
-	data->clk = devm_clk_get(&pdev->dev, "snvs-rtc");
-	if (IS_ERR(data->clk)) {
-		data->clk = NULL;
-	} else {
-		ret = clk_prepare_enable(data->clk);
-		if (ret) {
-			dev_err(&pdev->dev,
-				"Could not prepare or enable the snvs clock\n");
-			return ret;
-		}
-	}
-
 	platform_set_drvdata(pdev, data);
 
+	spin_lock_init(&data->lock);
+
+	ret = clk_prepare_enable(data->clk);
+	if (ret) {
+		dev_err(&pdev->dev, "can't enable snvs-rtc clock\n");
+		return ret;
+	}
+
 	/* Initialize glitch detect */
-	regmap_write(data->regmap, data->offset + SNVS_LPPGDR, SNVS_LPPGDR_INIT);
+	writel(SNVS_LPPGDR_INIT, data->ioaddr + SNVS_LPPGDR);
 
 	/* Clear interrupt status */
-	regmap_write(data->regmap, data->offset + SNVS_LPSR, 0xffffffff);
+	writel(0xffffffff, data->ioaddr + SNVS_LPSR);
 
+	snvs_base = data->ioaddr;
 	/* Enable RTC */
 	snvs_rtc_enable(data, true);
 
 	device_init_wakeup(&pdev->dev, true);
 
 	ret = devm_request_irq(&pdev->dev, data->irq, snvs_rtc_irq_handler,
-			       IRQF_SHARED, "rtc alarm", &pdev->dev);
+			       IRQF_SHARED | IRQF_NO_SUSPEND,
+			       "rtc alarm", &pdev->dev);
 	if (ret) {
 		dev_err(&pdev->dev, "failed to request irq %d: %d\n",
 			data->irq, ret);
-		goto error_rtc_device_register;
+		goto err_rtc;
 	}
 
 	data->rtc = devm_rtc_device_register(&pdev->dev, pdev->name,
@@ -304,16 +370,31 @@ static int snvs_rtc_probe(struct platform_device *pdev)
 	if (IS_ERR(data->rtc)) {
 		ret = PTR_ERR(data->rtc);
 		dev_err(&pdev->dev, "failed to register rtc: %d\n", ret);
-		goto error_rtc_device_register;
+		goto err_rtc;
+	}
+	/*
+	 * if no specific power off function in board file, power off system by
+	 * SNVS
+	 */
+	if (!pm_power_off)
+		pm_power_off = snvs_poweroff;
+
+	clk_disable(data->clk);
+
+	ret = device_create_file(&pdev->dev, &dev_attr_usr);
+	if (ret < 0) {
+		dev_err(&pdev->dev, "failed create usr file: %d\n", ret);
 	}
 
-	return 0;
-
-error_rtc_device_register:
-	if (data->clk)
-		clk_disable_unprepare(data->clk);
-
+err_rtc:
+	clk_disable_unprepare(data->clk);
 	return ret;
+}
+
+static int snvs_rtc_remove(struct platform_device *pdev)
+{
+	device_remove_file(&pdev->dev, &dev_attr_usr);
+	return 0;
 }
 
 #ifdef CONFIG_PM_SLEEP
@@ -327,50 +408,18 @@ static int snvs_rtc_suspend(struct device *dev)
 	return 0;
 }
 
-static int snvs_rtc_suspend_noirq(struct device *dev)
-{
-	struct snvs_rtc_data *data = dev_get_drvdata(dev);
-
-	if (data->clk)
-		clk_disable_unprepare(data->clk);
-
-	return 0;
-}
-
 static int snvs_rtc_resume(struct device *dev)
 {
 	struct snvs_rtc_data *data = dev_get_drvdata(dev);
 
 	if (device_may_wakeup(dev))
-		return disable_irq_wake(data->irq);
+		disable_irq_wake(data->irq);
 
 	return 0;
 }
-
-static int snvs_rtc_resume_noirq(struct device *dev)
-{
-	struct snvs_rtc_data *data = dev_get_drvdata(dev);
-
-	if (data->clk)
-		return clk_prepare_enable(data->clk);
-
-	return 0;
-}
-
-static const struct dev_pm_ops snvs_rtc_pm_ops = {
-	.suspend = snvs_rtc_suspend,
-	.suspend_noirq = snvs_rtc_suspend_noirq,
-	.resume = snvs_rtc_resume,
-	.resume_noirq = snvs_rtc_resume_noirq,
-};
-
-#define SNVS_RTC_PM_OPS	(&snvs_rtc_pm_ops)
-
-#else
-
-#define SNVS_RTC_PM_OPS	NULL
-
 #endif
+
+static SIMPLE_DEV_PM_OPS(snvs_rtc_pm_ops, snvs_rtc_suspend, snvs_rtc_resume);
 
 static const struct of_device_id snvs_dt_ids[] = {
 	{ .compatible = "fsl,sec-v4.0-mon-rtc-lp", },
@@ -381,10 +430,12 @@ MODULE_DEVICE_TABLE(of, snvs_dt_ids);
 static struct platform_driver snvs_rtc_driver = {
 	.driver = {
 		.name	= "snvs_rtc",
-		.pm	= SNVS_RTC_PM_OPS,
+		.owner	= THIS_MODULE,
+		.pm	= &snvs_rtc_pm_ops,
 		.of_match_table = snvs_dt_ids,
 	},
 	.probe		= snvs_rtc_probe,
+	.remove		= snvs_rtc_remove,
 };
 module_platform_driver(snvs_rtc_driver);
 

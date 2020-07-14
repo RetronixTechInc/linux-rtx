@@ -224,7 +224,7 @@ int prism2_wds_del(local_info_t *local, u8 *remote_addr,
 
 	if (selected) {
 		if (do_not_remove)
-			eth_zero_addr(selected->u.wds.remote_addr);
+			memset(selected->u.wds.remote_addr, 0, ETH_ALEN);
 		else {
 			hostap_remove_interface(selected->dev, rtnl_locked, 0);
 			local->wds_connections--;
@@ -798,6 +798,7 @@ static void prism2_tx_timeout(struct net_device *dev)
 
 const struct header_ops hostap_80211_ops = {
 	.create		= eth_header,
+	.rebuild	= eth_rebuild_header,
 	.cache		= eth_header_cache,
 	.cache_update	= eth_header_cache_update,
 	.parse		= hostap_80211_header_parse,
@@ -881,7 +882,7 @@ void hostap_setup_dev(struct net_device *dev, local_info_t *local,
 	dev->mtu = local->mtu;
 
 
-	dev->ethtool_ops = &prism2_ethtool_ops;
+	SET_ETHTOOL_OPS(dev, &prism2_ethtool_ops);
 
 }
 
@@ -1087,7 +1088,7 @@ int prism2_sta_deauth(local_info_t *local, u16 reason)
 
 	ret = prism2_sta_send_mgmt(local, local->bssid, IEEE80211_STYPE_DEAUTH,
 				   (u8 *) &val, 2);
-	eth_zero_addr(wrqu.ap_addr.sa_data);
+	memset(wrqu.ap_addr.sa_data, 0, ETH_ALEN);
 	wireless_send_event(local->dev, SIOCGIWAP, &wrqu, NULL);
 	return ret;
 }

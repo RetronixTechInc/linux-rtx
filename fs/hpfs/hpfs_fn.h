@@ -8,11 +8,6 @@
 
 //#define DBG
 //#define DEBUG_LOCKS
-#ifdef pr_fmt
-#undef pr_fmt
-#endif
-
-#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
 #include <linux/mutex.h>
 #include <linux/pagemap.h>

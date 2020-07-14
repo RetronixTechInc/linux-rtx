@@ -44,15 +44,6 @@ struct media_pad {
 	unsigned long flags;		/* Pad flags (MEDIA_PAD_FL_*) */
 };
 
-/**
- * struct media_entity_operations - Media entity operations
- * @link_setup:		Notify the entity of link changes. The operation can
- *			return an error, in which case link setup will be
- *			cancelled. Optional.
- * @link_validate:	Return whether a link is valid from the entity point of
- *			view. The media_entity_pipeline_start() function
- *			validates all links by calling this operation. Optional.
- */
 struct media_entity_operations {
 	int (*link_setup)(struct media_entity *entity,
 			  const struct media_pad *local,
@@ -96,7 +87,17 @@ struct media_entity {
 		struct {
 			u32 major;
 			u32 minor;
-		} dev;
+		} v4l;
+		struct {
+			u32 major;
+			u32 minor;
+		} fb;
+		struct {
+			u32 card;
+			u32 device;
+			u32 subdevice;
+		} alsa;
+		int dvb;
 
 		/* Sub-device specifications */
 		/* Nothing needed yet */

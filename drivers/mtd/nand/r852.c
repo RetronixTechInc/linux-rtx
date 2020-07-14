@@ -245,7 +245,7 @@ static void r852_write_buf(struct mtd_info *mtd, const uint8_t *buf, int len)
 	}
 
 	/* write DWORD chinks - faster */
-	while (len >= 4) {
+	while (len) {
 		reg = buf[0] | buf[1] << 8 | buf[2] << 16 | buf[3] << 24;
 		r852_write_reg_dword(dev, R852_DATALINE, reg);
 		buf += 4;
@@ -254,10 +254,8 @@ static void r852_write_buf(struct mtd_info *mtd, const uint8_t *buf, int len)
 	}
 
 	/* write rest */
-	while (len > 0) {
+	while (len)
 		r852_write_reg(dev, R852_DATALINE, *buf++);
-		len--;
-	}
 }
 
 /*

@@ -35,7 +35,7 @@
  */
 
 #define DEBUG_SUBSYSTEM S_LNET
-#include "../../include/linux/lnet/lib-lnet.h"
+#include <linux/lnet/lib-lnet.h>
 
 static int config_on_load;
 module_param(config_on_load, int, 0444);
@@ -43,7 +43,7 @@ MODULE_PARM_DESC(config_on_load, "configure network at module load");
 
 static struct mutex lnet_config_mutex;
 
-static int
+int
 lnet_configure(void *arg)
 {
 	/* 'arg' only there so I can be passed to cfs_create_thread() */
@@ -63,7 +63,7 @@ lnet_configure(void *arg)
 	return rc;
 }
 
-static int
+int
 lnet_unconfigure(void)
 {
 	int   refcount;
@@ -83,7 +83,7 @@ lnet_unconfigure(void)
 	return (refcount == 0) ? 0 : -EBUSY;
 }
 
-static int
+int
 lnet_ioctl(unsigned int cmd, struct libcfs_ioctl_data *data)
 {
 	int   rc;
@@ -108,9 +108,9 @@ lnet_ioctl(unsigned int cmd, struct libcfs_ioctl_data *data)
 	}
 }
 
-static DECLARE_IOCTL_HANDLER(lnet_ioctl_handler, lnet_ioctl);
+DECLARE_IOCTL_HANDLER(lnet_ioctl_handler, lnet_ioctl);
 
-static int __init
+int
 init_lnet(void)
 {
 	int		  rc;
@@ -135,7 +135,7 @@ init_lnet(void)
 	return 0;
 }
 
-static void __exit
+void
 fini_lnet(void)
 {
 	int rc;

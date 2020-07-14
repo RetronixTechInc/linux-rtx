@@ -3,12 +3,19 @@
  */
 
 /*
- * The code contained herein is licensed under the GNU General Public
- * License. You may obtain a copy of the GNU General Public License
- * Version 2 or later at the following locations:
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
  *
- * http://www.opensource.org/licenses/gpl-license.html
- * http://www.gnu.org/copyleft/gpl.html
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
 #ifndef __MXC_HDMI_H__
@@ -573,6 +580,10 @@ enum {
 	HDMI_IH_MUTE_PHY_STAT0_TX_PHY_LOCK = 0x2,
 	HDMI_IH_MUTE_PHY_STAT0_HPD = 0x1,
 
+/* IH and IH_MUTE convenience macro RX_SENSE | HPD*/
+	HDMI_DVI_IH_STAT = 0x3D,
+
+
 /* IH_AHBDMAAUD_STAT0 field values */
 	HDMI_IH_AHBDMAAUD_STAT0_ERROR = 0x20,
 	HDMI_IH_AHBDMAAUD_STAT0_LOST = 0x10,
@@ -870,6 +881,9 @@ enum {
 	HDMI_PHY_RX_SENSE0 = 0x10,
 	HDMI_PHY_HPD = 0x02,
 	HDMI_PHY_TX_PHY_LOCK = 0x01,
+
+/* HDMI STAT convenience RX_SENSE | HPD */
+	HDMI_DVI_STAT = 0xF2,
 
 /* PHY_I2CM_SLAVE_ADDR field values */
 	HDMI_PHY_I2CM_SLAVE_ADDR_PHY_GEN2 = 0x69,

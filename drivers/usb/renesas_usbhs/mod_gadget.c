@@ -56,7 +56,6 @@ struct usbhsg_gpriv {
 #define USBHSG_STATUS_REGISTERD		(1 << 1)
 #define USBHSG_STATUS_WEDGE		(1 << 2)
 #define USBHSG_STATUS_SELF_POWERED	(1 << 3)
-#define USBHSG_STATUS_SOFT_CONNECT	(1 << 4)
 };
 
 struct usbhsg_recip_handle {
@@ -119,34 +118,18 @@ struct usbhsg_recip_handle {
 /*
  *		queue push/pop
  */
-static void __usbhsg_queue_pop(struct usbhsg_uep *uep,
-			       struct usbhsg_request *ureq,
-			       int status)
-{
-	struct usbhsg_gpriv *gpriv = usbhsg_uep_to_gpriv(uep);
-	struct usbhs_pipe *pipe = usbhsg_uep_to_pipe(uep);
-	struct device *dev = usbhsg_gpriv_to_dev(gpriv);
-	struct usbhs_priv *priv = usbhsg_gpriv_to_priv(gpriv);
-
-	dev_dbg(dev, "pipe %d : queue pop\n", usbhs_pipe_number(pipe));
-
-	ureq->req.status = status;
-	spin_unlock(usbhs_priv_to_lock(priv));
-	usb_gadget_giveback_request(&uep->ep, &ureq->req);
-	spin_lock(usbhs_priv_to_lock(priv));
-}
-
 static void usbhsg_queue_pop(struct usbhsg_uep *uep,
 			     struct usbhsg_request *ureq,
 			     int status)
 {
 	struct usbhsg_gpriv *gpriv = usbhsg_uep_to_gpriv(uep);
-	struct usbhs_priv *priv = usbhsg_gpriv_to_priv(gpriv);
-	unsigned long flags;
+	struct usbhs_pipe *pipe = usbhsg_uep_to_pipe(uep);
+	struct device *dev = usbhsg_gpriv_to_dev(gpriv);
 
-	usbhs_lock(priv, flags);
-	__usbhsg_queue_pop(uep, ureq, status);
-	usbhs_unlock(priv, flags);
+	dev_dbg(dev, "pipe %d : queue pop\n", usbhs_pipe_number(pipe));
+
+	ureq->req.status = status;
+	ureq->req.complete(&uep->ep, &ureq->req);
 }
 
 static void usbhsg_queue_done(struct usbhs_priv *priv, struct usbhs_pkt *pkt)
@@ -501,9 +484,6 @@ static int usbhsg_irq_ctrl_stage(struct usbhs_priv *priv,
 	case NODATA_STATUS_STAGE:
 		pipe->handler = &usbhs_ctrl_stage_end_handler;
 		break;
-	case READ_STATUS_STAGE:
-	case WRITE_STATUS_STAGE:
-		usbhs_dcp_control_transfer_done(pipe);
 	default:
 		return ret;
 	}
@@ -620,13 +600,8 @@ static int usbhsg_ep_enable(struct usb_ep *ep,
 static int usbhsg_ep_disable(struct usb_ep *ep)
 {
 	struct usbhsg_uep *uep = usbhsg_ep_to_uep(ep);
-	struct usbhs_pipe *pipe = usbhsg_uep_to_pipe(uep);
-
-	if (!pipe)
-		return -EINVAL;
 
 	usbhsg_pipe_disable(uep);
-	usbhs_pipe_free(pipe);
 
 	uep->pipe->mod_private	= NULL;
 	uep->pipe		= NULL;
@@ -746,25 +721,6 @@ static struct usb_ep_ops usbhsg_ep_ops = {
 };
 
 /*
- *		pullup control
- */
-static int usbhsg_can_pullup(struct usbhs_priv *priv)
-{
-	struct usbhsg_gpriv *gpriv = usbhsg_priv_to_gpriv(priv);
-
-	return gpriv->driver &&
-	       usbhsg_status_has(gpriv, USBHSG_STATUS_SOFT_CONNECT);
-}
-
-static void usbhsg_update_pullup(struct usbhs_priv *priv)
-{
-	if (usbhsg_can_pullup(priv))
-		usbhs_sys_function_pullup(priv, 1);
-	else
-		usbhs_sys_function_pullup(priv, 0);
-}
-
-/*
  *		usb module start/end
  */
 static int usbhsg_try_start(struct usbhs_priv *priv, u32 status)
@@ -798,9 +754,9 @@ static int usbhsg_try_start(struct usbhs_priv *priv, u32 status)
 	/*
 	 * pipe initialize and enable DCP
 	 */
-	usbhs_fifo_init(priv);
 	usbhs_pipe_init(priv,
 			usbhsg_dma_map_ctrl);
+	usbhs_fifo_init(priv);
 
 	/* dcp init instead of usbhsg_ep_enable() */
 	dcp->pipe		= usbhs_dcp_malloc(priv);
@@ -814,7 +770,6 @@ static int usbhsg_try_start(struct usbhs_priv *priv, u32 status)
 	 * - usb module
 	 */
 	usbhs_sys_function_ctrl(priv, 1);
-	usbhsg_update_pullup(priv);
 
 	/*
 	 * enable irq callback
@@ -894,7 +849,8 @@ static int usbhsg_gadget_start(struct usb_gadget *gadget,
 	return usbhsg_try_start(priv, USBHSG_STATUS_REGISTERD);
 }
 
-static int usbhsg_gadget_stop(struct usb_gadget *gadget)
+static int usbhsg_gadget_stop(struct usb_gadget *gadget,
+		struct usb_gadget_driver *driver)
 {
 	struct usbhsg_gpriv *gpriv = usbhsg_gadget_to_gpriv(gadget);
 	struct usbhs_priv *priv = usbhsg_gpriv_to_priv(gpriv);
@@ -920,15 +876,8 @@ static int usbhsg_pullup(struct usb_gadget *gadget, int is_on)
 {
 	struct usbhsg_gpriv *gpriv = usbhsg_gadget_to_gpriv(gadget);
 	struct usbhs_priv *priv = usbhsg_gpriv_to_priv(gpriv);
-	unsigned long flags;
 
-	usbhs_lock(priv, flags);
-	if (is_on)
-		usbhsg_status_set(gpriv, USBHSG_STATUS_SOFT_CONNECT);
-	else
-		usbhsg_status_clr(gpriv, USBHSG_STATUS_SOFT_CONNECT);
-	usbhsg_update_pullup(priv);
-	usbhs_unlock(priv, flags);
+	usbhs_sys_function_pullup(priv, is_on);
 
 	return 0;
 }
@@ -941,8 +890,6 @@ static int usbhsg_set_selfpowered(struct usb_gadget *gadget, int is_self)
 		usbhsg_status_set(gpriv, USBHSG_STATUS_SELF_POWERED);
 	else
 		usbhsg_status_clr(gpriv, USBHSG_STATUS_SELF_POWERED);
-
-	gadget->is_selfpowered = (is_self != 0);
 
 	return 0;
 }

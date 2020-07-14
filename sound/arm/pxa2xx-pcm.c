@@ -14,8 +14,6 @@
 #include <linux/dma-mapping.h>
 #include <linux/dmaengine.h>
 
-#include <mach/dma.h>
-
 #include <sound/core.h>
 #include <sound/pxa2xx-lib.h>
 #include <sound/dmaengine_pcm.h>

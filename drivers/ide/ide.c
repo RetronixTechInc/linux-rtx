@@ -101,7 +101,8 @@ void ide_device_put(ide_drive_t *drive)
 	struct device *host_dev = drive->hwif->host->dev[0];
 	struct module *module = host_dev ? host_dev->driver->owner : NULL;
 
-	module_put(module);
+	if (module)
+		module_put(module);
 #endif
 	put_device(&drive->gendev);
 }

@@ -56,6 +56,7 @@ static int mmc_queue_thread(void *d)
 	down(&mq->thread_sem);
 	do {
 		struct request *req = NULL;
+		struct mmc_queue_req *tmp;
 		unsigned int cmd_flags = 0;
 
 		spin_lock_irq(q->queue_lock);
@@ -68,7 +69,6 @@ static int mmc_queue_thread(void *d)
 			set_current_state(TASK_RUNNING);
 			cmd_flags = req ? req->cmd_flags : 0;
 			mq->issue_fn(mq, req);
-			cond_resched();
 			if (mq->flags & MMC_QUEUE_NEW_REQUEST) {
 				mq->flags &= ~MMC_QUEUE_NEW_REQUEST;
 				continue; /* fetch again */
@@ -86,7 +86,9 @@ static int mmc_queue_thread(void *d)
 
 			mq->mqrq_prev->brq.mrq.data = NULL;
 			mq->mqrq_prev->req = NULL;
-			swap(mq->mqrq_prev, mq->mqrq_cur);
+			tmp = mq->mqrq_prev;
+			mq->mqrq_prev = mq->mqrq_cur;
+			mq->mqrq_cur = tmp;
 		} else {
 			if (kthread_should_stop()) {
 				set_current_state(TASK_RUNNING);
@@ -208,7 +210,6 @@ int mmc_init_queue(struct mmc_queue *mq, struct mmc_card *card,
 
 	blk_queue_prep_rq(mq->queue, mmc_prep_request);
 	queue_flag_set_unlocked(QUEUE_FLAG_NONROT, mq->queue);
-	queue_flag_clear_unlocked(QUEUE_FLAG_ADD_RANDOM, mq->queue);
 	if (mmc_can_erase(card))
 		mmc_queue_setup_discard(mq->queue, card);
 
@@ -228,17 +229,17 @@ int mmc_init_queue(struct mmc_queue *mq, struct mmc_card *card,
 		if (bouncesz > 512) {
 			mqrq_cur->bounce_buf = kmalloc(bouncesz, GFP_KERNEL);
 			if (!mqrq_cur->bounce_buf) {
-				pr_warn("%s: unable to allocate bounce cur buffer\n",
+				pr_warning("%s: unable to "
+					"allocate bounce cur buffer\n",
 					mmc_card_name(card));
-			} else {
-				mqrq_prev->bounce_buf =
-						kmalloc(bouncesz, GFP_KERNEL);
-				if (!mqrq_prev->bounce_buf) {
-					pr_warn("%s: unable to allocate bounce prev buffer\n",
-						mmc_card_name(card));
-					kfree(mqrq_cur->bounce_buf);
-					mqrq_cur->bounce_buf = NULL;
-				}
+			}
+			mqrq_prev->bounce_buf = kmalloc(bouncesz, GFP_KERNEL);
+			if (!mqrq_prev->bounce_buf) {
+				pr_warning("%s: unable to "
+					"allocate bounce prev buffer\n",
+					mmc_card_name(card));
+				kfree(mqrq_cur->bounce_buf);
+				mqrq_cur->bounce_buf = NULL;
 			}
 		}
 

@@ -17,6 +17,7 @@
 
 #include <linux/device.h>
 #include <linux/fs.h>
+#include <linux/init.h>
 #include <linux/io.h>
 #include <linux/bitops.h>
 #include <linux/kernel.h>
@@ -745,7 +746,7 @@ static int hpwdt_init_nmi_decoding(struct pci_dev *dev)
 
 	dev_info(&dev->dev,
 			"HP Watchdog Timer Driver: NMI decoding initialized"
-			", allow kernel dump: %s (default = 1/ON)\n",
+			", allow kernel dump: %s (default = 0/OFF)\n",
 			(allow_kdump == 0) ? "OFF" : "ON");
 	return 0;
 

@@ -126,8 +126,7 @@ hash_by_src(const struct net *net, u16 zone,
 	/* Original src, to ensure we map it consistently if poss. */
 	hash = jhash2((u32 *)&tuple->src, sizeof(tuple->src) / sizeof(u32),
 		      tuple->dst.protonum ^ zone ^ nf_conntrack_hash_rnd);
-
-	return reciprocal_scale(hash, net->ct.nat_htable_size);
+	return ((u64)hash * net->ct.nat_htable_size) >> 32;
 }
 
 /* Is this tuple already taken? (not by us) */
@@ -275,7 +274,7 @@ find_best_ips_proto(u16 zone, struct nf_conntrack_tuple *tuple,
 		}
 
 		var_ipp->all[i] = (__force __u32)
-			htonl(minip + reciprocal_scale(j, dist));
+			htonl(minip + (((u64)j * dist) >> 32));
 		if (var_ipp->all[i] != range->max_addr.all[i])
 			full_range = true;
 
@@ -359,19 +358,6 @@ out:
 	rcu_read_unlock();
 }
 
-struct nf_conn_nat *nf_ct_nat_ext_add(struct nf_conn *ct)
-{
-	struct nf_conn_nat *nat = nfct_nat(ct);
-	if (nat)
-		return nat;
-
-	if (!nf_ct_is_confirmed(ct))
-		nat = nf_ct_ext_add(ct, NF_CT_EXT_NAT, GFP_ATOMIC);
-
-	return nat;
-}
-EXPORT_SYMBOL_GPL(nf_ct_nat_ext_add);
-
 unsigned int
 nf_nat_setup_info(struct nf_conn *ct,
 		  const struct nf_nat_range *range,
@@ -382,9 +368,14 @@ nf_nat_setup_info(struct nf_conn *ct,
 	struct nf_conn_nat *nat;
 
 	/* nat helper or nfctnetlink also setup binding */
-	nat = nf_ct_nat_ext_add(ct);
-	if (nat == NULL)
-		return NF_ACCEPT;
+	nat = nfct_nat(ct);
+	if (!nat) {
+		nat = nf_ct_ext_add(ct, NF_CT_EXT_NAT, GFP_ATOMIC);
+		if (nat == NULL) {
+			pr_debug("failed to add NAT extension\n");
+			return NF_ACCEPT;
+		}
+	}
 
 	NF_CT_ASSERT(maniptype == NF_NAT_MANIP_SRC ||
 		     maniptype == NF_NAT_MANIP_DST);
@@ -711,7 +702,7 @@ static struct nf_ct_ext_type nat_extend __read_mostly = {
 	.flags		= NF_CT_EXT_F_PREALLOC,
 };
 
-#if IS_ENABLED(CONFIG_NF_CT_NETLINK)
+#if defined(CONFIG_NF_CT_NETLINK) || defined(CONFIG_NF_CT_NETLINK_MODULE)
 
 #include <linux/netfilter/nfnetlink.h>
 #include <linux/netfilter/nfnetlink_conntrack.h>

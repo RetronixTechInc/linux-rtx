@@ -86,10 +86,6 @@ int qib_alloc_lkey(struct qib_mregion *mr, int dma_region)
 	 * unrestricted LKEY.
 	 */
 	rkt->gen++;
-	/*
-	 * bits are capped in qib_verbs.c to insure enough bits
-	 * for generation number
-	 */
 	mr->lkey = (r << (32 - ib_qib_lkey_table_size)) |
 		((((1 << (24 - ib_qib_lkey_table_size)) - 1) & rkt->gen)
 		 << 8);
@@ -126,10 +122,10 @@ void qib_free_lkey(struct qib_mregion *mr)
 	if (!mr->lkey_published)
 		goto out;
 	if (lkey == 0)
-		RCU_INIT_POINTER(dev->dma_mr, NULL);
+		rcu_assign_pointer(dev->dma_mr, NULL);
 	else {
 		r = lkey >> (32 - ib_qib_lkey_table_size);
-		RCU_INIT_POINTER(rkt->table[r], NULL);
+		rcu_assign_pointer(rkt->table[r], NULL);
 	}
 	qib_put_mr(mr);
 	mr->lkey_published = 0;

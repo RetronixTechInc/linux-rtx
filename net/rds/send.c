@@ -107,7 +107,7 @@ static int acquire_in_xmit(struct rds_connection *conn)
 static void release_in_xmit(struct rds_connection *conn)
 {
 	clear_bit(RDS_IN_XMIT, &conn->c_flags);
-	smp_mb__after_atomic();
+	smp_mb__after_clear_bit();
 	/*
 	 * We don't use wait_on_bit()/wake_up_bit() because our waking is in a
 	 * hot path and finding waiters is very rare.  We don't want to walk
@@ -140,11 +140,8 @@ int rds_send_xmit(struct rds_connection *conn)
 	struct scatterlist *sg;
 	int ret = 0;
 	LIST_HEAD(to_be_dropped);
-	int batch_count;
-	unsigned long send_gen = 0;
 
 restart:
-	batch_count = 0;
 
 	/*
 	 * sendmsg calls here after having queued its message on the send
@@ -158,17 +155,6 @@ restart:
 		ret = -ENOMEM;
 		goto out;
 	}
-
-	/*
-	 * we record the send generation after doing the xmit acquire.
-	 * if someone else manages to jump in and do some work, we'll use
-	 * this to avoid a goto restart farther down.
-	 *
-	 * The acquire_in_xmit() check above ensures that only one
-	 * caller can increment c_send_gen at any time.
-	 */
-	conn->c_send_gen++;
-	send_gen = conn->c_send_gen;
 
 	/*
 	 * rds_conn_shutdown() sets the conn state and then tests RDS_IN_XMIT,
@@ -215,16 +201,6 @@ restart:
 		 */
 		if (!rm) {
 			unsigned int len;
-
-			batch_count++;
-
-			/* we want to process as big a batch as we can, but
-			 * we also want to avoid softlockups.  If we've been
-			 * through a lot of messages, lets back off and see
-			 * if anyone else jumps in
-			 */
-			if (batch_count >= 1024)
-				goto over_batch;
 
 			spin_lock_irqsave(&conn->c_lock, flags);
 
@@ -381,9 +357,9 @@ restart:
 		}
 	}
 
-over_batch:
 	if (conn->c_trans->xmit_complete)
 		conn->c_trans->xmit_complete(conn);
+
 	release_in_xmit(conn);
 
 	/* Nuke any messages we decided not to retransmit. */
@@ -404,15 +380,10 @@ over_batch:
 	 * If the transport cannot continue (i.e ret != 0), then it must
 	 * call us when more room is available, such as from the tx
 	 * completion handler.
-	 *
-	 * We have an extra generation check here so that if someone manages
-	 * to jump in after our release_in_xmit, we'll see that they have done
-	 * some work and we will skip our goto
 	 */
 	if (ret == 0) {
 		smp_mb();
-		if (!list_empty(&conn->c_send_queue) &&
-		    send_gen == conn->c_send_gen) {
+		if (!list_empty(&conn->c_send_queue)) {
 			rds_stats_inc(s_send_lock_queue_raced);
 			goto restart;
 		}
@@ -622,11 +593,8 @@ static void rds_send_remove_from_sock(struct list_head *messages, int status)
 				sock_put(rds_rs_to_sk(rs));
 			}
 			rs = rm->m_rs;
-			if (rs)
-				sock_hold(rds_rs_to_sk(rs));
+			sock_hold(rds_rs_to_sk(rs));
 		}
-		if (!rs)
-			goto unlock_and_drop;
 		spin_lock(&rs->rs_lock);
 
 		if (test_and_clear_bit(RDS_MSG_ON_SOCK, &rm->m_flags)) {
@@ -670,6 +638,9 @@ unlock_and_drop:
  * queue. This means that in the TCP case, the message may not have been
  * assigned the m_ack_seq yet - but that's fine as long as tcp_is_acked
  * checks the RDS_MSG_HAS_ACK_SEQ bit.
+ *
+ * XXX It's not clear to me how this is safely serialized with socket
+ * destruction.  Maybe it should bail if it sees SOCK_DEAD.
  */
 void rds_send_drop_acked(struct rds_connection *conn, u64 ack,
 			 is_acked_func is_acked)
@@ -690,7 +661,7 @@ void rds_send_drop_acked(struct rds_connection *conn, u64 ack,
 
 	/* order flag updates with spin locks */
 	if (!list_empty(&list))
-		smp_mb__after_atomic();
+		smp_mb__after_clear_bit();
 
 	spin_unlock_irqrestore(&conn->c_lock, flags);
 
@@ -720,7 +691,7 @@ void rds_send_drop_to(struct rds_sock *rs, struct sockaddr_in *dest)
 	}
 
 	/* order flag updates with the rs lock */
-	smp_mb__after_atomic();
+	smp_mb__after_clear_bit();
 
 	spin_unlock_irqrestore(&rs->rs_lock, flags);
 
@@ -740,9 +711,6 @@ void rds_send_drop_to(struct rds_sock *rs, struct sockaddr_in *dest)
 		 */
 		if (!test_and_clear_bit(RDS_MSG_ON_CONN, &rm->m_flags)) {
 			spin_unlock_irqrestore(&conn->c_lock, flags);
-			spin_lock_irqsave(&rm->m_rs_lock, flags);
-			rm->m_rs = NULL;
-			spin_unlock_irqrestore(&rm->m_rs_lock, flags);
 			continue;
 		}
 		list_del_init(&rm->m_conn_item);
@@ -855,7 +823,7 @@ static int rds_rm_size(struct msghdr *msg, int data_len)
 	int cmsg_groups = 0;
 	int retval;
 
-	for_each_cmsghdr(cmsg, msg) {
+	for (cmsg = CMSG_FIRSTHDR(msg); cmsg; cmsg = CMSG_NXTHDR(msg, cmsg)) {
 		if (!CMSG_OK(msg, cmsg))
 			return -EINVAL;
 
@@ -907,7 +875,7 @@ static int rds_cmsg_send(struct rds_sock *rs, struct rds_message *rm,
 	struct cmsghdr *cmsg;
 	int ret = 0;
 
-	for_each_cmsghdr(cmsg, msg) {
+	for (cmsg = CMSG_FIRSTHDR(msg); cmsg; cmsg = CMSG_NXTHDR(msg, cmsg)) {
 		if (!CMSG_OK(msg, cmsg))
 			return -EINVAL;
 
@@ -949,7 +917,8 @@ static int rds_cmsg_send(struct rds_sock *rs, struct rds_message *rm,
 	return ret;
 }
 
-int rds_sendmsg(struct socket *sock, struct msghdr *msg, size_t payload_len)
+int rds_sendmsg(struct kiocb *iocb, struct socket *sock, struct msghdr *msg,
+		size_t payload_len)
 {
 	struct sock *sk = sock->sk;
 	struct rds_sock *rs = rds_sk_to_rs(sk);
@@ -986,13 +955,11 @@ int rds_sendmsg(struct socket *sock, struct msghdr *msg, size_t payload_len)
 		release_sock(sk);
 	}
 
-	lock_sock(sk);
+	/* racing with another thread binding seems ok here */
 	if (daddr == 0 || rs->rs_bound_addr == 0) {
-		release_sock(sk);
 		ret = -ENOTCONN; /* XXX not a great errno */
 		goto out;
 	}
-	release_sock(sk);
 
 	/* size of rm including all sgs */
 	ret = rds_rm_size(msg, payload_len);
@@ -1012,7 +979,7 @@ int rds_sendmsg(struct socket *sock, struct msghdr *msg, size_t payload_len)
 			ret = -ENOMEM;
 			goto out;
 		}
-		ret = rds_message_copy_from_user(rm, &msg->msg_iter);
+		ret = rds_message_copy_from_user(rm, msg->msg_iov, payload_len);
 		if (ret)
 			goto out;
 	}

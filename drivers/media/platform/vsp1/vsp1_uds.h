@@ -1,7 +1,7 @@
 /*
  * vsp1_uds.h  --  R-Car VSP1 Up and Down Scaler
  *
- * Copyright (C) 2013-2014 Renesas Electronics Corporation
+ * Copyright (C) 2013 Renesas Corporation
  *
  * Contact: Laurent Pinchart (laurent.pinchart@ideasonboard.com)
  *
@@ -25,7 +25,9 @@ struct vsp1_device;
 
 struct vsp1_uds {
 	struct vsp1_entity entity;
-	bool scale_alpha;
+
+	unsigned int hscale;
+	unsigned int vscale;
 };
 
 static inline struct vsp1_uds *to_uds(struct v4l2_subdev *subdev)
@@ -34,7 +36,5 @@ static inline struct vsp1_uds *to_uds(struct v4l2_subdev *subdev)
 }
 
 struct vsp1_uds *vsp1_uds_create(struct vsp1_device *vsp1, unsigned int index);
-
-void vsp1_uds_set_alpha(struct vsp1_uds *uds, unsigned int alpha);
 
 #endif /* __VSP1_UDS_H__ */

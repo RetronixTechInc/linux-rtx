@@ -300,8 +300,7 @@ static int mpc512x_psc_spi_msg_xfer(struct spi_master *master,
 	}
 
 	m->status = status;
-	if (m->complete)
-		m->complete(m->context);
+	m->complete(m->context);
 
 	if (status || !cs_change)
 		mpc512x_psc_spi_deactivate_cs(spi);
@@ -466,8 +465,10 @@ static void mpc512x_spi_cs_control(struct spi_device *spi, bool onoff)
 	gpio_set_value(spi->cs_gpio, onoff);
 }
 
+/* bus_num is used only for the case dev->platform_data == NULL */
 static int mpc512x_psc_spi_do_probe(struct device *dev, u32 regaddr,
-					      u32 size, unsigned int irq)
+					      u32 size, unsigned int irq,
+					      s16 bus_num)
 {
 	struct fsl_spi_platform_data *pdata = dev_get_platdata(dev);
 	struct mpc512x_psc_spi *mps;
@@ -486,6 +487,7 @@ static int mpc512x_psc_spi_do_probe(struct device *dev, u32 regaddr,
 
 	if (pdata == NULL) {
 		mps->cs_control = mpc512x_spi_cs_control;
+		master->bus_num = bus_num;
 	} else {
 		mps->cs_control = pdata->cs_control;
 		master->bus_num = pdata->bus_num;
@@ -571,6 +573,7 @@ static int mpc512x_psc_spi_of_probe(struct platform_device *op)
 {
 	const u32 *regaddr_p;
 	u64 regaddr64, size64;
+	s16 id = -1;
 
 	regaddr_p = of_get_address(op->dev.of_node, 0, &size64, NULL);
 	if (!regaddr_p) {
@@ -579,8 +582,16 @@ static int mpc512x_psc_spi_of_probe(struct platform_device *op)
 	}
 	regaddr64 = of_translate_address(op->dev.of_node, regaddr_p);
 
+	/* get PSC id (0..11, used by port_config) */
+	id = of_alias_get_id(op->dev.of_node, "spi");
+	if (id < 0) {
+		dev_err(&op->dev, "no alias id for %s\n",
+			op->dev.of_node->full_name);
+		return id;
+	}
+
 	return mpc512x_psc_spi_do_probe(&op->dev, (u32) regaddr64, (u32) size64,
-				irq_of_parse_and_map(op->dev.of_node, 0));
+				irq_of_parse_and_map(op->dev.of_node, 0), id);
 }
 
 static int mpc512x_psc_spi_of_remove(struct platform_device *op)
@@ -588,7 +599,7 @@ static int mpc512x_psc_spi_of_remove(struct platform_device *op)
 	return mpc512x_psc_spi_do_remove(&op->dev);
 }
 
-static const struct of_device_id mpc512x_psc_spi_of_match[] = {
+static struct of_device_id mpc512x_psc_spi_of_match[] = {
 	{ .compatible = "fsl,mpc5121-psc-spi", },
 	{},
 };
@@ -600,6 +611,7 @@ static struct platform_driver mpc512x_psc_spi_of_driver = {
 	.remove = mpc512x_psc_spi_of_remove,
 	.driver = {
 		.name = "mpc512x-psc-spi",
+		.owner = THIS_MODULE,
 		.of_match_table = mpc512x_psc_spi_of_match,
 	},
 };

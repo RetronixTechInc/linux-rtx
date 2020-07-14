@@ -210,11 +210,7 @@ static int get_prng_bytes(char *buf, size_t nbytes, struct prng_context *ctx,
 		byte_count = DEFAULT_BLK_SZ;
 	}
 
-	/*
-	 * Return 0 in case of success as mandated by the kernel
-	 * crypto API interface definition.
-	 */
-	err = 0;
+	err = byte_count;
 
 	dbgprint(KERN_CRIT "getting %d random bytes for context %p\n",
 		byte_count, ctx);

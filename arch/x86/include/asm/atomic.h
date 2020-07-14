@@ -7,7 +7,6 @@
 #include <asm/alternative.h>
 #include <asm/cmpxchg.h>
 #include <asm/rmwcc.h>
-#include <asm/barrier.h>
 
 /*
  * Atomic operations that C can't guarantee us.  Useful for
@@ -24,7 +23,7 @@
  */
 static inline int atomic_read(const atomic_t *v)
 {
-	return ACCESS_ONCE((v)->counter);
+	return (*(volatile int *)&(v)->counter);
 }
 
 /**
@@ -219,6 +218,21 @@ static inline short int atomic_inc_short(short int *v)
 	return *v;
 }
 
+#ifdef CONFIG_X86_64
+/**
+ * atomic_or_long - OR of two long integers
+ * @v1: pointer to type unsigned long
+ * @v2: pointer to type unsigned long
+ *
+ * Atomically ORs @v1 and @v2
+ * Returns the result of the OR
+ */
+static inline void atomic_or_long(unsigned long *v1, unsigned long v2)
+{
+	asm(LOCK_PREFIX "orq %1, %0" : "+m" (*v1) : "r" (v2));
+}
+#endif
+
 /* These are x86-specific, used by some header files */
 #define atomic_clear_mask(mask, addr)				\
 	asm volatile(LOCK_PREFIX "andl %0,%1"			\
@@ -228,6 +242,12 @@ static inline short int atomic_inc_short(short int *v)
 	asm volatile(LOCK_PREFIX "orl %0,%1"			\
 		     : : "r" ((unsigned)(mask)), "m" (*(addr))	\
 		     : "memory")
+
+/* Atomic operations are already serializing on x86 */
+#define smp_mb__before_atomic_dec()	barrier()
+#define smp_mb__after_atomic_dec()	barrier()
+#define smp_mb__before_atomic_inc()	barrier()
+#define smp_mb__after_atomic_inc()	barrier()
 
 #ifdef CONFIG_X86_32
 # include <asm/atomic64_32.h>

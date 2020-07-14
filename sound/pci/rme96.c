@@ -29,7 +29,6 @@
 #include <linux/pci.h>
 #include <linux/module.h>
 #include <linux/vmalloc.h>
-#include <linux/io.h>
 
 #include <sound/core.h>
 #include <sound/info.h>
@@ -38,6 +37,8 @@
 #include <sound/pcm_params.h>
 #include <sound/asoundef.h>
 #include <sound/initval.h>
+
+#include <asm/io.h>
 
 /* note, two last pcis should be equal, it is not a bug */
 
@@ -239,7 +240,7 @@ struct rme96 {
 
 	u8 rev; /* card revision number */
 
-#ifdef CONFIG_PM_SLEEP
+#ifdef CONFIG_PM
 	u32 playback_pointer;
 	u32 capture_pointer;
 	void *playback_suspend_buffer;
@@ -262,7 +263,7 @@ struct rme96 {
 	struct snd_kcontrol   *spdif_ctl;
 };
 
-static const struct pci_device_id snd_rme96_ids[] = {
+static DEFINE_PCI_DEVICE_TABLE(snd_rme96_ids) = {
 	{ PCI_VDEVICE(XILINX, PCI_DEVICE_ID_RME_DIGI96), 0, },
 	{ PCI_VDEVICE(XILINX, PCI_DEVICE_ID_RME_DIGI96_8), 0, },
 	{ PCI_VDEVICE(XILINX, PCI_DEVICE_ID_RME_DIGI96_8_PRO), 0, },
@@ -921,7 +922,8 @@ snd_rme96_setframelog(struct rme96 *rme96,
 }
 
 static int
-snd_rme96_playback_setformat(struct rme96 *rme96, snd_pcm_format_t format)
+snd_rme96_playback_setformat(struct rme96 *rme96,
+			     int format)
 {
 	switch (format) {
 	case SNDRV_PCM_FORMAT_S16_LE:
@@ -938,7 +940,8 @@ snd_rme96_playback_setformat(struct rme96 *rme96, snd_pcm_format_t format)
 }
 
 static int
-snd_rme96_capture_setformat(struct rme96 *rme96, snd_pcm_format_t format)
+snd_rme96_capture_setformat(struct rme96 *rme96,
+			    int format)
 {
 	switch (format) {
 	case SNDRV_PCM_FORMAT_S16_LE:
@@ -1567,7 +1570,7 @@ snd_rme96_free(void *private_data)
 		pci_release_regions(rme96->pci);
 		rme96->port = 0;
 	}
-#ifdef CONFIG_PM_SLEEP
+#ifdef CONFIG_PM
 	vfree(rme96->playback_suspend_buffer);
 	vfree(rme96->capture_suspend_buffer);
 #endif
@@ -1606,15 +1609,13 @@ snd_rme96_create(struct rme96 *rme96)
 
 	rme96->iobase = ioremap_nocache(rme96->port, RME96_IO_SIZE);
 	if (!rme96->iobase) {
-		dev_err(rme96->card->dev,
-			"unable to remap memory region 0x%lx-0x%lx\n",
-			rme96->port, rme96->port + RME96_IO_SIZE - 1);
+		snd_printk(KERN_ERR "unable to remap memory region 0x%lx-0x%lx\n", rme96->port, rme96->port + RME96_IO_SIZE - 1);
 		return -ENOMEM;
 	}
 
 	if (request_irq(pci->irq, snd_rme96_interrupt, IRQF_SHARED,
 			KBUILD_MODNAME, rme96)) {
-		dev_err(rme96->card->dev, "unable to grab IRQ %d\n", pci->irq);
+		snd_printk(KERN_ERR "unable to grab IRQ %d\n", pci->irq);
 		return -EBUSY;
 	}
 	rme96->irq = pci->irq;
@@ -1881,38 +1882,39 @@ snd_rme96_put_loopback_control(struct snd_kcontrol *kcontrol, struct snd_ctl_ele
 static int
 snd_rme96_info_inputtype_control(struct snd_kcontrol *kcontrol, struct snd_ctl_elem_info *uinfo)
 {
-	static const char * const _texts[5] = {
-		"Optical", "Coaxial", "Internal", "XLR", "Analog"
-	};
+	static char *_texts[5] = { "Optical", "Coaxial", "Internal", "XLR", "Analog" };
 	struct rme96 *rme96 = snd_kcontrol_chip(kcontrol);
-	const char *texts[5] = {
-		_texts[0], _texts[1], _texts[2], _texts[3], _texts[4]
-	};
-	int num_items;
+	char *texts[5] = { _texts[0], _texts[1], _texts[2], _texts[3], _texts[4] };
 	
+	uinfo->type = SNDRV_CTL_ELEM_TYPE_ENUMERATED;
+	uinfo->count = 1;
 	switch (rme96->pci->device) {
 	case PCI_DEVICE_ID_RME_DIGI96:
 	case PCI_DEVICE_ID_RME_DIGI96_8:
-		num_items = 3;
+		uinfo->value.enumerated.items = 3;
 		break;
 	case PCI_DEVICE_ID_RME_DIGI96_8_PRO:
-		num_items = 4;
+		uinfo->value.enumerated.items = 4;
 		break;
 	case PCI_DEVICE_ID_RME_DIGI96_8_PAD_OR_PST:
 		if (rme96->rev > 4) {
 			/* PST */
-			num_items = 4;
+			uinfo->value.enumerated.items = 4;
 			texts[3] = _texts[4]; /* Analog instead of XLR */
 		} else {
 			/* PAD */
-			num_items = 5;
+			uinfo->value.enumerated.items = 5;
 		}
 		break;
 	default:
 		snd_BUG();
-		return -EINVAL;
+		break;
 	}
-	return snd_ctl_enum_info(uinfo, 1, num_items, texts);
+	if (uinfo->value.enumerated.item > uinfo->value.enumerated.items - 1) {
+		uinfo->value.enumerated.item = uinfo->value.enumerated.items - 1;
+	}
+	strcpy(uinfo->value.enumerated.name, texts[uinfo->value.enumerated.item]);
+	return 0;
 }
 static int
 snd_rme96_get_inputtype_control(struct snd_kcontrol *kcontrol, struct snd_ctl_elem_value *ucontrol)
@@ -1998,9 +2000,16 @@ snd_rme96_put_inputtype_control(struct snd_kcontrol *kcontrol, struct snd_ctl_el
 static int
 snd_rme96_info_clockmode_control(struct snd_kcontrol *kcontrol, struct snd_ctl_elem_info *uinfo)
 {
-	static const char * const texts[3] = { "AutoSync", "Internal", "Word" };
+	static char *texts[3] = { "AutoSync", "Internal", "Word" };
 	
-	return snd_ctl_enum_info(uinfo, 1, 3, texts);
+	uinfo->type = SNDRV_CTL_ELEM_TYPE_ENUMERATED;
+	uinfo->count = 1;
+	uinfo->value.enumerated.items = 3;
+	if (uinfo->value.enumerated.item > 2) {
+		uinfo->value.enumerated.item = 2;
+	}
+	strcpy(uinfo->value.enumerated.name, texts[uinfo->value.enumerated.item]);
+	return 0;
 }
 static int
 snd_rme96_get_clockmode_control(struct snd_kcontrol *kcontrol, struct snd_ctl_elem_value *ucontrol)
@@ -2030,11 +2039,16 @@ snd_rme96_put_clockmode_control(struct snd_kcontrol *kcontrol, struct snd_ctl_el
 static int
 snd_rme96_info_attenuation_control(struct snd_kcontrol *kcontrol, struct snd_ctl_elem_info *uinfo)
 {
-	static const char * const texts[4] = {
-		"0 dB", "-6 dB", "-12 dB", "-18 dB"
-	};
+	static char *texts[4] = { "0 dB", "-6 dB", "-12 dB", "-18 dB" };
 	
-	return snd_ctl_enum_info(uinfo, 1, 4, texts);
+	uinfo->type = SNDRV_CTL_ELEM_TYPE_ENUMERATED;
+	uinfo->count = 1;
+	uinfo->value.enumerated.items = 4;
+	if (uinfo->value.enumerated.item > 3) {
+		uinfo->value.enumerated.item = 3;
+	}
+	strcpy(uinfo->value.enumerated.name, texts[uinfo->value.enumerated.item]);
+	return 0;
 }
 static int
 snd_rme96_get_attenuation_control(struct snd_kcontrol *kcontrol, struct snd_ctl_elem_value *ucontrol)
@@ -2065,9 +2079,16 @@ snd_rme96_put_attenuation_control(struct snd_kcontrol *kcontrol, struct snd_ctl_
 static int
 snd_rme96_info_montracks_control(struct snd_kcontrol *kcontrol, struct snd_ctl_elem_info *uinfo)
 {
-	static const char * const texts[4] = { "1+2", "3+4", "5+6", "7+8" };
+	static char *texts[4] = { "1+2", "3+4", "5+6", "7+8" };
 	
-	return snd_ctl_enum_info(uinfo, 1, 4, texts);
+	uinfo->type = SNDRV_CTL_ELEM_TYPE_ENUMERATED;
+	uinfo->count = 1;
+	uinfo->value.enumerated.items = 4;
+	if (uinfo->value.enumerated.item > 3) {
+		uinfo->value.enumerated.item = 3;
+	}
+	strcpy(uinfo->value.enumerated.name, texts[uinfo->value.enumerated.item]);
+	return 0;
 }
 static int
 snd_rme96_get_montracks_control(struct snd_kcontrol *kcontrol, struct snd_ctl_elem_value *ucontrol)
@@ -2351,11 +2372,13 @@ snd_rme96_create_switches(struct snd_card *card,
  * Card initialisation
  */
 
-#ifdef CONFIG_PM_SLEEP
+#ifdef CONFIG_PM
 
-static int rme96_suspend(struct device *dev)
+static int
+snd_rme96_suspend(struct pci_dev *pci,
+		  pm_message_t state)
 {
-	struct snd_card *card = dev_get_drvdata(dev);
+	struct snd_card *card = pci_get_drvdata(pci);
 	struct rme96 *rme96 = card->private_data;
 
 	snd_power_change_state(card, SNDRV_CTL_POWER_D3hot);
@@ -2377,13 +2400,25 @@ static int rme96_suspend(struct device *dev)
 	/* disable the DAC  */
 	rme96->areg &= ~RME96_AR_DAC_EN;
 	writel(rme96->areg, rme96->iobase + RME96_IO_ADDITIONAL_REG);
+
+	pci_disable_device(pci);
+	pci_save_state(pci);
+
 	return 0;
 }
 
-static int rme96_resume(struct device *dev)
+static int
+snd_rme96_resume(struct pci_dev *pci)
 {
-	struct snd_card *card = dev_get_drvdata(dev);
+	struct snd_card *card = pci_get_drvdata(pci);
 	struct rme96 *rme96 = card->private_data;
+
+	pci_restore_state(pci);
+	if (pci_enable_device(pci) < 0) {
+		printk(KERN_ERR "rme96: pci_enable_device failed, disabling device\n");
+		snd_card_disconnect(card);
+		return -EIO;
+	}
 
 	/* reset playback and record buffer pointers */
 	writel(0, rme96->iobase + RME96_IO_SET_PLAY_POS
@@ -2416,11 +2451,7 @@ static int rme96_resume(struct device *dev)
 	return 0;
 }
 
-static SIMPLE_DEV_PM_OPS(rme96_pm, rme96_suspend, rme96_resume);
-#define RME96_PM_OPS	&rme96_pm
-#else
-#define RME96_PM_OPS	NULL
-#endif /* CONFIG_PM_SLEEP */
+#endif
 
 static void snd_rme96_card_free(struct snd_card *card)
 {
@@ -2444,30 +2475,31 @@ snd_rme96_probe(struct pci_dev *pci,
 		dev++;
 		return -ENOENT;
 	}
-	err = snd_card_new(&pci->dev, index[dev], id[dev], THIS_MODULE,
-			   sizeof(struct rme96), &card);
+	err = snd_card_create(index[dev], id[dev], THIS_MODULE,
+			      sizeof(struct rme96), &card);
 	if (err < 0)
 		return err;
 	card->private_free = snd_rme96_card_free;
 	rme96 = card->private_data;
 	rme96->card = card;
 	rme96->pci = pci;
+	snd_card_set_dev(card, &pci->dev);
 	if ((err = snd_rme96_create(rme96)) < 0) {
 		snd_card_free(card);
 		return err;
 	}
 	
-#ifdef CONFIG_PM_SLEEP
+#ifdef CONFIG_PM
 	rme96->playback_suspend_buffer = vmalloc(RME96_BUFFER_SIZE);
 	if (!rme96->playback_suspend_buffer) {
-		dev_err(card->dev,
+		snd_printk(KERN_ERR
 			   "Failed to allocate playback suspend buffer!\n");
 		snd_card_free(card);
 		return -ENOMEM;
 	}
 	rme96->capture_suspend_buffer = vmalloc(RME96_BUFFER_SIZE);
 	if (!rme96->capture_suspend_buffer) {
-		dev_err(card->dev,
+		snd_printk(KERN_ERR
 			   "Failed to allocate capture suspend buffer!\n");
 		snd_card_free(card);
 		return -ENOMEM;
@@ -2516,9 +2548,10 @@ static struct pci_driver rme96_driver = {
 	.id_table = snd_rme96_ids,
 	.probe = snd_rme96_probe,
 	.remove = snd_rme96_remove,
-	.driver = {
-		.pm = RME96_PM_OPS,
-	},
+#ifdef CONFIG_PM
+	.suspend = snd_rme96_suspend,
+	.resume = snd_rme96_resume,
+#endif
 };
 
 module_pci_driver(rme96_driver);

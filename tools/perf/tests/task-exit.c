@@ -42,7 +42,6 @@ int test__task_exit(void)
 		.uses_mmap	= true,
 	};
 	const char *argv[] = { "true", NULL };
-	char sbuf[STRERR_BUFSIZE];
 
 	signal(SIGCHLD, sig_handler);
 
@@ -83,14 +82,13 @@ int test__task_exit(void)
 
 	err = perf_evlist__open(evlist);
 	if (err < 0) {
-		pr_debug("Couldn't open the evlist: %s\n",
-			 strerror_r(-err, sbuf, sizeof(sbuf)));
+		pr_debug("Couldn't open the evlist: %s\n", strerror(-err));
 		goto out_delete_evlist;
 	}
 
 	if (perf_evlist__mmap(evlist, 128, true) < 0) {
 		pr_debug("failed to mmap events: %d (%s)\n", errno,
-			 strerror_r(errno, sbuf, sizeof(sbuf)));
+			 strerror(errno));
 		goto out_delete_evlist;
 	}
 
@@ -105,7 +103,7 @@ retry:
 	}
 
 	if (!exited || !nr_exit) {
-		perf_evlist__poll(evlist, -1);
+		poll(evlist->pollfd, evlist->nr_fds, -1);
 		goto retry;
 	}
 

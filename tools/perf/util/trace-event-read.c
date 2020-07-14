@@ -22,6 +22,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <getopt.h>
 #include <stdarg.h>
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -35,7 +36,6 @@
 #include "../perf.h"
 #include "util.h"
 #include "trace-event.h"
-#include "debug.h"
 
 static int input_fd;
 

@@ -406,7 +406,7 @@ __SYSCALL(__NR_vfork, sys_vfork)
 #define __NR_ugetrlimit 191	/* SuS compliant getrlimit */
 __SYSCALL(__NR_ugetrlimit, compat_sys_getrlimit)		/* SuS compliant getrlimit */
 #define __NR_mmap2 192
-__SYSCALL(__NR_mmap2, compat_sys_mmap2_wrapper)
+__SYSCALL(__NR_mmap2, sys_mmap_pgoff)
 #define __NR_truncate64 193
 __SYSCALL(__NR_truncate64, compat_sys_truncate64_wrapper)
 #define __NR_ftruncate64 194
@@ -781,19 +781,12 @@ __SYSCALL(__NR_process_vm_writev, compat_sys_process_vm_writev)
 __SYSCALL(__NR_kcmp, sys_kcmp)
 #define __NR_finit_module 379
 __SYSCALL(__NR_finit_module, sys_finit_module)
-#define __NR_sched_setattr 380
-__SYSCALL(__NR_sched_setattr, sys_sched_setattr)
-#define __NR_sched_getattr 381
-__SYSCALL(__NR_sched_getattr, sys_sched_getattr)
-#define __NR_renameat2 382
-__SYSCALL(__NR_renameat2, sys_renameat2)
+/* #define __NR_sched_setattr 380 */
+__SYSCALL(380, sys_ni_syscall)
+/* #define __NR_sched_getattr 381 */
+__SYSCALL(381, sys_ni_syscall)
+/* #define __NR_renameat2 382 */
+__SYSCALL(382, sys_ni_syscall)
 #define __NR_seccomp 383
 __SYSCALL(__NR_seccomp, sys_seccomp)
-#define __NR_getrandom 384
-__SYSCALL(__NR_getrandom, sys_getrandom)
-#define __NR_memfd_create 385
-__SYSCALL(__NR_memfd_create, sys_memfd_create)
-#define __NR_bpf 386
-__SYSCALL(__NR_bpf, sys_bpf)
-#define __NR_execveat 387
-__SYSCALL(__NR_execveat, compat_sys_execveat)
+

@@ -248,7 +248,8 @@ struct arpt_entry *arpt_next_entry(const struct arpt_entry *entry)
 
 unsigned int arpt_do_table(struct sk_buff *skb,
 			   unsigned int hook,
-			   const struct nf_hook_state *state,
+			   const struct net_device *in,
+			   const struct net_device *out,
 			   struct xt_table *table)
 {
 	static const char nulldevname[IFNAMSIZ] __attribute__((aligned(sizeof(long))));
@@ -264,8 +265,8 @@ unsigned int arpt_do_table(struct sk_buff *skb,
 	if (!pskb_may_pull(skb, arp_hdr_len(skb->dev)))
 		return NF_DROP;
 
-	indev = state->in ? state->in->name : nulldevname;
-	outdev = state->out ? state->out->name : nulldevname;
+	indev = in ? in->name : nulldevname;
+	outdev = out ? out->name : nulldevname;
 
 	local_bh_disable();
 	addend = xt_write_recseq_begin();
@@ -280,8 +281,8 @@ unsigned int arpt_do_table(struct sk_buff *skb,
 	e = get_entry(table_base, private->hook_entry[hook]);
 	back = get_entry(table_base, private->underflow[hook]);
 
-	acpar.in      = state->in;
-	acpar.out     = state->out;
+	acpar.in      = in;
+	acpar.out     = out;
 	acpar.hooknum = hook;
 	acpar.family  = NFPROTO_ARP;
 	acpar.hotdrop = false;
@@ -1075,9 +1076,6 @@ static int do_replace(struct net *net, const void __user *user,
 	/* overflow check */
 	if (tmp.num_counters >= INT_MAX / sizeof(struct xt_counters))
 		return -ENOMEM;
-	if (tmp.num_counters == 0)
-		return -EINVAL;
-
 	tmp.name[sizeof(tmp.name)-1] = 0;
 
 	newinfo = xt_alloc_table_info(tmp.size);
@@ -1502,9 +1500,6 @@ static int compat_do_replace(struct net *net, void __user *user,
 		return -ENOMEM;
 	if (tmp.num_counters >= INT_MAX / sizeof(struct xt_counters))
 		return -ENOMEM;
-	if (tmp.num_counters == 0)
-		return -EINVAL;
-
 	tmp.name[sizeof(tmp.name)-1] = 0;
 
 	newinfo = xt_alloc_table_info(tmp.size);

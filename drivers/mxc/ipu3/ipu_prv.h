@@ -53,6 +53,14 @@ enum csc_type_t {
 	CSC_NUM
 };
 
+struct ipu_soc;
+
+struct ipu_chan {
+	struct ipu_soc *ipu;
+	ipu_channel_t channel;
+	struct ipu_chan **p_ipu_chan;
+};
+
 struct ipu_soc {
 	unsigned int id;
 	unsigned int devtype;
@@ -72,7 +80,7 @@ struct ipu_soc {
 	int irq_sync;
 	int irq_err;
 	struct ipu_irq_node irq_list[IPU_IRQ_COUNT];
-
+	struct ipu_chan chan[32];
 	/*reg*/
 	void __iomem *cm_reg;
 	void __iomem *idmac_reg;
@@ -98,6 +106,11 @@ struct ipu_soc {
 	bool chan_is_interlaced[52];
 	uint32_t channel_init_mask;
 	uint32_t channel_enable_mask;
+
+#define DC_MAPPING_PTR_MAX	29
+	unsigned long mapping_bitmap;	/* 0 - 29 are valid */
+#define DC_MAPPING_VAL_MAX	23
+	unsigned long offset_mask_bitmap;	/* 0 - 23 are valid */
 
 	/*use count*/
 	int dc_use_count;
@@ -307,7 +320,7 @@ int _ipu_dp_init(struct ipu_soc *ipu, ipu_channel_t channel, uint32_t in_pixel_f
 		 uint32_t out_pixel_fmt);
 void _ipu_dp_uninit(struct ipu_soc *ipu, ipu_channel_t channel);
 void _ipu_dc_init(struct ipu_soc *ipu, int dc_chan, int di, bool interlaced, uint32_t pixel_fmt);
-void _ipu_dc_uninit(struct ipu_soc *ipu, int dc_chan);
+void _ipu_dc_uninit(struct ipu_soc *ipu, int dc_chan, int di);
 void _ipu_dp_dc_enable(struct ipu_soc *ipu, ipu_channel_t channel);
 void _ipu_dp_dc_disable(struct ipu_soc *ipu, ipu_channel_t channel, bool swap);
 void _ipu_dmfc_init(struct ipu_soc *ipu, int dmfc_type, int first);

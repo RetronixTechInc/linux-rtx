@@ -12,7 +12,7 @@
  * license other than the GPL, without Broadcom's express prior written
  * consent.
  *
- * Maintained by: Ariel Elior <ariel.elior@qlogic.com>
+ * Maintained by: Eilon Greenstein <eilong@broadcom.com>
  * Written by: Dmitry Kravkov
  *
  */

@@ -94,7 +94,7 @@ struct kvmppc_host_state {
 	unsigned long xics_phys;
 	u32 saved_xirr;
 	u64 dabr;
-	u64 host_mmcr[7];	/* MMCR 0,1,A, SIAR, SDAR, MMCR2, SIER */
+	u64 host_mmcr[3];
 	u32 host_pmc[8];
 	u64 host_purr;
 	u64 host_spurr;
@@ -104,7 +104,6 @@ struct kvmppc_host_state {
 #ifdef CONFIG_PPC_BOOK3S_64
 	u64 cfar;
 	u64 ppr;
-	u64 host_fscr;
 #endif
 };
 
@@ -134,7 +133,6 @@ struct kvmppc_book3s_shadow_vcpu {
 		u64     esid;
 		u64     vsid;
 	} slb[64];			/* guest SLB */
-	u64 shadow_fscr;
 #endif
 };
 

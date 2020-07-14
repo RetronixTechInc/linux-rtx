@@ -1,6 +1,6 @@
 /*
  *
- * Copyright (C) 2011-2016 Freescale Semiconductor, Inc.
+ * Copyright (C) 2011-2015 Freescale Semiconductor, Inc.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -385,7 +385,7 @@ static ssize_t mag3110_dr_mode_store(struct device *dev,
 	unsigned long val;
 
 	/* This must be done when mag3110 is disabled */
-	if ((kstrtoul(buf, 10, &val) < 0) || (val > 7))
+	if ((strict_strtoul(buf, 10, &val) < 0) || (val > 7))
 		return -EINVAL;
 
 	client = mag->client;

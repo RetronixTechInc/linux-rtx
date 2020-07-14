@@ -42,7 +42,8 @@
 
 #include "sbp_target.h"
 
-static const struct target_core_fabric_ops sbp_ops;
+/* Local pointer to allocated TCM configfs fabric module */
+static struct target_fabric_configfs *sbp_fabric_configfs;
 
 /* FireWire address region for management and command block address handlers */
 static const struct fw_address_region sbp_register_region = {
@@ -209,7 +210,7 @@ static struct sbp_session *sbp_session_create(
 		return ERR_PTR(-ENOMEM);
 	}
 
-	sess->se_sess = transport_init_session(TARGET_PROT_NORMAL);
+	sess->se_sess = transport_init_session();
 	if (IS_ERR(sess->se_sess)) {
 		pr_err("failed to init se_session\n");
 
@@ -1236,7 +1237,7 @@ static void sbp_handle_command(struct sbp_target_request *req)
 
 	if (target_submit_cmd(&req->se_cmd, sess->se_sess, req->cmd_buf,
 			      req->sense_buf, unpacked_lun, data_length,
-			      TCM_SIMPLE_TAG, data_dir, 0))
+			      MSG_SIMPLE_TAG, data_dir, 0))
 		goto err;
 
 	return;
@@ -1845,11 +1846,6 @@ static void sbp_queue_tm_rsp(struct se_cmd *se_cmd)
 {
 }
 
-static void sbp_aborted_task(struct se_cmd *se_cmd)
-{
-	return;
-}
-
 static int sbp_check_stop_free(struct se_cmd *se_cmd)
 {
 	struct sbp_target_request *req = container_of(se_cmd,
@@ -2214,7 +2210,8 @@ static struct se_portal_group *sbp_make_tpg(
 		goto out_free_tpg;
 	}
 
-	ret = core_tpg_register(&sbp_ops, wwn, &tpg->se_tpg, tpg,
+	ret = core_tpg_register(&sbp_fabric_configfs->tf_ops, wwn,
+			&tpg->se_tpg, (void *)tpg,
 			TRANSPORT_TPG_TYPE_NORMAL);
 	if (ret < 0)
 		goto out_unreg_mgt_agt;
@@ -2501,9 +2498,7 @@ static struct configfs_attribute *sbp_tpg_attrib_attrs[] = {
 	NULL,
 };
 
-static const struct target_core_fabric_ops sbp_ops = {
-	.module				= THIS_MODULE,
-	.name				= "sbp",
+static struct target_core_fabric_ops sbp_ops = {
 	.get_fabric_name		= sbp_get_fabric_name,
 	.get_fabric_proto_ident		= sbp_get_fabric_proto_ident,
 	.tpg_get_wwn			= sbp_get_fabric_wwn,
@@ -2531,7 +2526,6 @@ static const struct target_core_fabric_ops sbp_ops = {
 	.queue_data_in			= sbp_queue_data_in,
 	.queue_status			= sbp_queue_status,
 	.queue_tm_rsp			= sbp_queue_tm_rsp,
-	.aborted_task			= sbp_aborted_task,
 	.check_stop_free		= sbp_check_stop_free,
 
 	.fabric_make_wwn		= sbp_make_tport,
@@ -2544,20 +2538,68 @@ static const struct target_core_fabric_ops sbp_ops = {
 	.fabric_drop_np			= NULL,
 	.fabric_make_nodeacl		= sbp_make_nodeacl,
 	.fabric_drop_nodeacl		= sbp_drop_nodeacl,
+};
 
-	.tfc_wwn_attrs			= sbp_wwn_attrs,
-	.tfc_tpg_base_attrs		= sbp_tpg_base_attrs,
-	.tfc_tpg_attrib_attrs		= sbp_tpg_attrib_attrs,
+static int sbp_register_configfs(void)
+{
+	struct target_fabric_configfs *fabric;
+	int ret;
+
+	fabric = target_fabric_configfs_init(THIS_MODULE, "sbp");
+	if (IS_ERR(fabric)) {
+		pr_err("target_fabric_configfs_init() failed\n");
+		return PTR_ERR(fabric);
+	}
+
+	fabric->tf_ops = sbp_ops;
+
+	/*
+	 * Setup default attribute lists for various fabric->tf_cit_tmpl
+	 */
+	fabric->tf_cit_tmpl.tfc_wwn_cit.ct_attrs = sbp_wwn_attrs;
+	fabric->tf_cit_tmpl.tfc_tpg_base_cit.ct_attrs = sbp_tpg_base_attrs;
+	fabric->tf_cit_tmpl.tfc_tpg_attrib_cit.ct_attrs = sbp_tpg_attrib_attrs;
+	fabric->tf_cit_tmpl.tfc_tpg_param_cit.ct_attrs = NULL;
+	fabric->tf_cit_tmpl.tfc_tpg_np_base_cit.ct_attrs = NULL;
+	fabric->tf_cit_tmpl.tfc_tpg_nacl_base_cit.ct_attrs = NULL;
+	fabric->tf_cit_tmpl.tfc_tpg_nacl_attrib_cit.ct_attrs = NULL;
+	fabric->tf_cit_tmpl.tfc_tpg_nacl_auth_cit.ct_attrs = NULL;
+	fabric->tf_cit_tmpl.tfc_tpg_nacl_param_cit.ct_attrs = NULL;
+
+	ret = target_fabric_configfs_register(fabric);
+	if (ret < 0) {
+		pr_err("target_fabric_configfs_register() failed for SBP\n");
+		return ret;
+	}
+
+	sbp_fabric_configfs = fabric;
+
+	return 0;
+};
+
+static void sbp_deregister_configfs(void)
+{
+	if (!sbp_fabric_configfs)
+		return;
+
+	target_fabric_configfs_deregister(sbp_fabric_configfs);
+	sbp_fabric_configfs = NULL;
 };
 
 static int __init sbp_init(void)
 {
-	return target_register_template(&sbp_ops);
+	int ret;
+
+	ret = sbp_register_configfs();
+	if (ret < 0)
+		return ret;
+
+	return 0;
 };
 
 static void __exit sbp_exit(void)
 {
-	target_unregister_template(&sbp_ops);
+	sbp_deregister_configfs();
 };
 
 MODULE_DESCRIPTION("FireWire SBP fabric driver");

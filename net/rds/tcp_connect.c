@@ -62,7 +62,6 @@ void rds_tcp_state_change(struct sock *sk)
 		case TCP_ESTABLISHED:
 			rds_connect_complete(conn);
 			break;
-		case TCP_CLOSE_WAIT:
 		case TCP_CLOSE:
 			rds_conn_drop(conn);
 		default:
@@ -107,14 +106,11 @@ int rds_tcp_conn_connect(struct rds_connection *conn)
 	rds_tcp_set_callbacks(sock, conn);
 	ret = sock->ops->connect(sock, (struct sockaddr *)&dest, sizeof(dest),
 				 O_NONBLOCK);
+	sock = NULL;
 
 	rdsdebug("connect to address %pI4 returned %d\n", &conn->c_faddr, ret);
 	if (ret == -EINPROGRESS)
 		ret = 0;
-	if (ret == 0)
-		sock = NULL;
-	else
-		rds_tcp_restore_callbacks(sock, conn->c_transport_data);
 
 out:
 	if (sock)

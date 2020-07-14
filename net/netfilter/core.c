@@ -17,7 +17,6 @@
 #include <linux/interrupt.h>
 #include <linux/if.h>
 #include <linux/netdevice.h>
-#include <linux/netfilter_ipv6.h>
 #include <linux/inetdevice.h>
 #include <linux/proc_fs.h>
 #include <linux/mutex.h>
@@ -36,7 +35,11 @@ EXPORT_SYMBOL_GPL(nf_ipv6_ops);
 
 int nf_register_afinfo(const struct nf_afinfo *afinfo)
 {
-	mutex_lock(&afinfo_mutex);
+	int err;
+
+	err = mutex_lock_interruptible(&afinfo_mutex);
+	if (err < 0)
+		return err;
 	RCU_INIT_POINTER(nf_afinfo[afinfo->family], afinfo);
 	mutex_unlock(&afinfo_mutex);
 	return 0;
@@ -55,7 +58,7 @@ EXPORT_SYMBOL_GPL(nf_unregister_afinfo);
 struct list_head nf_hooks[NFPROTO_NUMPROTO][NF_MAX_HOOKS] __read_mostly;
 EXPORT_SYMBOL(nf_hooks);
 
-#ifdef HAVE_JUMP_LABEL
+#if defined(CONFIG_JUMP_LABEL)
 struct static_key nf_hooks_needed[NFPROTO_NUMPROTO][NF_MAX_HOOKS];
 EXPORT_SYMBOL(nf_hooks_needed);
 #endif
@@ -65,15 +68,18 @@ static DEFINE_MUTEX(nf_hook_mutex);
 int nf_register_hook(struct nf_hook_ops *reg)
 {
 	struct nf_hook_ops *elem;
+	int err;
 
-	mutex_lock(&nf_hook_mutex);
+	err = mutex_lock_interruptible(&nf_hook_mutex);
+	if (err < 0)
+		return err;
 	list_for_each_entry(elem, &nf_hooks[reg->pf][reg->hooknum], list) {
 		if (reg->priority < elem->priority)
 			break;
 	}
 	list_add_rcu(&reg->list, elem->list.prev);
 	mutex_unlock(&nf_hook_mutex);
-#ifdef HAVE_JUMP_LABEL
+#if defined(CONFIG_JUMP_LABEL)
 	static_key_slow_inc(&nf_hooks_needed[reg->pf][reg->hooknum]);
 #endif
 	return 0;
@@ -85,11 +91,10 @@ void nf_unregister_hook(struct nf_hook_ops *reg)
 	mutex_lock(&nf_hook_mutex);
 	list_del_rcu(&reg->list);
 	mutex_unlock(&nf_hook_mutex);
-#ifdef HAVE_JUMP_LABEL
+#if defined(CONFIG_JUMP_LABEL)
 	static_key_slow_dec(&nf_hooks_needed[reg->pf][reg->hooknum]);
 #endif
 	synchronize_net();
-	nf_queue_nf_hook_drop(reg);
 }
 EXPORT_SYMBOL(nf_unregister_hook);
 
@@ -121,8 +126,12 @@ EXPORT_SYMBOL(nf_unregister_hooks);
 
 unsigned int nf_iterate(struct list_head *head,
 			struct sk_buff *skb,
-			struct nf_hook_state *state,
-			struct nf_hook_ops **elemp)
+			unsigned int hook,
+			const struct net_device *indev,
+			const struct net_device *outdev,
+			struct nf_hook_ops **elemp,
+			int (*okfn)(struct sk_buff *),
+			int hook_thresh)
 {
 	unsigned int verdict;
 
@@ -131,19 +140,19 @@ unsigned int nf_iterate(struct list_head *head,
 	 * function because of risk of continuing from deleted element.
 	 */
 	list_for_each_entry_continue_rcu((*elemp), head, list) {
-		if (state->thresh > (*elemp)->priority)
+		if (hook_thresh > (*elemp)->priority)
 			continue;
 
 		/* Optimization: we don't need to hold module
 		   reference here, since function can't sleep. --RR */
 repeat:
-		verdict = (*elemp)->hook(*elemp, skb, state);
+		verdict = (*elemp)->hook(*elemp, skb, indev, outdev, okfn);
 		if (verdict != NF_ACCEPT) {
 #ifdef CONFIG_NETFILTER_DEBUG
 			if (unlikely((verdict & NF_VERDICT_MASK)
 							> NF_MAX_VERDICT)) {
 				NFDEBUG("Evil return from %p(%u).\n",
-					(*elemp)->hook, state->hook);
+					(*elemp)->hook, hook);
 				continue;
 			}
 #endif
@@ -158,7 +167,11 @@ repeat:
 
 /* Returns 1 if okfn() needs to be executed by the caller,
  * -EPERM for NF_DROP, 0 otherwise. */
-int nf_hook_slow(struct sk_buff *skb, struct nf_hook_state *state)
+int nf_hook_slow(u_int8_t pf, unsigned int hook, struct sk_buff *skb,
+		 struct net_device *indev,
+		 struct net_device *outdev,
+		 int (*okfn)(struct sk_buff *),
+		 int hook_thresh)
 {
 	struct nf_hook_ops *elem;
 	unsigned int verdict;
@@ -167,11 +180,10 @@ int nf_hook_slow(struct sk_buff *skb, struct nf_hook_state *state)
 	/* We may already have this, but read-locks nest anyway */
 	rcu_read_lock();
 
-	elem = list_entry_rcu(&nf_hooks[state->pf][state->hook],
-			      struct nf_hook_ops, list);
+	elem = list_entry_rcu(&nf_hooks[pf][hook], struct nf_hook_ops, list);
 next_hook:
-	verdict = nf_iterate(&nf_hooks[state->pf][state->hook], skb, state,
-			     &elem);
+	verdict = nf_iterate(&nf_hooks[pf][hook], skb, hook, indev,
+			     outdev, &elem, okfn, hook_thresh);
 	if (verdict == NF_ACCEPT || verdict == NF_STOP) {
 		ret = 1;
 	} else if ((verdict & NF_VERDICT_MASK) == NF_DROP) {
@@ -180,8 +192,8 @@ next_hook:
 		if (ret == 0)
 			ret = -EPERM;
 	} else if ((verdict & NF_VERDICT_MASK) == NF_QUEUE) {
-		int err = nf_queue(skb, elem, state,
-				   verdict >> NF_VERDICT_QBITS);
+		int err = nf_queue(skb, elem, pf, hook, indev, outdev, okfn,
+						verdict >> NF_VERDICT_QBITS);
 		if (err < 0) {
 			if (err == -ECANCELED)
 				goto next_hook;

@@ -9,6 +9,7 @@
  *      2 of the License, or (at your option) any later version.
  */
 
+
 #include <linux/module.h>
 #include <linux/inet_diag.h>
 
@@ -29,18 +30,18 @@ static void tcp_diag_get_info(struct sock *sk, struct inet_diag_msg *r,
 		r->idiag_rqueue = max_t(int, tp->rcv_nxt - tp->copied_seq, 0);
 		r->idiag_wqueue = tp->write_seq - tp->snd_una;
 	}
-	if (info)
+	if (info != NULL)
 		tcp_get_info(sk, info);
 }
 
 static void tcp_diag_dump(struct sk_buff *skb, struct netlink_callback *cb,
-			  const struct inet_diag_req_v2 *r, struct nlattr *bc)
+		struct inet_diag_req_v2 *r, struct nlattr *bc)
 {
 	inet_diag_dump_icsk(&tcp_hashinfo, skb, cb, r, bc);
 }
 
 static int tcp_diag_dump_one(struct sk_buff *in_skb, const struct nlmsghdr *nlh,
-			     const struct inet_diag_req_v2 *req)
+		struct inet_diag_req_v2 *req)
 {
 	return inet_diag_dump_one_icsk(&tcp_hashinfo, in_skb, nlh, req);
 }

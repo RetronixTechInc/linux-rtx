@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2013-2016 Freescale Semiconductor, Inc.
+ * Copyright (C) 2013-2015 Freescale Semiconductor, Inc.
  *
  * Based on imx-sgtl5000.c
  * Copyright (C) 2012 Freescale Semiconductor, Inc.
@@ -57,9 +57,7 @@ struct imx_priv {
 	struct platform_device *asrc_pdev;
 	u32 asrc_rate;
 	u32 asrc_format;
-#ifdef CONFIG_SWITCH
 	struct switch_dev sdev;
-#endif
 };
 static struct imx_priv card_priv;
 
@@ -96,7 +94,7 @@ static struct snd_soc_jack_gpio imx_mic_jack_gpio = {
 	.invert = 0,
 };
 
-static int hpjack_status_check(void *data)
+static int hpjack_status_check(void)
 {
 	struct imx_priv *priv = &card_priv;
 	struct platform_device *pdev = priv->pdev;
@@ -141,7 +139,7 @@ static int hpjack_status_check(void *data)
 	return ret;
 }
 
-static int micjack_status_check(void *data)
+static int micjack_status_check(void)
 {
 	struct imx_priv *priv = &card_priv;
 	struct platform_device *pdev = priv->pdev;
@@ -414,11 +412,10 @@ static int imx_wm8962_gpio_init(struct snd_soc_card *card)
 	if (gpio_is_valid(priv->hp_gpio)) {
 		imx_hp_jack_gpio.gpio = priv->hp_gpio;
 		imx_hp_jack_gpio.jack_status_check = hpjack_status_check;
-	
-		snd_soc_card_jack_new(card, "Headphone Jack",
-				SND_JACK_HEADPHONE, &imx_hp_jack,
-				imx_hp_jack_pins, ARRAY_SIZE(imx_hp_jack_pins));
 
+		snd_soc_jack_new(codec, "Headphone Jack", SND_JACK_HEADPHONE, &imx_hp_jack);
+		snd_soc_jack_add_pins(&imx_hp_jack,
+				ARRAY_SIZE(imx_hp_jack_pins), imx_hp_jack_pins);
 		snd_soc_jack_add_gpios(&imx_hp_jack, 1, &imx_hp_jack_gpio);
 	}
 
@@ -426,10 +423,9 @@ static int imx_wm8962_gpio_init(struct snd_soc_card *card)
 		imx_mic_jack_gpio.gpio = priv->mic_gpio;
 		imx_mic_jack_gpio.jack_status_check = micjack_status_check;
 
-		snd_soc_card_jack_new(card, "AMIC",
-				SND_JACK_MICROPHONE, &imx_mic_jack,
-				imx_mic_jack_pins, ARRAY_SIZE(imx_mic_jack_pins)); 
-
+		snd_soc_jack_new(codec, "AMIC", SND_JACK_MICROPHONE, &imx_mic_jack);
+		snd_soc_jack_add_pins(&imx_mic_jack,
+				ARRAY_SIZE(imx_mic_jack_pins), imx_mic_jack_pins);
 		snd_soc_jack_add_gpios(&imx_mic_jack, 1, &imx_mic_jack_gpio);
 	} else if (priv->amic_mono || priv->dmic_mono) {
 		/*
@@ -708,7 +704,6 @@ audmux_bypass:
 	ret = snd_soc_of_parse_audio_routing(&data->card, "audio-routing");
 	if (ret)
 		goto fail;
-	data->card.owner = THIS_MODULE;
 	data->card.dai_link = data->dai;
 	data->card.dapm_widgets = imx_wm8962_dapm_widgets;
 	data->card.num_dapm_widgets = ARRAY_SIZE(imx_wm8962_dapm_widgets);
@@ -721,14 +716,14 @@ audmux_bypass:
 	platform_set_drvdata(pdev, &data->card);
 	snd_soc_card_set_drvdata(&data->card, data);
 
-#ifdef CONFIG_SWITCH
 	priv->sdev.name = "h2w";
+#ifdef CONFIG_SWITCH
 	ret = switch_dev_register(&priv->sdev);
+#endif
 	if (ret < 0) {
 		ret = -EINVAL;
 		goto fail;
 	}
-#endif
 
 	ret = devm_snd_soc_register_card(&pdev->dev, &data->card);
 	if (ret) {
@@ -766,8 +761,10 @@ fail_mic:
 	driver_remove_file(pdev->dev.driver, &driver_attr_headphone);
 fail_hp:
 fail:
-	of_node_put(cpu_np);
-	of_node_put(codec_np);
+	if (cpu_np)
+		of_node_put(cpu_np);
+	if (codec_np)
+		of_node_put(codec_np);
 
 	return ret;
 }
@@ -776,7 +773,6 @@ static int imx_wm8962_remove(struct platform_device *pdev)
 {
 	struct snd_soc_card *card = platform_get_drvdata(pdev);
 	struct imx_priv *priv = &card_priv;
-
 	driver_remove_file(pdev->dev.driver, &driver_attr_microphone);
 	driver_remove_file(pdev->dev.driver, &driver_attr_headphone);
 
@@ -795,6 +791,7 @@ MODULE_DEVICE_TABLE(of, imx_wm8962_dt_ids);
 static struct platform_driver imx_wm8962_driver = {
 	.driver = {
 		.name = "imx-wm8962",
+		.owner = THIS_MODULE,
 		.pm = &snd_soc_pm_ops,
 		.of_match_table = imx_wm8962_dt_ids,
 	},

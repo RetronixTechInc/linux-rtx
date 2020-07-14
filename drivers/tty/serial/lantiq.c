@@ -154,6 +154,11 @@ lqasc_stop_rx(struct uart_port *port)
 	ltq_w32(ASCWHBSTATE_CLRREN, port->membase + LTQ_ASC_WHBSTATE);
 }
 
+static void
+lqasc_enable_ms(struct uart_port *port)
+{
+}
+
 static int
 lqasc_rx_chars(struct uart_port *port)
 {
@@ -497,10 +502,8 @@ lqasc_type(struct uart_port *port)
 static void
 lqasc_release_port(struct uart_port *port)
 {
-	struct platform_device *pdev = to_platform_device(port->dev);
-
 	if (port->flags & UPF_IOREMAP) {
-		devm_iounmap(&pdev->dev, port->membase);
+		iounmap(port->membase);
 		port->membase = NULL;
 	}
 }
@@ -565,6 +568,7 @@ static struct uart_ops lqasc_pops = {
 	.stop_tx =	lqasc_stop_tx,
 	.start_tx =	lqasc_start_tx,
 	.stop_rx =	lqasc_stop_rx,
+	.enable_ms =	lqasc_enable_ms,
 	.break_ctl =	lqasc_break_ctl,
 	.startup =	lqasc_startup,
 	.shutdown =	lqasc_shutdown,
@@ -705,7 +709,7 @@ lqasc_probe(struct platform_device *pdev)
 	port = &ltq_port->port;
 
 	port->iotype	= SERIAL_IO_MEM;
-	port->flags	= UPF_BOOT_AUTOCONF | UPF_IOREMAP;
+	port->flags	= ASYNC_BOOT_AUTOCONF | UPF_IOREMAP;
 	port->ops	= &lqasc_pops;
 	port->fifosize	= 16;
 	port->type	= PORT_LTQ_ASC,

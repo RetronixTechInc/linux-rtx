@@ -9,6 +9,8 @@
 
 /dts-v1/;
 
+/memreserve/ 0xbf000000 0x01000000;
+
 / {
 	model = "V2P-CA5s";
 	arm,hbi = <0x225>;
@@ -59,6 +61,8 @@
 		interrupts = <0 85 4>;
 		clocks = <&oscclk3>;
 		clock-names = "pxlclk";
+		mode = "640x480-16@60";
+		framebuffer = <0xbf000000 0x01000000>;
 	};
 
 	memory-controller@2a150000 {
@@ -86,14 +90,6 @@
 		compatible = "arm,cortex-a5-twd-timer";
 		reg = <0x2c000600 0x20>;
 		interrupts = <1 13 0x304>;
-	};
-
-	timer@2c000200 {
-		compatible = "arm,cortex-a5-global-timer",
-		             "arm,cortex-a9-global-timer";
-		reg = <0x2c000200 0x20>;
-		interrupts = <1 11 0x304>;
-		clocks = <&oscclk0>;
 	};
 
 	watchdog@2c000620 {
@@ -128,7 +124,7 @@
 		compatible = "arm,vexpress,config-bus";
 		arm,vexpress,config-bridge = <&v2m_sysreg>;
 
-		oscclk0: osc@0 {
+		osc@0 {
 			/* CPU and internal AXI reference clock */
 			compatible = "arm,vexpress-osc";
 			arm,vexpress-sysreg,func = <1 0>;

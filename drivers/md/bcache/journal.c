@@ -7,7 +7,6 @@
 #include "bcache.h"
 #include "btree.h"
 #include "debug.h"
-#include "extents.h"
 
 #include <trace/events/bcache.h>
 
@@ -190,15 +189,11 @@ int bch_journal_read(struct cache_set *c, struct list_head *list)
 			if (read_bucket(l))
 				goto bsearch;
 
-		/* no journal entries on this device? */
-		if (l == ca->sb.njournal_buckets)
+		if (list_empty(list))
 			continue;
 bsearch:
-		BUG_ON(list_empty(list));
-
 		/* Binary search */
-		m = l;
-		r = find_next_bit(bitmap, ca->sb.njournal_buckets, l + 1);
+		m = r = find_next_bit(bitmap, ca->sb.njournal_buckets, l + 1);
 		pr_debug("starting binary search, l %u r %u", l, r);
 
 		while (l + 1 < r) {
@@ -242,14 +237,8 @@ bsearch:
 		for (i = 0; i < ca->sb.njournal_buckets; i++)
 			if (ja->seq[i] > seq) {
 				seq = ja->seq[i];
-				/*
-				 * When journal_reclaim() goes to allocate for
-				 * the first time, it'll use the bucket after
-				 * ja->cur_idx
-				 */
-				ja->cur_idx = i;
-				ja->last_idx = ja->discard_idx = (i + 1) %
-					ca->sb.njournal_buckets;
+				ja->cur_idx = ja->discard_idx =
+					ja->last_idx = i;
 
 			}
 	}
@@ -296,16 +285,20 @@ void bch_journal_mark(struct cache_set *c, struct list_head *list)
 
 		for (k = i->j.start;
 		     k < bset_bkey_last(&i->j);
-		     k = bkey_next(k))
-			if (!__bch_extent_invalid(c, k)) {
-				unsigned j;
+		     k = bkey_next(k)) {
+			unsigned j;
 
-				for (j = 0; j < KEY_PTRS(k); j++)
-					if (ptr_available(c, k, j))
-						atomic_inc(&PTR_BUCKET(c, k, j)->pin);
+			for (j = 0; j < KEY_PTRS(k); j++) {
+				struct bucket *g = PTR_BUCKET(c, k, j);
+				atomic_inc(&g->pin);
 
-				bch_initial_mark_key(c, 0, k);
+				if (g->prio == BTREE_PRIO &&
+				    !ptr_stale(c, k, j))
+					g->prio = INITIAL_PRIO;
 			}
+
+			__bch_btree_mark_key(c, 0, k);
+		}
 	}
 }
 
@@ -319,6 +312,8 @@ int bch_journal_replay(struct cache_set *s, struct list_head *list)
 	uint64_t start = i->j.last_seq, end = i->j.seq, n = start;
 	struct keylist keylist;
 
+	bch_keylist_init(&keylist);
+
 	list_for_each_entry(i, list, list) {
 		BUG_ON(i->pin && atomic_read(i->pin) != 1);
 
@@ -331,7 +326,8 @@ int bch_journal_replay(struct cache_set *s, struct list_head *list)
 		     k = bkey_next(k)) {
 			trace_bcache_journal_replay_key(k);
 
-			bch_keylist_init_single(&keylist, k);
+			bkey_copy(keylist.top, k);
+			bch_keylist_push(&keylist);
 
 			ret = bch_btree_insert(s, &keylist, i->pin, NULL);
 			if (ret)
@@ -387,15 +383,16 @@ retry:
 
 	b = best;
 	if (b) {
-		mutex_lock(&b->write_lock);
+		rw_lock(true, b, b->level);
+
 		if (!btree_current_write(b)->journal) {
-			mutex_unlock(&b->write_lock);
+			rw_unlock(true, b);
 			/* We raced */
 			goto retry;
 		}
 
-		__bch_btree_node_write(b, NULL);
-		mutex_unlock(&b->write_lock);
+		bch_btree_node_write(b, NULL);
+		rw_unlock(true, b);
 	}
 }
 
@@ -539,7 +536,6 @@ void bch_journal_next(struct journal *j)
 	atomic_set(&fifo_back(&j->pin), 1);
 
 	j->cur->data->seq	= ++j->seq;
-	j->cur->dirty		= false;
 	j->cur->need_write	= false;
 	j->cur->data->keys	= 0;
 
@@ -735,10 +731,7 @@ static void journal_write_work(struct work_struct *work)
 					   struct cache_set,
 					   journal.work);
 	spin_lock(&c->journal.lock);
-	if (c->journal.cur->dirty)
-		journal_try_write(c);
-	else
-		spin_unlock(&c->journal.lock);
+	journal_try_write(c);
 }
 
 /*
@@ -768,8 +761,7 @@ atomic_t *bch_journal(struct cache_set *c,
 	if (parent) {
 		closure_wait(&w->wait, parent);
 		journal_try_write(c);
-	} else if (!w->dirty) {
-		w->dirty = true;
+	} else if (!w->need_write) {
 		schedule_delayed_work(&c->journal.work,
 				      msecs_to_jiffies(c->journal_delay_ms));
 		spin_unlock(&c->journal.lock);

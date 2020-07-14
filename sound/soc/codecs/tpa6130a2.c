@@ -30,7 +30,6 @@
 #include <sound/tpa6130a2-plat.h>
 #include <sound/soc.h>
 #include <sound/tlv.h>
-#include <linux/of.h>
 #include <linux/of_gpio.h>
 
 #include "tpa6130a2.h"
@@ -381,8 +380,10 @@ static int tpa6130a2_probe(struct i2c_client *client,
 	dev = &client->dev;
 
 	data = devm_kzalloc(&client->dev, sizeof(*data), GFP_KERNEL);
-	if (!data)
+	if (data == NULL) {
+		dev_err(dev, "Can not allocate memory\n");
 		return -ENOMEM;
+	}
 
 	if (pdata) {
 		data->power_gpio = pdata->power_gpio;

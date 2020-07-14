@@ -42,21 +42,15 @@ enum nf_tproxy_lookup_t {
 
 static bool tproxy_sk_is_transparent(struct sock *sk)
 {
-	switch (sk->sk_state) {
-	case TCP_TIME_WAIT:
-		if (inet_twsk(sk)->tw_transparent)
-			return true;
-		break;
-	case TCP_NEW_SYN_RECV:
-		if (inet_rsk(inet_reqsk(sk))->no_srccheck)
-			return true;
-		break;
-	default:
+	if (sk->sk_state != TCP_TIME_WAIT) {
 		if (inet_sk(sk)->transparent)
 			return true;
+		sock_put(sk);
+	} else {
+		if (inet_twsk(sk)->tw_transparent)
+			return true;
+		inet_twsk_put(inet_twsk(sk));
 	}
-
-	sock_gen_put(sk);
 	return false;
 }
 
@@ -272,7 +266,7 @@ tproxy_handle_time_wait4(struct sk_buff *skb, __be32 laddr, __be16 lport,
 					    hp->source, lport ? lport : hp->dest,
 					    skb->dev, NFT_LOOKUP_LISTENER);
 		if (sk2) {
-			inet_twsk_deschedule(inet_twsk(sk));
+			inet_twsk_deschedule(inet_twsk(sk), &tcp_death_row);
 			inet_twsk_put(inet_twsk(sk));
 			sk = sk2;
 		}
@@ -437,7 +431,7 @@ tproxy_handle_time_wait6(struct sk_buff *skb, int tproto, int thoff,
 					    tgi->lport ? tgi->lport : hp->dest,
 					    skb->dev, NFT_LOOKUP_LISTENER);
 		if (sk2) {
-			inet_twsk_deschedule(inet_twsk(sk));
+			inet_twsk_deschedule(inet_twsk(sk), &tcp_death_row);
 			inet_twsk_put(inet_twsk(sk));
 			sk = sk2;
 		}
@@ -519,8 +513,8 @@ static int tproxy_tg6_check(const struct xt_tgchk_param *par)
 {
 	const struct ip6t_ip6 *i = par->entryinfo;
 
-	if ((i->proto == IPPROTO_TCP || i->proto == IPPROTO_UDP) &&
-	    !(i->invflags & IP6T_INV_PROTO))
+	if ((i->proto == IPPROTO_TCP || i->proto == IPPROTO_UDP)
+	    && !(i->flags & IP6T_INV_PROTO))
 		return 0;
 
 	pr_info("Can be used only in combination with "

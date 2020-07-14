@@ -12,6 +12,7 @@
  *  MCP read/write timeouts from Jordi Colomer, rehacked by rmk.
  */
 #include <linux/module.h>
+#include <linux/init.h>
 #include <linux/io.h>
 #include <linux/errno.h>
 #include <linux/kernel.h>
@@ -299,6 +300,7 @@ static struct platform_driver mcp_sa11x0_driver = {
 	.remove		= mcp_sa11x0_remove,
 	.driver		= {
 		.name	= DRIVER_NAME,
+		.owner	= THIS_MODULE,
 		.pm	= &mcp_sa11x0_pm_ops,
 	},
 };

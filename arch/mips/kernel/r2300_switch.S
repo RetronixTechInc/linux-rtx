@@ -115,11 +115,10 @@ LEAF(_restore_fp)
  * the property that no matter whether considered as single or as double
  * precision represents signaling NANS.
  *
- * The value to initialize fcr31 to comes in $a0.
+ * We initialize fcr31 to rounding to nearest, no exceptions.
  */
 
-	.set push
-	SET_HARDFLOAT
+#define FPU_DEFAULT  0x00000000
 
 LEAF(_init_fpu)
 	mfc0	t0, CP0_STATUS
@@ -127,7 +126,8 @@ LEAF(_init_fpu)
 	or	t0, t1
 	mtc0	t0, CP0_STATUS
 
-	ctc1	a0, fcr31
+	li	t1, FPU_DEFAULT
+	ctc1	t1, fcr31
 
 	li	t0, -1
 
@@ -165,5 +165,3 @@ LEAF(_init_fpu)
 	mtc1	t0, $f31
 	jr	ra
 	END(_init_fpu)
-
-	.set pop

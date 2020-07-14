@@ -3,7 +3,6 @@
  *	Library for filesystems writers.
  */
 
-#include <linux/blkdev.h>
 #include <linux/export.h>
 #include <linux/pagemap.h>
 #include <linux/slab.h>
@@ -22,13 +21,13 @@
 
 static inline int simple_positive(struct dentry *dentry)
 {
-	return d_really_is_positive(dentry) && !d_unhashed(dentry);
+	return dentry->d_inode && !d_unhashed(dentry);
 }
 
 int simple_getattr(struct vfsmount *mnt, struct dentry *dentry,
 		   struct kstat *stat)
 {
-	struct inode *inode = d_inode(dentry);
+	struct inode *inode = dentry->d_inode;
 	generic_fillattr(inode, stat);
 	stat->blocks = inode->i_mapping->nrpages << (PAGE_CACHE_SHIFT - 9);
 	return 0;
@@ -94,7 +93,7 @@ EXPORT_SYMBOL(dcache_dir_close);
 loff_t dcache_dir_lseek(struct file *file, loff_t offset, int whence)
 {
 	struct dentry *dentry = file->f_path.dentry;
-	mutex_lock(&d_inode(dentry)->i_mutex);
+	mutex_lock(&dentry->d_inode->i_mutex);
 	switch (whence) {
 		case 1:
 			offset += file->f_pos;
@@ -102,7 +101,7 @@ loff_t dcache_dir_lseek(struct file *file, loff_t offset, int whence)
 			if (offset >= 0)
 				break;
 		default:
-			mutex_unlock(&d_inode(dentry)->i_mutex);
+			mutex_unlock(&dentry->d_inode->i_mutex);
 			return -EINVAL;
 	}
 	if (offset != file->f_pos) {
@@ -129,7 +128,7 @@ loff_t dcache_dir_lseek(struct file *file, loff_t offset, int whence)
 			spin_unlock(&dentry->d_lock);
 		}
 	}
-	mutex_unlock(&d_inode(dentry)->i_mutex);
+	mutex_unlock(&dentry->d_inode->i_mutex);
 	return offset;
 }
 EXPORT_SYMBOL(dcache_dir_lseek);
@@ -169,7 +168,7 @@ int dcache_readdir(struct file *file, struct dir_context *ctx)
 		spin_unlock(&next->d_lock);
 		spin_unlock(&dentry->d_lock);
 		if (!dir_emit(ctx, next->d_name.name, next->d_name.len,
-			      d_inode(next)->i_ino, dt_type(d_inode(next))))
+			      next->d_inode->i_ino, dt_type(next->d_inode)))
 			return 0;
 		spin_lock(&dentry->d_lock);
 		spin_lock_nested(&next->d_lock, DENTRY_D_LOCK_NESTED);
@@ -270,7 +269,7 @@ EXPORT_SYMBOL(simple_open);
 
 int simple_link(struct dentry *old_dentry, struct inode *dir, struct dentry *dentry)
 {
-	struct inode *inode = d_inode(old_dentry);
+	struct inode *inode = old_dentry->d_inode;
 
 	inode->i_ctime = dir->i_ctime = dir->i_mtime = CURRENT_TIME;
 	inc_nlink(inode);
@@ -304,7 +303,7 @@ EXPORT_SYMBOL(simple_empty);
 
 int simple_unlink(struct inode *dir, struct dentry *dentry)
 {
-	struct inode *inode = d_inode(dentry);
+	struct inode *inode = dentry->d_inode;
 
 	inode->i_ctime = dir->i_ctime = dir->i_mtime = CURRENT_TIME;
 	drop_nlink(inode);
@@ -318,7 +317,7 @@ int simple_rmdir(struct inode *dir, struct dentry *dentry)
 	if (!simple_empty(dentry))
 		return -ENOTEMPTY;
 
-	drop_nlink(d_inode(dentry));
+	drop_nlink(dentry->d_inode);
 	simple_unlink(dir, dentry);
 	drop_nlink(dir);
 	return 0;
@@ -328,16 +327,16 @@ EXPORT_SYMBOL(simple_rmdir);
 int simple_rename(struct inode *old_dir, struct dentry *old_dentry,
 		struct inode *new_dir, struct dentry *new_dentry)
 {
-	struct inode *inode = d_inode(old_dentry);
-	int they_are_dirs = d_is_dir(old_dentry);
+	struct inode *inode = old_dentry->d_inode;
+	int they_are_dirs = S_ISDIR(old_dentry->d_inode->i_mode);
 
 	if (!simple_empty(new_dentry))
 		return -ENOTEMPTY;
 
-	if (d_really_is_positive(new_dentry)) {
+	if (new_dentry->d_inode) {
 		simple_unlink(new_dir, new_dentry);
 		if (they_are_dirs) {
-			drop_nlink(d_inode(new_dentry));
+			drop_nlink(new_dentry->d_inode);
 			drop_nlink(old_dir);
 		}
 	} else if (they_are_dirs) {
@@ -368,7 +367,7 @@ EXPORT_SYMBOL(simple_rename);
  */
 int simple_setattr(struct dentry *dentry, struct iattr *iattr)
 {
-	struct inode *inode = d_inode(dentry);
+	struct inode *inode = dentry->d_inode;
 	int error;
 
 	error = inode_change_ok(inode, iattr);
@@ -924,19 +923,16 @@ struct dentry *generic_fh_to_parent(struct super_block *sb, struct fid *fid,
 EXPORT_SYMBOL_GPL(generic_fh_to_parent);
 
 /**
- * __generic_file_fsync - generic fsync implementation for simple filesystems
- *
+ * generic_file_fsync - generic fsync implementation for simple filesystems
  * @file:	file to synchronize
- * @start:	start offset in bytes
- * @end:	end offset in bytes (inclusive)
  * @datasync:	only synchronize essential metadata if true
  *
  * This is a generic implementation of the fsync method for simple
  * filesystems which track all non-inode metadata in the buffers list
  * hanging off the address_space structure.
  */
-int __generic_file_fsync(struct file *file, loff_t start, loff_t end,
-				 int datasync)
+int generic_file_fsync(struct file *file, loff_t start, loff_t end,
+		       int datasync)
 {
 	struct inode *inode = file->f_mapping->host;
 	int err;
@@ -948,7 +944,7 @@ int __generic_file_fsync(struct file *file, loff_t start, loff_t end,
 
 	mutex_lock(&inode->i_mutex);
 	ret = sync_mapping_buffers(inode->i_mapping);
-	if (!(inode->i_state & I_DIRTY_ALL))
+	if (!(inode->i_state & I_DIRTY))
 		goto out;
 	if (datasync && !(inode->i_state & I_DIRTY_DATASYNC))
 		goto out;
@@ -956,33 +952,9 @@ int __generic_file_fsync(struct file *file, loff_t start, loff_t end,
 	err = sync_inode_metadata(inode, 1);
 	if (ret == 0)
 		ret = err;
-
 out:
 	mutex_unlock(&inode->i_mutex);
 	return ret;
-}
-EXPORT_SYMBOL(__generic_file_fsync);
-
-/**
- * generic_file_fsync - generic fsync implementation for simple filesystems
- *			with flush
- * @file:	file to synchronize
- * @start:	start offset in bytes
- * @end:	end offset in bytes (inclusive)
- * @datasync:	only synchronize essential metadata if true
- *
- */
-
-int generic_file_fsync(struct file *file, loff_t start, loff_t end,
-		       int datasync)
-{
-	struct inode *inode = file->f_mapping->host;
-	int err;
-
-	err = __generic_file_fsync(file, start, end, datasync);
-	if (err)
-		return err;
-	return blkdev_issue_flush(inode->i_sb->s_bdev, GFP_KERNEL, NULL);
 }
 EXPORT_SYMBOL(generic_file_fsync);
 
@@ -1075,117 +1047,3 @@ struct inode *alloc_anon_inode(struct super_block *s)
 	return inode;
 }
 EXPORT_SYMBOL(alloc_anon_inode);
-
-/**
- * simple_nosetlease - generic helper for prohibiting leases
- * @filp: file pointer
- * @arg: type of lease to obtain
- * @flp: new lease supplied for insertion
- * @priv: private data for lm_setup operation
- *
- * Generic helper for filesystems that do not wish to allow leases to be set.
- * All arguments are ignored and it just returns -EINVAL.
- */
-int
-simple_nosetlease(struct file *filp, long arg, struct file_lock **flp,
-		  void **priv)
-{
-	return -EINVAL;
-}
-EXPORT_SYMBOL(simple_nosetlease);
-
-
-/*
- * Operations for a permanently empty directory.
- */
-static struct dentry *empty_dir_lookup(struct inode *dir, struct dentry *dentry, unsigned int flags)
-{
-	return ERR_PTR(-ENOENT);
-}
-
-static int empty_dir_getattr(struct vfsmount *mnt, struct dentry *dentry,
-				 struct kstat *stat)
-{
-	struct inode *inode = d_inode(dentry);
-	generic_fillattr(inode, stat);
-	return 0;
-}
-
-static int empty_dir_setattr(struct dentry *dentry, struct iattr *attr)
-{
-	return -EPERM;
-}
-
-static int empty_dir_setxattr(struct dentry *dentry, const char *name,
-			      const void *value, size_t size, int flags)
-{
-	return -EOPNOTSUPP;
-}
-
-static ssize_t empty_dir_getxattr(struct dentry *dentry, const char *name,
-				  void *value, size_t size)
-{
-	return -EOPNOTSUPP;
-}
-
-static int empty_dir_removexattr(struct dentry *dentry, const char *name)
-{
-	return -EOPNOTSUPP;
-}
-
-static ssize_t empty_dir_listxattr(struct dentry *dentry, char *list, size_t size)
-{
-	return -EOPNOTSUPP;
-}
-
-static const struct inode_operations empty_dir_inode_operations = {
-	.lookup		= empty_dir_lookup,
-	.permission	= generic_permission,
-	.setattr	= empty_dir_setattr,
-	.getattr	= empty_dir_getattr,
-	.setxattr	= empty_dir_setxattr,
-	.getxattr	= empty_dir_getxattr,
-	.removexattr	= empty_dir_removexattr,
-	.listxattr	= empty_dir_listxattr,
-};
-
-static loff_t empty_dir_llseek(struct file *file, loff_t offset, int whence)
-{
-	/* An empty directory has two entries . and .. at offsets 0 and 1 */
-	return generic_file_llseek_size(file, offset, whence, 2, 2);
-}
-
-static int empty_dir_readdir(struct file *file, struct dir_context *ctx)
-{
-	dir_emit_dots(file, ctx);
-	return 0;
-}
-
-static const struct file_operations empty_dir_operations = {
-	.llseek		= empty_dir_llseek,
-	.read		= generic_read_dir,
-	.iterate	= empty_dir_readdir,
-	.fsync		= noop_fsync,
-};
-
-
-void make_empty_dir_inode(struct inode *inode)
-{
-	set_nlink(inode, 2);
-	inode->i_mode = S_IFDIR | S_IRUGO | S_IXUGO;
-	inode->i_uid = GLOBAL_ROOT_UID;
-	inode->i_gid = GLOBAL_ROOT_GID;
-	inode->i_rdev = 0;
-	inode->i_size = 0;
-	inode->i_blkbits = PAGE_SHIFT;
-	inode->i_blocks = 0;
-
-	inode->i_op = &empty_dir_inode_operations;
-	inode->i_fop = &empty_dir_operations;
-}
-
-bool is_empty_dir_inode(struct inode *inode)
-{
-	return (inode->i_fop == &empty_dir_operations) &&
-		(inode->i_op == &empty_dir_inode_operations);
-}

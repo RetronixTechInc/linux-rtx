@@ -66,6 +66,7 @@ struct reada_extctl {
 struct reada_extent {
 	u64			logical;
 	struct btrfs_key	top;
+	u32			blocksize;
 	int			err;
 	struct list_head	extctl;
 	int 			refcnt;
@@ -346,8 +347,9 @@ static struct reada_extent *reada_find_extent(struct btrfs_root *root,
 	if (!re)
 		return NULL;
 
-	blocksize = root->nodesize;
+	blocksize = btrfs_level_size(root, level);
 	re->logical = logical;
+	re->blocksize = blocksize;
 	re->top = *top;
 	INIT_LIST_HEAD(&re->extctl);
 	spin_lock_init(&re->lock);
@@ -426,13 +428,8 @@ static struct reada_extent *reada_find_extent(struct btrfs_root *root,
 			continue;
 		}
 		if (!dev->bdev) {
-			/*
-			 * cannot read ahead on missing device, but for RAID5/6,
-			 * REQ_GET_READ_MIRRORS return 1. So don't skip missing
-			 * device for such case.
-			 */
-			if (nzones > 1)
-				continue;
+			/* cannot read ahead on missing device */
+			continue;
 		}
 		if (dev_replace_is_ongoing &&
 		    dev == fs_info->dev_replace.tgtdev) {
@@ -461,7 +458,7 @@ static struct reada_extent *reada_find_extent(struct btrfs_root *root,
 	spin_unlock(&fs_info->reada_lock);
 	btrfs_dev_replace_unlock(&fs_info->dev_replace);
 
-	btrfs_put_bbio(bbio);
+	kfree(bbio);
 	return re;
 
 error:
@@ -486,7 +483,7 @@ error:
 		kref_put(&zone->refcnt, reada_zone_release);
 		spin_unlock(&fs_info->reada_lock);
 	}
-	btrfs_put_bbio(bbio);
+	kfree(bbio);
 	kfree(re);
 	return re_exist;
 }
@@ -658,6 +655,7 @@ static int reada_start_machine_dev(struct btrfs_fs_info *fs_info,
 	int mirror_num = 0;
 	struct extent_buffer *eb = NULL;
 	u64 logical;
+	u32 blocksize;
 	int ret;
 	int i;
 	int need_kick = 0;
@@ -691,7 +689,7 @@ static int reada_start_machine_dev(struct btrfs_fs_info *fs_info,
 		spin_unlock(&fs_info->reada_lock);
 		return 0;
 	}
-	dev->reada_next = re->logical + fs_info->tree_root->nodesize;
+	dev->reada_next = re->logical + re->blocksize;
 	re->refcnt++;
 
 	spin_unlock(&fs_info->reada_lock);
@@ -706,6 +704,7 @@ static int reada_start_machine_dev(struct btrfs_fs_info *fs_info,
 		}
 	}
 	logical = re->logical;
+	blocksize = re->blocksize;
 
 	spin_lock(&re->lock);
 	if (re->scheduled_for == NULL) {
@@ -720,8 +719,8 @@ static int reada_start_machine_dev(struct btrfs_fs_info *fs_info,
 		return 0;
 
 	atomic_inc(&dev->reada_in_flight);
-	ret = reada_tree_block_flagged(fs_info->extent_root, logical,
-			mirror_num, &eb);
+	ret = reada_tree_block_flagged(fs_info->extent_root, logical, blocksize,
+			 mirror_num, &eb);
 	if (ret)
 		__readahead_hook(fs_info->extent_root, NULL, logical, ret);
 	else if (eb)
@@ -794,11 +793,10 @@ static void reada_start_machine(struct btrfs_fs_info *fs_info)
 		/* FIXME we cannot handle this properly right now */
 		BUG();
 	}
-	btrfs_init_work(&rmw->work, btrfs_readahead_helper,
-			reada_start_machine_worker, NULL, NULL);
+	rmw->work.func = reada_start_machine_worker;
 	rmw->fs_info = fs_info;
 
-	btrfs_queue_work(fs_info->readahead_workers, &rmw->work);
+	btrfs_queue_worker(&fs_info->readahead_workers, &rmw->work);
 }
 
 #ifdef DEBUG
@@ -847,7 +845,7 @@ static void dump_devs(struct btrfs_fs_info *fs_info, int all)
 				break;
 			printk(KERN_DEBUG
 				"  re: logical %llu size %u empty %d for %lld",
-				re->logical, fs_info->tree_root->nodesize,
+				re->logical, re->blocksize,
 				list_empty(&re->extctl), re->scheduled_for ?
 				re->scheduled_for->devid : -1);
 
@@ -882,8 +880,7 @@ static void dump_devs(struct btrfs_fs_info *fs_info, int all)
 		}
 		printk(KERN_DEBUG
 			"re: logical %llu size %u list empty %d for %lld",
-			re->logical, fs_info->tree_root->nodesize,
-			list_empty(&re->extctl),
+			re->logical, re->blocksize, list_empty(&re->extctl),
 			re->scheduled_for ? re->scheduled_for->devid : -1);
 		for (i = 0; i < re->nzones; ++i) {
 			printk(KERN_CONT " zone %llu-%llu devs",

@@ -2664,6 +2664,7 @@ static struct platform_driver sbmac_driver = {
 	.remove = __exit_p(sbmac_remove),
 	.driver = {
 		.name = sbmac_string,
+		.owner  = THIS_MODULE,
 	},
 };
 

@@ -36,4 +36,3 @@ batman-adv-y += send.o
 batman-adv-y += soft-interface.o
 batman-adv-y += sysfs.o
 batman-adv-y += translation-table.o
-batman-adv-$(CONFIG_BATMAN_ADV_MCAST) += multicast.o

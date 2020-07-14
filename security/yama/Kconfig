@@ -1,6 +1,8 @@
 config SECURITY_YAMA
 	bool "Yama support"
 	depends on SECURITY
+	select SECURITYFS
+	select SECURITY_PATH
 	default n
 	help
 	  This selects Yama, which extends DAC support with additional

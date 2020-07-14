@@ -57,7 +57,6 @@ static int bnep_sock_ioctl(struct socket *sock, unsigned int cmd, unsigned long 
 	struct bnep_conninfo ci;
 	struct socket *nsock;
 	void __user *argp = (void __user *)arg;
-	__u32 supp_feat = BIT(BNEP_SETUP_RESPONSE);
 	int err;
 
 	BT_DBG("cmd %x arg %lx", cmd, arg);
@@ -120,12 +119,6 @@ static int bnep_sock_ioctl(struct socket *sock, unsigned int cmd, unsigned long 
 			return -EFAULT;
 
 		return err;
-
-	case BNEPGETSUPPFEAT:
-		if (copy_to_user(argp, &supp_feat, sizeof(supp_feat)))
-			return -EFAULT;
-
-		return 0;
 
 	default:
 		return -EINVAL;

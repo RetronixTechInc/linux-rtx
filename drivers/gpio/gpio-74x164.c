@@ -170,11 +170,13 @@ exit_destroy:
 static int gen_74x164_remove(struct spi_device *spi)
 {
 	struct gen_74x164_chip *chip = spi_get_drvdata(spi);
+	int ret;
 
-	gpiochip_remove(&chip->gpio_chip);
-	mutex_destroy(&chip->lock);
+	ret = gpiochip_remove(&chip->gpio_chip);
+	if (!ret)
+		mutex_destroy(&chip->lock);
 
-	return 0;
+	return ret;
 }
 
 static const struct of_device_id gen_74x164_dt_ids[] = {

@@ -370,30 +370,6 @@ static struct acpi_prt_entry *acpi_pci_irq_lookup(struct pci_dev *dev, int pin)
 	return NULL;
 }
 
-#if IS_ENABLED(CONFIG_ISA) || IS_ENABLED(CONFIG_EISA)
-static int acpi_isa_register_gsi(struct pci_dev *dev)
-{
-	u32 dev_gsi;
-
-	/* Interrupt Line values above 0xF are forbidden */
-	if (dev->irq > 0 && (dev->irq <= 0xF) &&
-	    (acpi_isa_irq_to_gsi(dev->irq, &dev_gsi) == 0)) {
-		dev_warn(&dev->dev, "PCI INT %c: no GSI - using ISA IRQ %d\n",
-			 pin_name(dev->pin), dev->irq);
-		acpi_register_gsi(&dev->dev, dev_gsi,
-				  ACPI_LEVEL_SENSITIVE,
-				  ACPI_ACTIVE_LOW);
-		return 0;
-	}
-	return -EINVAL;
-}
-#else
-static inline int acpi_isa_register_gsi(struct pci_dev *dev)
-{
-	return -ENODEV;
-}
-#endif
-
 int acpi_pci_irq_enable(struct pci_dev *dev)
 {
 	struct acpi_prt_entry *entry;
@@ -412,9 +388,6 @@ int acpi_pci_irq_enable(struct pci_dev *dev)
 				  pci_name(dev)));
 		return 0;
 	}
-
-	if (dev->irq_managed && dev->irq > 0)
-		return 0;
 
 	entry = acpi_pci_irq_lookup(dev, pin);
 	if (!entry) {
@@ -443,9 +416,19 @@ int acpi_pci_irq_enable(struct pci_dev *dev)
 	 * driver reported one, then use it. Exit in any case.
 	 */
 	if (gsi < 0) {
-		if (acpi_isa_register_gsi(dev))
+		u32 dev_gsi;
+		/* Interrupt Line values above 0xF are forbidden */
+		if (dev->irq > 0 && (dev->irq <= 0xF) &&
+		    (acpi_isa_irq_to_gsi(dev->irq, &dev_gsi) == 0)) {
+			dev_warn(&dev->dev, "PCI INT %c: no GSI - using ISA IRQ %d\n",
+				 pin_name(pin), dev->irq);
+			acpi_register_gsi(&dev->dev, dev_gsi,
+					  ACPI_LEVEL_SENSITIVE,
+					  ACPI_ACTIVE_LOW);
+		} else {
 			dev_warn(&dev->dev, "PCI INT %c: no GSI\n",
 				 pin_name(pin));
+		}
 
 		kfree(entry);
 		return 0;
@@ -459,7 +442,6 @@ int acpi_pci_irq_enable(struct pci_dev *dev)
 		return rc;
 	}
 	dev->irq = rc;
-	dev->irq_managed = 1;
 
 	if (link)
 		snprintf(link_desc, sizeof(link_desc), " -> Link[%s]", link);
@@ -482,16 +464,8 @@ void acpi_pci_irq_disable(struct pci_dev *dev)
 	u8 pin;
 
 	pin = dev->pin;
-	if (!pin || !dev->irq_managed || dev->irq <= 0)
+	if (!pin)
 		return;
-
-	/* Keep IOAPIC pin configuration when suspending */
-	if (dev->dev.power.is_prepared)
-		return;
-#ifdef	CONFIG_PM
-	if (dev->dev.power.runtime_status == RPM_SUSPENDING)
-		return;
-#endif
 
 	entry = acpi_pci_irq_lookup(dev, pin);
 	if (!entry)
@@ -510,8 +484,5 @@ void acpi_pci_irq_disable(struct pci_dev *dev)
 	 */
 
 	dev_dbg(&dev->dev, "PCI INT %c disabled\n", pin_name(pin));
-	if (gsi >= 0) {
-		acpi_unregister_gsi(gsi);
-		dev->irq_managed = 0;
-	}
+	acpi_unregister_gsi(gsi);
 }

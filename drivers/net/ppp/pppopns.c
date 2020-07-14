@@ -169,7 +169,7 @@ drop:
 	return NET_RX_DROP;
 }
 
-static void pppopns_recv(struct sock *sk_raw)
+static void pppopns_recv(struct sock *sk_raw, int length)
 {
 	struct sk_buff *skb;
 	while ((skb = skb_dequeue(&sk_raw->sk_receive_queue))) {
@@ -193,12 +193,8 @@ static void pppopns_xmit_core(struct work_struct *delivery_work)
 			.msg_iov = (struct iovec *)&iov,
 			.msg_iovlen = 1,
 			.msg_flags = MSG_NOSIGNAL | MSG_DONTWAIT,
-			.msg_iter.count = skb->len,
-			.msg_iter.kvec = &iov,
 		};
-		int ret = sk_raw->sk_prot->sendmsg(sk_raw, &msg, skb->len);
-		if (ret < 0)
-			pr_err("pppopns cannot sendmsg to raw!\n");
+		sk_raw->sk_prot->sendmsg(NULL, sk_raw, &msg, skb->len);
 		kfree_skb(skb);
 	}
 	set_fs(old_fs);

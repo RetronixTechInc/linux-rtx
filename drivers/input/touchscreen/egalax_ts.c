@@ -70,8 +70,8 @@ struct egalax_ts {
 	struct i2c_client		*client;
 	struct input_dev		*input_dev;
 	u32				finger_mask;
-	int				touch_no_wake;
 	struct finger_info		fingers[MAX_SUPPORT_POINTS];
+	bool				wakeup;
 };
 
 static void report_input_data(struct egalax_ts *ts)
@@ -215,14 +215,25 @@ static int egalax_firmware_version(struct i2c_client *client)
 	return 0;
 }
 
-
 static int egalax_ts_probe(struct i2c_client *client,
 				       const struct i2c_device_id *id)
 {
 	struct egalax_ts *ts;
 	struct input_dev *input_dev;
-	int ret;
 	int error;
+
+	/* controller may be in sleep, wake it up. */
+	error = egalax_wake_up_device(client);
+	if (error) {
+		dev_err(&client->dev, "Failed to wake up the controller\n");
+		return error;
+	}
+
+	error = egalax_firmware_version(client);
+	if (error < 0) {
+		dev_err(&client->dev, "Failed to read firmware version\n");
+		return error;
+	}
 
 	ts = kzalloc(sizeof(struct egalax_ts), GFP_KERNEL);
 	if (!ts) {
@@ -239,22 +250,7 @@ static int egalax_ts_probe(struct i2c_client *client,
 
 	ts->client = client;
 	ts->input_dev = input_dev;
-
-	/* controller may be in sleep, wake it up. */
-	error = egalax_wake_up_device(client);
-	if (error) {
-		dev_err(&client->dev, "Failed to wake up, disable suspend,"
-				"otherwise it can not wake up\n");
-		ts->touch_no_wake = true;
-	}
-	msleep(10);
-
-	ret = egalax_firmware_version(client);
-	if (ret < 0) {
-		dev_err(&client->dev, "Failed to read firmware version\n");
-		error = -EIO;
-		goto err_free_dev;
-	}
+	ts->wakeup = of_property_read_bool(client->dev.of_node, "linux,wakeup");
 
 	input_dev->name = "eGalax Touch Screen";
 	input_dev->id.bustype = BUS_I2C;
@@ -287,6 +283,11 @@ static int egalax_ts_probe(struct i2c_client *client,
 		goto err_free_irq;
 
 	i2c_set_clientdata(client, ts);
+
+	error = device_init_wakeup(&client->dev, ts->wakeup);
+	if (error < 0)
+		dev_err(&client->dev, "Failed to register as wakeup source\n");
+
 	return 0;
 
 err_free_irq:
@@ -302,6 +303,7 @@ err_free_ts:
 static int egalax_ts_remove(struct i2c_client *client)
 {
 	struct egalax_ts *ts = i2c_get_clientdata(client);
+	device_init_wakeup(&client->dev, false);
 	free_irq(client->irq, ts);
 	input_free_device(ts->input_dev);
 	input_unregister_device(ts->input_dev);
@@ -316,39 +318,41 @@ static const struct i2c_device_id egalax_ts_id[] = {
 };
 MODULE_DEVICE_TABLE(i2c, egalax_ts_id);
 
-static int __maybe_unused egalax_ts_suspend(struct device *dev)
+#ifdef CONFIG_PM_SLEEP
+static int egalax_ts_suspend(struct device *dev)
 {
     int ret;
 	static const u8 suspend_cmd[MAX_I2C_DATA_LEN] = {
 		0x3, 0x6, 0xa, 0x3, 0x36, 0x3f, 0x2, 0, 0, 0
 	};
 	struct i2c_client *client = to_i2c_client(dev);
-	struct egalax_ts *ts = i2c_get_clientdata(client);
 
-	/* If can not wake up, not suspend. */
-	if (ts->touch_no_wake) {
-		dev_info(&client->dev,
-				"not suspend because unable to wake up device\n");
+	if (device_may_wakeup(&client->dev)) {
+		dev_info(&client->dev, "skip suspend as wakeup source\n");
+		enable_irq_wake(client->irq);
 		return 0;
 	}
+
 	ret = i2c_master_send(client, suspend_cmd, MAX_I2C_DATA_LEN);
 	return ret > 0 ? 0 : ret;
 }
 
-static int __maybe_unused egalax_ts_resume(struct device *dev)
+static int egalax_ts_resume(struct device *dev)
 {
 	struct i2c_client *client = to_i2c_client(dev);
-	struct egalax_ts *ts = i2c_get_clientdata(client);
 
-	/* If not wake up, don't needs resume. */
-	if (ts->touch_no_wake)
+	if (device_may_wakeup(&client->dev)) {
+		disable_irq_wake(client->irq);
 		return 0;
+	}
+
 	return egalax_wake_up_device(client);
 }
-
 static SIMPLE_DEV_PM_OPS(egalax_ts_pm_ops, egalax_ts_suspend, egalax_ts_resume);
+#endif
 
-static const struct of_device_id egalax_ts_dt_ids[] = {
+
+static struct of_device_id egalax_ts_dt_ids[] = {
 	{ .compatible = "eeti,egalax_ts" },
 	{ /* sentinel */ }
 };
@@ -357,6 +361,9 @@ static struct i2c_driver egalax_ts_driver = {
 	.driver = {
 		.name	= "egalax_ts",
 		.owner	= THIS_MODULE,
+#ifdef CONFIG_PM_SLEEP
+		.pm	= &egalax_ts_pm_ops,
+#endif
 		.of_match_table	= of_match_ptr(egalax_ts_dt_ids),
 	},
 	.id_table	= egalax_ts_id,

@@ -141,6 +141,7 @@ MODULE_DEVICE_TABLE(platform, bfin_eval_adav80x_ids);
 static struct platform_driver bfin_eval_adav80x_driver = {
 	.driver = {
 		.name = "bfin-eval-adav80x",
+		.owner = THIS_MODULE,
 		.pm = &snd_soc_pm_ops,
 	},
 	.probe = bfin_eval_adav80x_probe,

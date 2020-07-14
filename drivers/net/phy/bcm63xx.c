@@ -100,7 +100,20 @@ static struct phy_driver bcm63xx_driver[] = {
 	.driver		= { .owner = THIS_MODULE },
 } };
 
-module_phy_driver(bcm63xx_driver);
+static int __init bcm63xx_phy_init(void)
+{
+	return phy_drivers_register(bcm63xx_driver,
+		ARRAY_SIZE(bcm63xx_driver));
+}
+
+static void __exit bcm63xx_phy_exit(void)
+{
+	phy_drivers_unregister(bcm63xx_driver,
+		ARRAY_SIZE(bcm63xx_driver));
+}
+
+module_init(bcm63xx_phy_init);
+module_exit(bcm63xx_phy_exit);
 
 static struct mdio_device_id __maybe_unused bcm63xx_tbl[] = {
 	{ 0x00406000, 0xfffffc00 },

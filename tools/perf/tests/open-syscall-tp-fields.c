@@ -3,7 +3,6 @@
 #include "evsel.h"
 #include "thread_map.h"
 #include "tests.h"
-#include "debug.h"
 
 int test__syscall_open_tp_fields(void)
 {
@@ -22,7 +21,6 @@ int test__syscall_open_tp_fields(void)
 	struct perf_evlist *evlist = perf_evlist__new();
 	struct perf_evsel *evsel;
 	int err = -1, i, nr_events = 0, nr_polls = 0;
-	char sbuf[STRERR_BUFSIZE];
 
 	if (evlist == NULL) {
 		pr_debug("%s: perf_evlist__new\n", __func__);
@@ -49,15 +47,13 @@ int test__syscall_open_tp_fields(void)
 
 	err = perf_evlist__open(evlist);
 	if (err < 0) {
-		pr_debug("perf_evlist__open: %s\n",
-			 strerror_r(errno, sbuf, sizeof(sbuf)));
+		pr_debug("perf_evlist__open: %s\n", strerror(errno));
 		goto out_delete_evlist;
 	}
 
 	err = perf_evlist__mmap(evlist, UINT_MAX, false);
 	if (err < 0) {
-		pr_debug("perf_evlist__mmap: %s\n",
-			 strerror_r(errno, sbuf, sizeof(sbuf)));
+		pr_debug("perf_evlist__mmap: %s\n", strerror(errno));
 		goto out_delete_evlist;
 	}
 
@@ -105,7 +101,7 @@ int test__syscall_open_tp_fields(void)
 		}
 
 		if (nr_events == before)
-			perf_evlist__poll(evlist, 10);
+			poll(evlist->pollfd, evlist->nr_fds, 10);
 
 		if (++nr_polls > 5) {
 			pr_debug("%s: no events!\n", __func__);

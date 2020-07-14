@@ -32,21 +32,15 @@
 #include <linux/of_fdt.h>
 #include <linux/dma-mapping.h>
 #include <linux/dma-contiguous.h>
-#include <linux/efi.h>
-#include <linux/swiotlb.h>
 
-#include <asm/fixmap.h>
-#include <asm/memory.h>
 #include <asm/sections.h>
 #include <asm/setup.h>
 #include <asm/sizes.h>
 #include <asm/tlb.h>
-#include <asm/alternative.h>
 
 #include "mm.h"
 
 phys_addr_t memstart_addr __read_mostly = 0;
-phys_addr_t arm64_dma_phys_limit __read_mostly;
 
 #ifdef CONFIG_BLK_DEV_INITRD
 static int __init early_initrd(char *p)
@@ -66,17 +60,6 @@ static int __init early_initrd(char *p)
 early_param("initrd", early_initrd);
 #endif
 
-/*
- * Return the maximum physical address for ZONE_DMA (DMA_BIT_MASK(32)). It
- * currently assumes that for memory starting above 4G, 32-bit devices will
- * use a DMA offset.
- */
-static phys_addr_t max_zone_dma_phys(void)
-{
-	phys_addr_t offset = memblock_start_of_DRAM() & GENMASK_ULL(63, 32);
-	return min(offset + (1ULL << 32), memblock_end_of_DRAM());
-}
-
 static void __init zone_sizes_init(unsigned long min, unsigned long max)
 {
 	struct memblock_region *reg;
@@ -87,7 +70,9 @@ static void __init zone_sizes_init(unsigned long min, unsigned long max)
 
 	/* 4GB maximum for 32-bit only capable devices */
 	if (IS_ENABLED(CONFIG_ZONE_DMA)) {
-		max_dma = PFN_DOWN(arm64_dma_phys_limit);
+		unsigned long max_dma_phys =
+			(unsigned long)dma_to_phys(NULL, DMA_BIT_MASK(32) + 1);
+		max_dma = max(min, min(max, max_dma_phys >> PAGE_SHIFT));
 		zone_size[ZONE_DMA] = max_dma - min;
 	}
 	zone_size[ZONE_NORMAL] = max - max_dma;
@@ -117,11 +102,9 @@ static void __init zone_sizes_init(unsigned long min, unsigned long max)
 }
 
 #ifdef CONFIG_HAVE_ARCH_PFN_VALID
-#define PFN_MASK ((1UL << (64 - PAGE_SHIFT)) - 1)
-
 int pfn_valid(unsigned long pfn)
 {
-	return (pfn & PFN_MASK) == pfn && memblock_is_memory(pfn << PAGE_SHIFT);
+	return memblock_is_memory(pfn << PAGE_SHIFT);
 }
 EXPORT_SYMBOL(pfn_valid);
 #endif
@@ -141,26 +124,9 @@ static void arm64_memory_present(void)
 }
 #endif
 
-static phys_addr_t memory_limit = (phys_addr_t)ULLONG_MAX;
-
-/*
- * Limit the memory size that was specified via FDT.
- */
-static int __init early_mem(char *p)
-{
-	if (!p)
-		return 1;
-
-	memory_limit = memparse(p, &p) & PAGE_MASK;
-	pr_notice("Memory limited to %lldMB\n", memory_limit >> 20);
-
-	return 0;
-}
-early_param("mem", early_mem);
-
 void __init arm64_memblock_init(void)
 {
-	memblock_enforce_memory_limit(memory_limit);
+	u64 *reserve_map, base, size;
 
 	/*
 	 * Register the kernel text, kernel data, initrd, and initial
@@ -172,14 +138,27 @@ void __init arm64_memblock_init(void)
 		memblock_reserve(__virt_to_phys(initrd_start), initrd_end - initrd_start);
 #endif
 
-	early_init_fdt_scan_reserved_mem();
+	/* Reserve the dtb region */
+	memblock_reserve(virt_to_phys(initial_boot_params),
+			 be32_to_cpu(initial_boot_params->totalsize));
 
-	/* 4GB maximum for 32-bit only capable devices */
-	if (IS_ENABLED(CONFIG_ZONE_DMA))
-		arm64_dma_phys_limit = max_zone_dma_phys();
-	else
-		arm64_dma_phys_limit = PHYS_MASK + 1;
-	dma_contiguous_reserve(arm64_dma_phys_limit);
+	/*
+	 * Process the reserve map.  This will probably overlap the initrd
+	 * and dtb locations which are already reserved, but overlapping
+	 * doesn't hurt anything
+	 */
+	reserve_map = ((void*)initial_boot_params) +
+			be32_to_cpu(initial_boot_params->off_mem_rsvmap);
+	while (1) {
+		base = be64_to_cpup(reserve_map++);
+		size = be64_to_cpup(reserve_map++);
+		if (!size)
+			break;
+		memblock_reserve(base, size);
+	}
+
+	early_init_fdt_scan_reserved_mem();
+	dma_contiguous_reserve(0);
 
 	memblock_allow_resize();
 	memblock_dump_all();
@@ -191,8 +170,6 @@ void __init bootmem_init(void)
 
 	min = PFN_UP(memblock_start_of_DRAM());
 	max = PFN_DOWN(memblock_end_of_DRAM());
-
-	early_memtest(min << PAGE_SHIFT, max << PAGE_SHIFT);
 
 	/*
 	 * Sparsemem tries to allocate bootmem in memory_present(), so must be
@@ -282,9 +259,7 @@ static void __init free_unused_memmap(void)
  */
 void __init mem_init(void)
 {
-	swiotlb_init(1);
-
-	set_max_mapnr(pfn_to_page(max_pfn) - mem_map);
+	max_mapnr   = pfn_to_page(max_pfn + PHYS_PFN_OFFSET) - mem_map;
 
 #ifndef CONFIG_SPARSEMEM_VMEMMAP
 	free_unused_memmap();
@@ -296,33 +271,26 @@ void __init mem_init(void)
 
 #define MLK(b, t) b, t, ((t) - (b)) >> 10
 #define MLM(b, t) b, t, ((t) - (b)) >> 20
-#define MLG(b, t) b, t, ((t) - (b)) >> 30
 #define MLK_ROUNDUP(b, t) b, t, DIV_ROUND_UP(((t) - (b)), SZ_1K)
 
 	pr_notice("Virtual kernel memory layout:\n"
-		  "    vmalloc : 0x%16lx - 0x%16lx   (%6ld GB)\n"
+		  "    vmalloc : 0x%16lx - 0x%16lx   (%6ld MB)\n"
 #ifdef CONFIG_SPARSEMEM_VMEMMAP
-		  "    vmemmap : 0x%16lx - 0x%16lx   (%6ld GB maximum)\n"
-		  "              0x%16lx - 0x%16lx   (%6ld MB actual)\n"
+		  "    vmemmap : 0x%16lx - 0x%16lx   (%6ld MB)\n"
 #endif
-		  "    fixed   : 0x%16lx - 0x%16lx   (%6ld KB)\n"
-		  "    PCI I/O : 0x%16lx - 0x%16lx   (%6ld MB)\n"
 		  "    modules : 0x%16lx - 0x%16lx   (%6ld MB)\n"
 		  "    memory  : 0x%16lx - 0x%16lx   (%6ld MB)\n"
-		  "      .init : 0x%p" " - 0x%p" "   (%6ld KB)\n"
-		  "      .text : 0x%p" " - 0x%p" "   (%6ld KB)\n"
-		  "      .data : 0x%p" " - 0x%p" "   (%6ld KB)\n",
-		  MLG(VMALLOC_START, VMALLOC_END),
+		  "      .init : 0x%p" " - 0x%p" "   (%6ld kB)\n"
+		  "      .text : 0x%p" " - 0x%p" "   (%6ld kB)\n"
+		  "      .data : 0x%p" " - 0x%p" "   (%6ld kB)\n",
+		  MLM(VMALLOC_START, VMALLOC_END),
 #ifdef CONFIG_SPARSEMEM_VMEMMAP
-		  MLG((unsigned long)vmemmap,
-		      (unsigned long)vmemmap + VMEMMAP_SIZE),
 		  MLM((unsigned long)virt_to_page(PAGE_OFFSET),
 		      (unsigned long)virt_to_page(high_memory)),
 #endif
-		  MLK(FIXADDR_START, FIXADDR_TOP),
-		  MLM(PCI_IO_START, PCI_IO_END),
 		  MLM(MODULES_VADDR, MODULES_END),
 		  MLM(PAGE_OFFSET, (unsigned long)high_memory),
+
 		  MLK_ROUNDUP(__init_begin, __init_end),
 		  MLK_ROUNDUP(_text, _etext),
 		  MLK_ROUNDUP(_sdata, _edata));
@@ -353,9 +321,7 @@ void __init mem_init(void)
 
 void free_initmem(void)
 {
-	fixup_init();
 	free_initmem_default(0);
-	free_alternatives_memory();
 }
 
 #ifdef CONFIG_BLK_DEV_INITRD

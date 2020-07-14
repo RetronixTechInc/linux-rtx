@@ -74,10 +74,6 @@ static bool turbo_mode = true;
 module_param(turbo_mode, bool, 0644);
 MODULE_PARM_DESC(turbo_mode, "Enable multiple frames per Rx transaction");
 
-static unsigned char macaddr[ETH_ALEN];
-module_param_array(macaddr, byte, NULL, 0);
-MODULE_PARM_DESC(macaddr, "SMSC95XX USB Ethernet MAC address");
-
 static int __must_check __smsc95xx_read_reg(struct usbnet *dev, u32 index,
 					    u32 *data, int in_pm)
 {
@@ -769,19 +765,6 @@ static int smsc95xx_ioctl(struct net_device *netdev, struct ifreq *rq, int cmd)
 
 static void smsc95xx_init_mac_address(struct usbnet *dev)
 {
-	unsigned char *iap ;
-	/*
-	 * try to get mac address in following order:
-	 *
-	 * 1) module parameter via kernel command line in form
-	 *    smsc_mac=00::04:9f:01:30:e0
-	 */
-	iap = macaddr;
-	if (is_valid_ether_addr(iap)) {
-		memcpy(dev->net->dev_addr, iap, ETH_ALEN);
-		return ;
-	}
-	
 	/* try reading mac address from EEPROM */
 	if (smsc95xx_read_eeprom(dev, EEPROM_MAC_OFFSET, ETH_ALEN,
 			dev->net->dev_addr) == 0) {
@@ -1687,14 +1670,12 @@ done:
 static int smsc95xx_resume(struct usb_interface *intf)
 {
 	struct usbnet *dev = usb_get_intfdata(intf);
-	struct smsc95xx_priv *pdata;
-	u8 suspend_flags;
+	struct smsc95xx_priv *pdata = (struct smsc95xx_priv *)(dev->data[0]);
+	u8 suspend_flags = pdata->suspend_flags;
 	int ret;
 	u32 val;
 
 	BUG_ON(!dev);
-	pdata = (struct smsc95xx_priv *)(dev->data[0]);
-	suspend_flags = pdata->suspend_flags;
 
 	netdev_dbg(dev->net, "resume suspend_flags=0x%02x\n", suspend_flags);
 
@@ -1731,18 +1712,6 @@ static int smsc95xx_resume(struct usb_interface *intf)
 		netdev_warn(dev->net, "usbnet_resume error\n");
 
 	return ret;
-}
-
-static int smsc95xx_reset_resume(struct usb_interface *intf)
-{
-	struct usbnet *dev = usb_get_intfdata(intf);
-	int ret;
-
-	ret = smsc95xx_reset(dev);
-	if (ret < 0)
-		return ret;
-
-	return smsc95xx_resume(intf);
 }
 
 static void smsc95xx_rx_csum_offload(struct sk_buff *skb)
@@ -2035,34 +2004,11 @@ static struct usb_driver smsc95xx_driver = {
 	.probe		= usbnet_probe,
 	.suspend	= smsc95xx_suspend,
 	.resume		= smsc95xx_resume,
-	.reset_resume	= smsc95xx_reset_resume,
+	.reset_resume	= smsc95xx_resume,
 	.disconnect	= usbnet_disconnect,
 	.disable_hub_initiated_lpm = 1,
 	.supports_autosuspend = 1,
 };
-
-static int smsc95xx_mac_addr_setup(char *mac_addr)
-{
-	char *ptr, *p = mac_addr;
-	unsigned long tmp;
-	int i = 0, ret = 0;
-	while (p && (*p) && i < ETH_ALEN) {
-		ptr = strchr(p, ':');
-		if (ptr)
-			*ptr++ = '\0';
-		if (strlen(p)) {
-			ret = kstrtol(p, 16, &tmp);
-			if (ret < 0 || tmp > 0xff)
-				break;
-			macaddr[i++] = tmp;
-		}
-		p = ptr;
-	}
-
-	return 0;
-}
-
-__setup("smsc_mac=", smsc95xx_mac_addr_setup);
 
 module_usb_driver(smsc95xx_driver);
 

@@ -9,10 +9,7 @@
  * it under the terms of the GNU General Public License version 2 as
  * published by the Free Software Foundation.
  */
-
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
-
-#include <linux/kernel.h>
 #include <linux/capability.h>
 #include <linux/in.h>
 #include <linux/skbuff.h>
@@ -237,7 +234,7 @@ static struct nf_loginfo trace_loginfo = {
 	.type = NF_LOG_TYPE_LOG,
 	.u = {
 		.log = {
-			.level = LOGLEVEL_WARNING,
+			.level = 4,
 			.logflags = NF_LOG_MASK,
 		},
 	},
@@ -301,9 +298,9 @@ static void trace_packet(const struct sk_buff *skb,
 		    &chainname, &comment, &rulenum) != 0)
 			break;
 
-	nf_log_trace(net, AF_INET6, hook, skb, in, out, &trace_loginfo,
-		     "TRACE: %s:%s:%s:%u ",
-		     tablename, chainname, comment, rulenum);
+	nf_log_packet(net, AF_INET6, hook, skb, in, out, &trace_loginfo,
+		      "TRACE: %s:%s:%s:%u ",
+		      tablename, chainname, comment, rulenum);
 }
 #endif
 
@@ -317,7 +314,8 @@ ip6t_next_entry(const struct ip6t_entry *entry)
 unsigned int
 ip6t_do_table(struct sk_buff *skb,
 	      unsigned int hook,
-	      const struct nf_hook_state *state,
+	      const struct net_device *in,
+	      const struct net_device *out,
 	      struct xt_table *table)
 {
 	static const char nulldevname[IFNAMSIZ] __attribute__((aligned(sizeof(long))));
@@ -332,8 +330,8 @@ ip6t_do_table(struct sk_buff *skb,
 	unsigned int addend;
 
 	/* Initialization */
-	indev = state->in ? state->in->name : nulldevname;
-	outdev = state->out ? state->out->name : nulldevname;
+	indev = in ? in->name : nulldevname;
+	outdev = out ? out->name : nulldevname;
 	/* We handle fragments by dealing with the first fragment as
 	 * if it was a normal packet.  All other fragments are treated
 	 * normally, except that they will NEVER match rules that ask
@@ -341,8 +339,8 @@ ip6t_do_table(struct sk_buff *skb,
 	 * rule is also a fragment-specific rule, non-fragments won't
 	 * match it. */
 	acpar.hotdrop = false;
-	acpar.in      = state->in;
-	acpar.out     = state->out;
+	acpar.in      = in;
+	acpar.out     = out;
 	acpar.family  = NFPROTO_IPV6;
 	acpar.hooknum = hook;
 
@@ -392,7 +390,7 @@ ip6t_do_table(struct sk_buff *skb,
 #if IS_ENABLED(CONFIG_NETFILTER_XT_TARGET_TRACE)
 		/* The packet is traced: log it */
 		if (unlikely(skb->nf_trace))
-			trace_packet(skb, hook, state->in, state->out,
+			trace_packet(skb, hook, in, out,
 				     table->name, private, e);
 #endif
 		/* Standard target? */
@@ -1275,9 +1273,6 @@ do_replace(struct net *net, const void __user *user, unsigned int len)
 	/* overflow check */
 	if (tmp.num_counters >= INT_MAX / sizeof(struct xt_counters))
 		return -ENOMEM;
-	if (tmp.num_counters == 0)
-		return -EINVAL;
-
 	tmp.name[sizeof(tmp.name)-1] = 0;
 
 	newinfo = xt_alloc_table_info(tmp.size);
@@ -1825,9 +1820,6 @@ compat_do_replace(struct net *net, void __user *user, unsigned int len)
 		return -ENOMEM;
 	if (tmp.num_counters >= INT_MAX / sizeof(struct xt_counters))
 		return -ENOMEM;
-	if (tmp.num_counters == 0)
-		return -EINVAL;
-
 	tmp.name[sizeof(tmp.name)-1] = 0;
 
 	newinfo = xt_alloc_table_info(tmp.size);

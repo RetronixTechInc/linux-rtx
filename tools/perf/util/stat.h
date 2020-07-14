@@ -1,7 +1,7 @@
 #ifndef __PERF_STATS_H
 #define __PERF_STATS_H
 
-#include <linux/types.h>
+#include "types.h"
 
 struct stats
 {

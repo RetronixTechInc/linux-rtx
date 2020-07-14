@@ -47,6 +47,7 @@
 #include <linux/delay.h>
 #include <linux/device.h>
 #include <linux/dma-mapping.h>
+#include <linux/extcon.h>
 #include <linux/phy/phy.h>
 #include <linux/platform_device.h>
 #include <linux/module.h>
@@ -64,12 +65,12 @@
 #include <linux/of.h>
 #include <linux/phy.h>
 #include <linux/regulator/consumer.h>
-#include <linux/usb/ehci_def.h>
 
 #include "ci.h"
 #include "udc.h"
 #include "bits.h"
 #include "host.h"
+#include "debug.h"
 #include "otg.h"
 #include "otg_fsm.h"
 
@@ -84,7 +85,6 @@ static const u8 ci_regs_nolpm[] = {
 	[OP_USBINTR]		= 0x08U,
 	[OP_DEVICEADDR]		= 0x14U,
 	[OP_ENDPTLISTADDR]	= 0x18U,
-	[OP_TTCTRL]		= 0x1CU,
 	[OP_BURSTSIZE]		= 0x20U,
 	[OP_PORTSC]		= 0x44U,
 	[OP_DEVLC]		= 0x84U,
@@ -108,7 +108,6 @@ static const u8 ci_regs_lpm[] = {
 	[OP_USBINTR]		= 0x08U,
 	[OP_DEVICEADDR]		= 0x14U,
 	[OP_ENDPTLISTADDR]	= 0x18U,
-	[OP_TTCTRL]		= 0x1CU,
 	[OP_BURSTSIZE]		= 0x20U,
 	[OP_PORTSC]		= 0x44U,
 	[OP_DEVLC]		= 0x84U,
@@ -122,7 +121,7 @@ static const u8 ci_regs_lpm[] = {
 	[OP_ENDPTCTRL]		= 0xECU,
 };
 
-static void hw_alloc_regmap(struct ci_hdrc *ci, bool is_lpm)
+static int hw_alloc_regmap(struct ci_hdrc *ci, bool is_lpm)
 {
 	int i;
 
@@ -138,6 +137,7 @@ static void hw_alloc_regmap(struct ci_hdrc *ci, bool is_lpm)
 			 ? ci_regs_lpm[OP_ENDPTCTRL]
 			 : ci_regs_nolpm[OP_ENDPTCTRL]);
 
+	return 0;
 }
 
 static enum ci_revision ci_get_revision(struct ci_hdrc *ci)
@@ -406,55 +406,6 @@ static int ci_usb_phy_init(struct ci_hdrc *ci)
 	return ret;
 }
 
-
-/**
- * ci_platform_configure: do controller configure
- * @ci: the controller
- *
- */
-void ci_platform_configure(struct ci_hdrc *ci)
-{
-	bool is_device_mode, is_host_mode;
-
-	is_device_mode = hw_read(ci, OP_USBMODE, USBMODE_CM) == USBMODE_CM_DC;
-	is_host_mode = hw_read(ci, OP_USBMODE, USBMODE_CM) == USBMODE_CM_HC;
-
-	if (is_device_mode &&
-		(ci->platdata->flags & CI_HDRC_DISABLE_DEVICE_STREAMING))
-		hw_write(ci, OP_USBMODE, USBMODE_CI_SDIS, USBMODE_CI_SDIS);
-
-	if (is_host_mode &&
-		(ci->platdata->flags & CI_HDRC_DISABLE_HOST_STREAMING))
-		hw_write(ci, OP_USBMODE, USBMODE_CI_SDIS, USBMODE_CI_SDIS);
-
-	if (ci->platdata->flags & CI_HDRC_FORCE_FULLSPEED) {
-		if (ci->hw_bank.lpm)
-			hw_write(ci, OP_DEVLC, DEVLC_PFSC, DEVLC_PFSC);
-		else
-			hw_write(ci, OP_PORTSC, PORTSC_PFSC, PORTSC_PFSC);
-	}
-
-	if (ci->platdata->flags & CI_HDRC_SET_NON_ZERO_TTHA)
-		hw_write(ci, OP_TTCTRL, TTCTRL_TTHA_MASK, TTCTRL_TTHA);
-
-	hw_write(ci, OP_USBCMD, 0xff0000, ci->platdata->itc_setting << 16);
-
-	if (ci->platdata->flags & CI_HDRC_OVERRIDE_AHB_BURST)
-		hw_write_id_reg(ci, ID_SBUSCFG, AHBBRST_MASK,
-			ci->platdata->ahb_burst_config);
-
-	/* override burst size, take effect only when ahb_burst_config is 0 */
-	if (!hw_read_id_reg(ci, ID_SBUSCFG, AHBBRST_MASK)) {
-		if (ci->platdata->flags & CI_HDRC_OVERRIDE_TX_BURST)
-			hw_write(ci, OP_BURSTSIZE, TX_BURST_MASK,
-			ci->platdata->tx_burst_size << __ffs(TX_BURST_MASK));
-
-		if (ci->platdata->flags & CI_HDRC_OVERRIDE_RX_BURST)
-			hw_write(ci, OP_BURSTSIZE, RX_BURST_MASK,
-				ci->platdata->rx_burst_size);
-	}
-}
-
 /**
  * hw_controller_reset: do controller reset
  * @ci: the controller
@@ -473,6 +424,32 @@ int hw_controller_reset(struct ci_hdrc *ci)
 	}
 
 	return 0;
+}
+
+/**
+ * ci_hrdc_ahb_config: override default AHB configuration
+ * @ci: the controller
+ */
+void ci_hdrc_ahb_config(struct ci_hdrc *ci)
+{
+	u32 value;
+	u8 ahb_burst;
+
+	/* AHB configuration */
+	if (ci->platdata->flags & CI_HDRC_OVERRIDE_AHB_BURST) {
+		value = ioread32(ci->hw_bank.abs + ID_SBUSCFG);
+		value &= ~SBUSCFG_AHBBRST;
+		value |= ci->platdata->ahbburst_config & SBUSCFG_AHBBRST;
+		iowrite32(value, ci->hw_bank.abs + ID_SBUSCFG);
+	}
+
+	ahb_burst = ioread32(ci->hw_bank.abs + ID_SBUSCFG) & SBUSCFG_AHBBRST;
+
+	/* Change RX/TX burst size */
+	if (ahb_burst == 0 &&
+			ci->platdata->flags & CI_HDRC_OVERRIDE_BURST_LENGTH)
+		hw_write(ci, OP_BURSTSIZE, BURST_BITS,
+				ci->platdata->burst_length & BURST_BITS);
 }
 
 /**
@@ -499,19 +476,34 @@ int hw_device_reset(struct ci_hdrc *ci)
 		ci->platdata->notify_event(ci,
 			CI_HDRC_CONTROLLER_RESET_EVENT);
 
+	if (ci->platdata->flags & CI_HDRC_DISABLE_DEVICE_STREAMING)
+		hw_write(ci, OP_USBMODE, USBMODE_CI_SDIS, USBMODE_CI_SDIS);
+
+	if (ci->platdata->flags & CI_HDRC_FORCE_FULLSPEED) {
+		if (ci->hw_bank.lpm)
+			hw_write(ci, OP_DEVLC, DEVLC_PFSC, DEVLC_PFSC);
+		else
+			hw_write(ci, OP_PORTSC, PORTSC_PFSC, PORTSC_PFSC);
+	}
+
 	/* USBMODE should be configured step by step */
 	hw_write(ci, OP_USBMODE, USBMODE_CM, USBMODE_CM_IDLE);
 	hw_write(ci, OP_USBMODE, USBMODE_CM, USBMODE_CM_DC);
 	/* HW >= 2.3 */
 	hw_write(ci, OP_USBMODE, USBMODE_SLOM, USBMODE_SLOM);
 
+	ci_hdrc_ahb_config(ci);
+	/*
+	 * Set interrupt interval for device mode as 0 (immediately),
+	 * ehci core will set it to 1 (1 Micro-frame) by default for host mode.
+	 */
+	hw_write(ci, OP_USBCMD, 0xff0000, 0);
+
 	if (hw_read(ci, OP_USBMODE, USBMODE_CM) != USBMODE_CM_DC) {
 		pr_err("cannot enter in %s device mode", ci_role(ci)->name);
 		pr_err("lpm = %i", ci->hw_bank.lpm);
 		return -ENODEV;
 	}
-
-	ci_platform_configure(ci);
 
 	return 0;
 }
@@ -604,8 +596,6 @@ static irqreturn_t ci_irq(int irq, void *data)
 static int ci_get_platdata(struct device *dev,
 		struct ci_hdrc_platform_data *platdata)
 {
-	int ret;
-
 	if (!platdata->phy_mode)
 		platdata->phy_mode = of_usb_get_phy_mode(dev->of_node);
 
@@ -635,67 +625,15 @@ static int ci_get_platdata(struct device *dev,
 	}
 
 	if (platdata->dr_mode == USB_DR_MODE_OTG) {
-		/* We can support HNP and SRP of OTG 2.0 */
-		platdata->ci_otg_caps.otg_rev = 0x0200;
+		/* We can support HNP and SRP */
 		platdata->ci_otg_caps.hnp_support = true;
 		platdata->ci_otg_caps.srp_support = true;
-
 		/* Update otg capabilities by DT properties */
-		ret = of_usb_update_otg_caps(dev->of_node,
-					&platdata->ci_otg_caps);
-		if (ret)
-			return ret;
+		of_usb_set_otg_caps(dev->of_node, &platdata->ci_otg_caps);
 	}
 
 	if (of_usb_get_maximum_speed(dev->of_node) == USB_SPEED_FULL)
 		platdata->flags |= CI_HDRC_FORCE_FULLSPEED;
-
-	platdata->itc_setting = 1;
-	if (of_find_property(dev->of_node, "itc-setting", NULL)) {
-		ret = of_property_read_u32(dev->of_node, "itc-setting",
-			&platdata->itc_setting);
-		if (ret) {
-			dev_err(dev,
-				"failed to get itc-setting\n");
-			return ret;
-		}
-	}
-
-	if (of_find_property(dev->of_node, "non-zero-ttctrl-ttha", NULL))
-		platdata->flags |= CI_HDRC_SET_NON_ZERO_TTHA;
-
-	if (of_find_property(dev->of_node, "ahb-burst-config", NULL)) {
-		ret = of_property_read_u32(dev->of_node, "ahb-burst-config",
-			&platdata->ahb_burst_config);
-		if (ret) {
-			dev_err(dev,
-				"failed to get ahb-burst-config\n");
-			return ret;
-		}
-		platdata->flags |= CI_HDRC_OVERRIDE_AHB_BURST;
-	}
-
-	if (of_find_property(dev->of_node, "tx-burst-size-dword", NULL)) {
-		ret = of_property_read_u32(dev->of_node, "tx-burst-size-dword",
-			&platdata->tx_burst_size);
-		if (ret) {
-			dev_err(dev,
-				"failed to get tx-burst-size-dword\n");
-			return ret;
-		}
-		platdata->flags |= CI_HDRC_OVERRIDE_TX_BURST;
-	}
-
-	if (of_find_property(dev->of_node, "rx-burst-size-dword", NULL)) {
-		ret = of_property_read_u32(dev->of_node, "rx-burst-size-dword",
-			&platdata->rx_burst_size);
-		if (ret) {
-			dev_err(dev,
-				"failed to get rx-burst-size-dword\n");
-			return ret;
-		}
-		platdata->flags |= CI_HDRC_OVERRIDE_RX_BURST;
-	}
 
 	if (of_find_property(dev->of_node, "phy-clkgate-delay-us", NULL))
 		of_property_read_u32(dev->of_node, "phy-clkgate-delay-us",
@@ -834,17 +772,22 @@ static enum ci_role ci_get_role(struct ci_hdrc *ci)
 	}
 }
 
+static const char *extcon_cables[] = {
+	"USB-HOST",
+	"USB-GADGET",
+	"USB",
+	NULL,
+};
+
 static void ci_start_new_role(struct ci_hdrc *ci)
 {
 	enum ci_role role = ci_get_role(ci);
 
-	if (ci->role != role) {
+	if (ci->role != role)
 		ci_handle_id_switch(ci);
-	} else if (role == CI_ROLE_GADGET) {
-		if (ci->vbus_active)
-			usb_gadget_vbus_disconnect(&ci->gadget);
+
+	if (role == CI_ROLE_GADGET)
 		ci_handle_vbus_connected(ci);
-	}
 }
 
 static void ci_power_lost_work(struct work_struct *work)
@@ -935,6 +878,17 @@ static int ci_hdrc_probe(struct platform_device *pdev)
 	}
 
 	ci_get_otg_capable(ci);
+	if (ci->is_otg) {
+		ci->extcon.name = dev_name(dev);
+		ci->extcon.supported_cable = extcon_cables;
+		ci->extcon.dev.parent = &pdev->dev;
+		ret = extcon_dev_register(&ci->extcon);
+		if (ret) {
+			dev_err(&pdev->dev, "could not register extcon device: %d\n",
+				ret);
+			return ret;
+		}
+	}
 
 	dr_mode = ci->platdata->dr_mode;
 	/* initialize role(s) before the interrupt is requested */
@@ -965,6 +919,10 @@ static int ci_hdrc_probe(struct platform_device *pdev)
 	}
 
 	ci->role = ci_get_role(ci);
+	if (ci->is_otg) {
+		extcon_set_cable_state_(&ci->extcon, ci->role, 1);
+		extcon_set_cable_state_(&ci->extcon, ci->role ^ 1, 0);
+	}
 	/* only update vbus status for peripheral */
 	if (ci->role == CI_ROLE_GADGET)
 		ci_handle_vbus_connected(ci);
@@ -1005,6 +963,8 @@ static int ci_hdrc_probe(struct platform_device *pdev)
 		return 0;
 
 stop:
+	if (ci->is_otg)
+		extcon_dev_unregister(&ci->extcon);
 	ci_role_destroy(ci);
 deinit_phy:
 	ci_usb_phy_exit(ci);
@@ -1023,6 +983,8 @@ static int ci_hdrc_remove(struct platform_device *pdev)
 	}
 
 	dbg_remove_files(ci);
+	if (ci->is_otg)
+		extcon_dev_unregister(&ci->extcon);
 	ci_role_destroy(ci);
 	ci_hdrc_enter_lpm(ci, true);
 	ci_usb_phy_exit(ci);
@@ -1046,6 +1008,10 @@ static void ci_otg_fsm_suspend_for_srp(struct ci_hdrc *ci)
 /* Handle SRP when wakeup by data pulse */
 static void ci_otg_fsm_wakeup_by_srp(struct ci_hdrc *ci)
 {
+	/*
+	 * if a_idle wakeup by data pulse,
+	 * handle it like normal SRP
+	 */
 	if ((ci->fsm.otg->state == OTG_STATE_A_IDLE) &&
 		(ci->fsm.a_bus_drop == 1) && (ci->fsm.a_bus_req == 0)) {
 		if (!hw_read_otgsc(ci, OTGSC_ID))
@@ -1126,7 +1092,6 @@ static int ci_suspend(struct device *dev)
 	if (device_may_wakeup(dev)) {
 		if (ci_otg_is_fsm_mode(ci))
 			ci_otg_fsm_suspend_for_srp(ci);
-
 		usb_phy_set_wakeup(ci->usb_phy, true);
 		enable_irq_wake(ci->irq);
 	}
@@ -1183,6 +1148,7 @@ static int ci_resume(struct device *dev)
 }
 #endif /* CONFIG_PM_SLEEP */
 
+#ifdef CONFIG_PM_RUNTIME
 static int ci_runtime_suspend(struct device *dev)
 {
 	struct ci_hdrc *ci = dev_get_drvdata(dev);
@@ -1207,6 +1173,7 @@ static int ci_runtime_resume(struct device *dev)
 {
 	return ci_controller_resume(dev);
 }
+#endif /* CONFIG_PM_RUNTIME */
 
 #endif /* CONFIG_PM */
 static const struct dev_pm_ops ci_pm_ops = {
@@ -1220,21 +1187,11 @@ static struct platform_driver ci_hdrc_driver = {
 	.driver	= {
 		.name	= "ci_hdrc",
 		.pm	= &ci_pm_ops,
+		.owner	= THIS_MODULE,
 	},
 };
 
-static int __init ci_hdrc_platform_register(void)
-{
-	ci_hdrc_host_driver_init();
-	return platform_driver_register(&ci_hdrc_driver);
-}
-module_init(ci_hdrc_platform_register);
-
-static void __exit ci_hdrc_platform_unregister(void)
-{
-	platform_driver_unregister(&ci_hdrc_driver);
-}
-module_exit(ci_hdrc_platform_unregister);
+module_platform_driver(ci_hdrc_driver);
 
 MODULE_ALIAS("platform:ci_hdrc");
 MODULE_LICENSE("GPL v2");

@@ -11,40 +11,26 @@
  * option) any later version.
  */
 
-#include <linux/io.h>
 #include <linux/types.h>
 #include <linux/module.h>
+#include <linux/ssb/ssb.h>
 #include <linux/kernel.h>
 #include <linux/string.h>
-#include <linux/mtd/mtd.h>
-#include <linux/bcm47xx_nvram.h>
-
-#define NVRAM_MAGIC			0x48534C46	/* 'FLSH' */
-#define NVRAM_SPACE			0x10000
-#define NVRAM_MAX_GPIO_ENTRIES		32
-#define NVRAM_MAX_GPIO_VALUE_LEN	30
-
-#define FLASH_MIN		0x00020000	/* Minimum flash size */
-
-struct nvram_header {
-	u32 magic;
-	u32 len;
-	u32 crc_ver_init;	/* 0:7 crc, 8:15 ver, 16:31 sdram_init */
-	u32 config_refresh;	/* 0:15 sdram_config, 16:31 sdram_refresh */
-	u32 config_ncdl;	/* ncdl values for memc */
-};
+#include <asm/addrspace.h>
+#include <bcm47xx_nvram.h>
+#include <asm/mach-bcm47xx/bcm47xx.h>
 
 static char nvram_buf[NVRAM_SPACE];
 static const u32 nvram_sizes[] = {0x8000, 0xF000, 0x10000};
 
-static u32 find_nvram_size(void __iomem *end)
+static u32 find_nvram_size(u32 end)
 {
-	struct nvram_header __iomem *header;
+	struct nvram_header *header;
 	int i;
 
 	for (i = 0; i < ARRAY_SIZE(nvram_sizes); i++) {
-		header = (struct nvram_header *)(end - nvram_sizes[i]);
-		if (header->magic == NVRAM_MAGIC)
+		header = (struct nvram_header *)KSEG1ADDR(end - nvram_sizes[i]);
+		if (header->magic == NVRAM_HEADER)
 			return nvram_sizes[i];
 	}
 
@@ -52,40 +38,36 @@ static u32 find_nvram_size(void __iomem *end)
 }
 
 /* Probe for NVRAM header */
-static int nvram_find_and_copy(void __iomem *iobase, u32 lim)
+static int nvram_find_and_copy(u32 base, u32 lim)
 {
-	struct nvram_header __iomem *header;
+	struct nvram_header *header;
 	int i;
 	u32 off;
 	u32 *src, *dst;
 	u32 size;
 
-	if (nvram_buf[0]) {
-		pr_warn("nvram already initialized\n");
-		return -EEXIST;
-	}
-
 	/* TODO: when nvram is on nand flash check for bad blocks first. */
 	off = FLASH_MIN;
 	while (off <= lim) {
 		/* Windowed flash access */
-		size = find_nvram_size(iobase + off);
+		size = find_nvram_size(base + off);
 		if (size) {
-			header = (struct nvram_header *)(iobase + off - size);
+			header = (struct nvram_header *)KSEG1ADDR(base + off -
+								  size);
 			goto found;
 		}
 		off <<= 1;
 	}
 
 	/* Try embedded NVRAM at 4 KB and 1 KB as last resorts */
-	header = (struct nvram_header *)(iobase + 4096);
-	if (header->magic == NVRAM_MAGIC) {
+	header = (struct nvram_header *) KSEG1ADDR(base + 4096);
+	if (header->magic == NVRAM_HEADER) {
 		size = NVRAM_SPACE;
 		goto found;
 	}
 
-	header = (struct nvram_header *)(iobase + 1024);
-	if (header->magic == NVRAM_MAGIC) {
+	header = (struct nvram_header *) KSEG1ADDR(base + 1024);
+	if (header->magic == NVRAM_HEADER) {
 		size = NVRAM_SPACE;
 		goto found;
 	}
@@ -94,83 +76,92 @@ static int nvram_find_and_copy(void __iomem *iobase, u32 lim)
 	return -ENXIO;
 
 found:
+
 	if (header->len > size)
 		pr_err("The nvram size accoridng to the header seems to be bigger than the partition on flash\n");
 	if (header->len > NVRAM_SPACE)
 		pr_err("nvram on flash (%i bytes) is bigger than the reserved space in memory, will just copy the first %i bytes\n",
 		       header->len, NVRAM_SPACE);
 
-	src = (u32 *)header;
-	dst = (u32 *)nvram_buf;
+	src = (u32 *) header;
+	dst = (u32 *) nvram_buf;
 	for (i = 0; i < sizeof(struct nvram_header); i += 4)
-		*dst++ = __raw_readl(src++);
+		*dst++ = *src++;
 	for (; i < header->len && i < NVRAM_SPACE && i < size; i += 4)
-		*dst++ = readl(src++);
+		*dst++ = le32_to_cpu(*src++);
+	memset(dst, 0x0, NVRAM_SPACE - i);
 
 	return 0;
 }
 
-/*
- * On bcm47xx we need access to the NVRAM very early, so we can't use mtd
- * subsystem to access flash. We can't even use platform device / driver to
- * store memory offset.
- * To handle this we provide following symbol. It's supposed to be called as
- * soon as we get info about flash device, before any NVRAM entry is needed.
- */
-int bcm47xx_nvram_init_from_mem(u32 base, u32 lim)
+#ifdef CONFIG_BCM47XX_SSB
+static int nvram_init_ssb(void)
 {
-	void __iomem *iobase;
-	int err;
+	struct ssb_mipscore *mcore = &bcm47xx_bus.ssb.mipscore;
+	u32 base;
+	u32 lim;
 
-	iobase = ioremap_nocache(base, lim);
-	if (!iobase)
-		return -ENOMEM;
+	if (mcore->pflash.present) {
+		base = mcore->pflash.window;
+		lim = mcore->pflash.window_size;
+	} else {
+		pr_err("Couldn't find supported flash memory\n");
+		return -ENXIO;
+	}
 
-	err = nvram_find_and_copy(iobase, lim);
-
-	iounmap(iobase);
-
-	return err;
+	return nvram_find_and_copy(base, lim);
 }
+#endif
+
+#ifdef CONFIG_BCM47XX_BCMA
+static int nvram_init_bcma(void)
+{
+	struct bcma_drv_cc *cc = &bcm47xx_bus.bcma.bus.drv_cc;
+	u32 base;
+	u32 lim;
+
+#ifdef CONFIG_BCMA_NFLASH
+	if (cc->nflash.boot) {
+		base = BCMA_SOC_FLASH1;
+		lim = BCMA_SOC_FLASH1_SZ;
+	} else
+#endif
+	if (cc->pflash.present) {
+		base = cc->pflash.window;
+		lim = cc->pflash.window_size;
+#ifdef CONFIG_BCMA_SFLASH
+	} else if (cc->sflash.present) {
+		base = cc->sflash.window;
+		lim = cc->sflash.size;
+#endif
+	} else {
+		pr_err("Couldn't find supported flash memory\n");
+		return -ENXIO;
+	}
+
+	return nvram_find_and_copy(base, lim);
+}
+#endif
 
 static int nvram_init(void)
 {
-#ifdef CONFIG_MTD
-	struct mtd_info *mtd;
-	struct nvram_header header;
-	size_t bytes_read;
-	int err;
-
-	mtd = get_mtd_device_nm("nvram");
-	if (IS_ERR(mtd))
-		return -ENODEV;
-
-	err = mtd_read(mtd, 0, sizeof(header), &bytes_read, (uint8_t *)&header);
-	if (!err && header.magic == NVRAM_MAGIC) {
-		u8 *dst = (uint8_t *)nvram_buf;
-		size_t len = header.len;
-
-		if (header.len > NVRAM_SPACE) {
-			pr_err("nvram on flash (%i bytes) is bigger than the reserved space in memory, will just copy the first %i bytes\n",
-				header.len, NVRAM_SPACE);
-			len = NVRAM_SPACE;
-		}
-
-		err = mtd_read(mtd, 0, len, &bytes_read, dst);
-		if (err)
-			return err;
-
-		return 0;
-	}
+	switch (bcm47xx_bus_type) {
+#ifdef CONFIG_BCM47XX_SSB
+	case BCM47XX_BUS_TYPE_SSB:
+		return nvram_init_ssb();
 #endif
-
+#ifdef CONFIG_BCM47XX_BCMA
+	case BCM47XX_BUS_TYPE_BCMA:
+		return nvram_init_bcma();
+#endif
+	}
 	return -ENXIO;
 }
 
-int bcm47xx_nvram_getenv(const char *name, char *val, size_t val_len)
+int bcm47xx_nvram_getenv(char *name, char *val, size_t val_len)
 {
 	char *var, *value, *end, *eq;
-	int data_left, err;
+	int err;
 
 	if (!name)
 		return -EINVAL;
@@ -184,18 +175,16 @@ int bcm47xx_nvram_getenv(const char *name, char *val, size_t val_len)
 	/* Look for name=value and return value */
 	var = &nvram_buf[sizeof(struct nvram_header)];
 	end = nvram_buf + sizeof(nvram_buf) - 2;
-	end[0] = '\0';
-	end[1] = '\0';
+	end[0] = end[1] = '\0';
 	for (; *var; var = value + strlen(value) + 1) {
-		data_left = end - var;
-
-		eq = strnchr(var, data_left, '=');
+		eq = strchr(var, '=');
 		if (!eq)
 			break;
 		value = eq + 1;
-		if (eq - var == strlen(name) &&
-		    strncmp(var, name, eq - var) == 0)
+		if ((eq - var) == strlen(name) &&
+			strncmp(var, name, (eq - var)) == 0) {
 			return snprintf(val, val_len, "%s", value);
+		}
 	}
 	return -ENOENT;
 }
@@ -204,11 +193,10 @@ EXPORT_SYMBOL(bcm47xx_nvram_getenv);
 int bcm47xx_nvram_gpio_pin(const char *name)
 {
 	int i, err;
-	char nvram_var[] = "gpioXX";
-	char buf[NVRAM_MAX_GPIO_VALUE_LEN];
+	char nvram_var[10];
+	char buf[30];
 
-	/* TODO: Optimize it to don't call getenv so many times */
-	for (i = 0; i < NVRAM_MAX_GPIO_ENTRIES; i++) {
+	for (i = 0; i < 32; i++) {
 		err = snprintf(nvram_var, sizeof(nvram_var), "gpio%i", i);
 		if (err <= 0)
 			continue;

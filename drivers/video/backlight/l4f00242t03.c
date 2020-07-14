@@ -181,8 +181,11 @@ static int l4f00242t03_probe(struct spi_device *spi)
 
 	priv = devm_kzalloc(&spi->dev, sizeof(struct l4f00242t03_priv),
 				GFP_KERNEL);
-	if (priv == NULL)
+
+	if (priv == NULL) {
+		dev_err(&spi->dev, "No memory for this device.\n");
 		return -ENOMEM;
+	}
 
 	spi_set_drvdata(spi, priv);
 	spi->bits_per_word = 9;

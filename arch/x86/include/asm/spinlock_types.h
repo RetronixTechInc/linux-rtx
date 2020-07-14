@@ -34,6 +34,6 @@ typedef struct arch_spinlock {
 
 #define __ARCH_SPIN_LOCK_UNLOCKED	{ { 0 } }
 
-#include <asm-generic/qrwlock_types.h>
+#include <asm/rwlock.h>
 
 #endif /* _ASM_X86_SPINLOCK_TYPES_H */

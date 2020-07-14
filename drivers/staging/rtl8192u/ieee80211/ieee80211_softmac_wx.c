@@ -26,7 +26,7 @@ const long ieee80211_wlan_frequencies[] = {
 	2452, 2457, 2462, 2467,
 	2472, 2484
 };
-EXPORT_SYMBOL(ieee80211_wlan_frequencies);
+
 
 int ieee80211_wx_set_freq(struct ieee80211_device *ieee, struct iw_request_info *a,
 			     union iwreq_data *wrqu, char *b)
@@ -36,7 +36,7 @@ int ieee80211_wx_set_freq(struct ieee80211_device *ieee, struct iw_request_info 
 
 	down(&ieee->wx_sem);
 
-	if (ieee->iw_mode == IW_MODE_INFRA) {
+	if(ieee->iw_mode == IW_MODE_INFRA){
 		ret = -EOPNOTSUPP;
 		goto out;
 	}
@@ -83,7 +83,7 @@ out:
 	up(&ieee->wx_sem);
 	return ret;
 }
-EXPORT_SYMBOL(ieee80211_wx_set_freq);
+
 
 int ieee80211_wx_get_freq(struct ieee80211_device *ieee,
 			     struct iw_request_info *a,
@@ -101,7 +101,6 @@ int ieee80211_wx_get_freq(struct ieee80211_device *ieee,
 
 	return 0;
 }
-EXPORT_SYMBOL(ieee80211_wx_get_freq);
 
 int ieee80211_wx_get_wap(struct ieee80211_device *ieee,
 			    struct iw_request_info *info,
@@ -121,7 +120,7 @@ int ieee80211_wx_get_wap(struct ieee80211_device *ieee,
 		ieee->state != IEEE80211_LINKED_SCANNING &&
 		ieee->wap_set == 0)
 
-		eth_zero_addr(wrqu->ap_addr.sa_data);
+		memset(wrqu->ap_addr.sa_data, 0, ETH_ALEN);
 	else
 		memcpy(wrqu->ap_addr.sa_data,
 		       ieee->current_network.bssid, ETH_ALEN);
@@ -130,7 +129,7 @@ int ieee80211_wx_get_wap(struct ieee80211_device *ieee,
 
 	return 0;
 }
-EXPORT_SYMBOL(ieee80211_wx_get_wap);
+
 
 int ieee80211_wx_set_wap(struct ieee80211_device *ieee,
 			 struct iw_request_info *info,
@@ -148,12 +147,12 @@ int ieee80211_wx_set_wap(struct ieee80211_device *ieee,
 
 	down(&ieee->wx_sem);
 	/* use ifconfig hw ether */
-	if (ieee->iw_mode == IW_MODE_MASTER) {
+	if (ieee->iw_mode == IW_MODE_MASTER){
 		ret = -1;
 		goto out;
 	}
 
-	if (temp->sa_family != ARPHRD_ETHER) {
+	if (temp->sa_family != ARPHRD_ETHER){
 		ret = -EINVAL;
 		goto out;
 	}
@@ -177,11 +176,10 @@ out:
 	up(&ieee->wx_sem);
 	return ret;
 }
-EXPORT_SYMBOL(ieee80211_wx_set_wap);
 
  int ieee80211_wx_get_essid(struct ieee80211_device *ieee, struct iw_request_info *a,union iwreq_data *wrqu,char *b)
 {
-	int len, ret = 0;
+	int len,ret = 0;
 	unsigned long flags;
 
 	if (ieee->iw_mode == IW_MODE_MONITOR)
@@ -204,7 +202,7 @@ EXPORT_SYMBOL(ieee80211_wx_set_wap);
 	}
 	len = ieee->current_network.ssid_len;
 	wrqu->essid.length = len;
-	strncpy(b, ieee->current_network.ssid, len);
+	strncpy(b,ieee->current_network.ssid,len);
 	wrqu->essid.flags = 1;
 
 out:
@@ -213,7 +211,6 @@ out:
 	return ret;
 
 }
-EXPORT_SYMBOL(ieee80211_wx_get_essid);
 
 int ieee80211_wx_set_rate(struct ieee80211_device *ieee,
 			     struct iw_request_info *info,
@@ -226,7 +223,8 @@ int ieee80211_wx_set_rate(struct ieee80211_device *ieee,
 	//FIXME: we might want to limit rate also in management protocols.
 	return 0;
 }
-EXPORT_SYMBOL(ieee80211_wx_set_rate);
+
+
 
 int ieee80211_wx_get_rate(struct ieee80211_device *ieee,
 			     struct iw_request_info *info,
@@ -239,7 +237,7 @@ int ieee80211_wx_get_rate(struct ieee80211_device *ieee,
 
 	return 0;
 }
-EXPORT_SYMBOL(ieee80211_wx_get_rate);
+
 
 int ieee80211_wx_set_rts(struct ieee80211_device *ieee,
 			     struct iw_request_info *info,
@@ -256,7 +254,6 @@ int ieee80211_wx_set_rts(struct ieee80211_device *ieee,
 	}
 	return 0;
 }
-EXPORT_SYMBOL(ieee80211_wx_set_rts);
 
 int ieee80211_wx_get_rts(struct ieee80211_device *ieee,
 			     struct iw_request_info *info,
@@ -267,8 +264,6 @@ int ieee80211_wx_get_rts(struct ieee80211_device *ieee,
 	wrqu->rts.disabled = (wrqu->rts.value == DEFAULT_RTS_THRESHOLD);
 	return 0;
 }
-EXPORT_SYMBOL(ieee80211_wx_get_rts);
-
 int ieee80211_wx_set_mode(struct ieee80211_device *ieee, struct iw_request_info *a,
 			     union iwreq_data *wrqu, char *b)
 {
@@ -299,7 +294,6 @@ out:
 	up(&ieee->wx_sem);
 	return 0;
 }
-EXPORT_SYMBOL(ieee80211_wx_set_mode);
 
 void ieee80211_wx_sync_scan_wq(struct work_struct *work)
 {
@@ -319,7 +313,7 @@ void ieee80211_wx_sync_scan_wq(struct work_struct *work)
 
 	ieee->state = IEEE80211_LINKED_SCANNING;
 	ieee->link_change(ieee->dev);
-	ieee->InitialGainHandler(ieee->dev, IG_Backup);
+	ieee->InitialGainHandler(ieee->dev,IG_Backup);
 	if (ieee->pHTInfo->bCurrentHTSupport && ieee->pHTInfo->bEnableHT && ieee->pHTInfo->bCurBW40MHz) {
 		b40M = 1;
 		chan_offset = ieee->pHTInfo->CurSTAExtChnlOffset;
@@ -341,11 +335,11 @@ void ieee80211_wx_sync_scan_wq(struct work_struct *work)
 		ieee->set_chan(ieee->dev, chan);
 	}
 
-	ieee->InitialGainHandler(ieee->dev, IG_Restore);
+	ieee->InitialGainHandler(ieee->dev,IG_Restore);
 	ieee->state = IEEE80211_LINKED;
 	ieee->link_change(ieee->dev);
 	// To prevent the immediately calling watch_dog after scan.
-	if (ieee->LinkDetectInfo.NumRecvBcnInPeriod==0||ieee->LinkDetectInfo.NumRecvDataInPeriod==0 )
+	if(ieee->LinkDetectInfo.NumRecvBcnInPeriod==0||ieee->LinkDetectInfo.NumRecvDataInPeriod==0 )
 	{
 		ieee->LinkDetectInfo.NumRecvBcnInPeriod = 1;
 		ieee->LinkDetectInfo.NumRecvDataInPeriod= 1;
@@ -369,12 +363,12 @@ int ieee80211_wx_set_scan(struct ieee80211_device *ieee, struct iw_request_info 
 
 	down(&ieee->wx_sem);
 
-	if (ieee->iw_mode == IW_MODE_MONITOR || !(ieee->proto_started)) {
+	if (ieee->iw_mode == IW_MODE_MONITOR || !(ieee->proto_started)){
 		ret = -1;
 		goto out;
 	}
 
-	if (ieee->state == IEEE80211_LINKED) {
+	if ( ieee->state == IEEE80211_LINKED){
 		queue_work(ieee->wq, &ieee->wx_sync_scan_wq);
 		/* intentionally forget to up sem */
 		return 0;
@@ -384,7 +378,6 @@ out:
 	up(&ieee->wx_sem);
 	return ret;
 }
-EXPORT_SYMBOL(ieee80211_wx_set_scan);
 
 int ieee80211_wx_set_essid(struct ieee80211_device *ieee,
 			      struct iw_request_info *a,
@@ -400,12 +393,12 @@ int ieee80211_wx_set_essid(struct ieee80211_device *ieee,
 
 	proto_started = ieee->proto_started;
 
-	if (wrqu->essid.length > IW_ESSID_MAX_SIZE) {
+	if (wrqu->essid.length > IW_ESSID_MAX_SIZE){
 		ret= -E2BIG;
 		goto out;
 	}
 
-	if (ieee->iw_mode == IW_MODE_MONITOR) {
+	if (ieee->iw_mode == IW_MODE_MONITOR){
 		ret= -1;
 		goto out;
 	}
@@ -439,7 +432,6 @@ out:
 	up(&ieee->wx_sem);
 	return ret;
 }
-EXPORT_SYMBOL(ieee80211_wx_set_essid);
 
  int ieee80211_wx_get_mode(struct ieee80211_device *ieee, struct iw_request_info *a,
 			     union iwreq_data *wrqu, char *b)
@@ -448,7 +440,6 @@ EXPORT_SYMBOL(ieee80211_wx_set_essid);
 	wrqu->mode = ieee->iw_mode;
 	return 0;
 }
-EXPORT_SYMBOL(ieee80211_wx_get_mode);
 
  int ieee80211_wx_set_rawtx(struct ieee80211_device *ieee,
 			       struct iw_request_info *info,
@@ -469,9 +460,9 @@ EXPORT_SYMBOL(ieee80211_wx_get_mode);
 	printk(KERN_INFO"raw TX is %s\n",
 	      ieee->raw_tx ? "enabled" : "disabled");
 
-	if (ieee->iw_mode == IW_MODE_MONITOR)
+	if(ieee->iw_mode == IW_MODE_MONITOR)
 	{
-		if (prev == 0 && ieee->raw_tx) {
+		if(prev == 0 && ieee->raw_tx){
 			if (ieee->data_hard_resume)
 				ieee->data_hard_resume(ieee->dev);
 
@@ -486,7 +477,6 @@ EXPORT_SYMBOL(ieee80211_wx_get_mode);
 
 	return 0;
 }
-EXPORT_SYMBOL(ieee80211_wx_set_rawtx);
 
 int ieee80211_wx_get_name(struct ieee80211_device *ieee,
 			     struct iw_request_info *info,
@@ -512,7 +502,7 @@ int ieee80211_wx_get_name(struct ieee80211_device *ieee,
 
 	return 0;
 }
-EXPORT_SYMBOL(ieee80211_wx_get_name);
+
 
 /* this is mostly stolen from hostap */
 int ieee80211_wx_set_power(struct ieee80211_device *ieee,
@@ -522,7 +512,7 @@ int ieee80211_wx_set_power(struct ieee80211_device *ieee,
 	int ret = 0;
 	down(&ieee->wx_sem);
 
-	if (wrqu->power.disabled) {
+	if (wrqu->power.disabled){
 		ieee->ps = IEEE80211_PS_DISABLED;
 		goto exit;
 	}
@@ -563,16 +553,17 @@ exit:
 	return ret;
 
 }
-EXPORT_SYMBOL(ieee80211_wx_set_power);
 
 /* this is stolen from hostap */
 int ieee80211_wx_get_power(struct ieee80211_device *ieee,
 				 struct iw_request_info *info,
 				 union iwreq_data *wrqu, char *extra)
 {
+	int ret =0;
+
 	down(&ieee->wx_sem);
 
-	if (ieee->ps == IEEE80211_PS_DISABLED) {
+	if(ieee->ps == IEEE80211_PS_DISABLED){
 		wrqu->power.disabled = 1;
 		goto exit;
 	}
@@ -599,7 +590,24 @@ int ieee80211_wx_get_power(struct ieee80211_device *ieee,
 
 exit:
 	up(&ieee->wx_sem);
-	return 0;
+	return ret;
 
 }
+EXPORT_SYMBOL(ieee80211_wx_get_essid);
+EXPORT_SYMBOL(ieee80211_wx_set_essid);
+EXPORT_SYMBOL(ieee80211_wx_set_rate);
+EXPORT_SYMBOL(ieee80211_wx_get_rate);
+EXPORT_SYMBOL(ieee80211_wx_set_wap);
+EXPORT_SYMBOL(ieee80211_wx_get_wap);
+EXPORT_SYMBOL(ieee80211_wx_set_mode);
+EXPORT_SYMBOL(ieee80211_wx_get_mode);
+EXPORT_SYMBOL(ieee80211_wx_set_scan);
+EXPORT_SYMBOL(ieee80211_wx_get_freq);
+EXPORT_SYMBOL(ieee80211_wx_set_freq);
+EXPORT_SYMBOL(ieee80211_wx_set_rawtx);
+EXPORT_SYMBOL(ieee80211_wx_get_name);
+EXPORT_SYMBOL(ieee80211_wx_set_power);
 EXPORT_SYMBOL(ieee80211_wx_get_power);
+EXPORT_SYMBOL(ieee80211_wlan_frequencies);
+EXPORT_SYMBOL(ieee80211_wx_set_rts);
+EXPORT_SYMBOL(ieee80211_wx_get_rts);

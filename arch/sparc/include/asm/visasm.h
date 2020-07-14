@@ -59,8 +59,7 @@ static inline void save_and_clear_fpu(void) {
 "		" : : "i" (FPRS_FEF|FPRS_DU) :
 		"o5", "g1", "g2", "g3", "g7", "cc");
 }
-
-int vis_emul(struct pt_regs *, unsigned int);
+extern int vis_emul(struct pt_regs *, unsigned int);
 #endif
 
 #endif /* _SPARC64_ASI_H */

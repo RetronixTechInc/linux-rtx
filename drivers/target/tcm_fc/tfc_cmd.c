@@ -128,7 +128,6 @@ int ft_queue_status(struct se_cmd *se_cmd)
 	struct fc_lport *lport;
 	struct fc_exch *ep;
 	size_t len;
-	int rc;
 
 	if (cmd->aborted)
 		return 0;
@@ -138,10 +137,9 @@ int ft_queue_status(struct se_cmd *se_cmd)
 	len = sizeof(*fcp) + se_cmd->scsi_sense_length;
 	fp = fc_frame_alloc(lport, len);
 	if (!fp) {
-		se_cmd->scsi_status = SAM_STAT_TASK_SET_FULL;
-		return -ENOMEM;
+		/* XXX shouldn't just drop it - requeue and retry? */
+		return 0;
 	}
-
 	fcp = fc_frame_payload_get(fp, len);
 	memset(fcp, 0, len);
 	fcp->resp.fr_status = se_cmd->scsi_status;
@@ -172,18 +170,7 @@ int ft_queue_status(struct se_cmd *se_cmd)
 	fc_fill_fc_hdr(fp, FC_RCTL_DD_CMD_STATUS, ep->did, ep->sid, FC_TYPE_FCP,
 		       FC_FC_EX_CTX | FC_FC_LAST_SEQ | FC_FC_END_SEQ, 0);
 
-	rc = lport->tt.seq_send(lport, cmd->seq, fp);
-	if (rc) {
-		pr_info_ratelimited("%s: Failed to send response frame %p, "
-				    "xid <0x%x>\n", __func__, fp, ep->xid);
-		/*
-		 * Generate a TASK_SET_FULL status to notify the initiator
-		 * to reduce it's queue_depth after the se_cmd response has
-		 * been re-queued by target-core.
-		 */
-		se_cmd->scsi_status = SAM_STAT_TASK_SET_FULL;
-		return -ENOMEM;
-	}
+	lport->tt.seq_send(lport, cmd->seq, fp);
 	lport->tt.exch_done(cmd->seq);
 	return 0;
 }
@@ -439,11 +426,6 @@ void ft_queue_tm_resp(struct se_cmd *se_cmd)
 	ft_send_resp_code(cmd, code);
 }
 
-void ft_aborted_task(struct se_cmd *se_cmd)
-{
-	return;
-}
-
 static void ft_send_work(struct work_struct *work);
 
 /*
@@ -554,17 +536,17 @@ static void ft_send_work(struct work_struct *work)
 	 */
 	switch (fcp->fc_pri_ta & FCP_PTA_MASK) {
 	case FCP_PTA_HEADQ:
-		task_attr = TCM_HEAD_TAG;
+		task_attr = MSG_HEAD_TAG;
 		break;
 	case FCP_PTA_ORDERED:
-		task_attr = TCM_ORDERED_TAG;
+		task_attr = MSG_ORDERED_TAG;
 		break;
 	case FCP_PTA_ACA:
-		task_attr = TCM_ACA_TAG;
+		task_attr = MSG_ACA_TAG;
 		break;
 	case FCP_PTA_SIMPLE: /* Fallthrough */
 	default:
-		task_attr = TCM_SIMPLE_TAG;
+		task_attr = MSG_SIMPLE_TAG;
 	}
 
 	fc_seq_exch(cmd->seq)->lp->tt.seq_set_resp(cmd->seq, ft_recv_seq, cmd);

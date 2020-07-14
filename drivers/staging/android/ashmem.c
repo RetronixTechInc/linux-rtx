@@ -310,7 +310,7 @@ static ssize_t ashmem_read(struct file *file, char __user *buf,
 	 * be destroyed until all references to the file are dropped and
 	 * ashmem_release is called.
 	 */
-	ret = __vfs_read(asma->file, buf, len, pos);
+	ret = asma->file->f_op->read(asma->file, buf, len, pos);
 	if (ret >= 0) {
 		/** Update backing file pos, since f_ops->read() doesn't */
 		asma->file->f_pos = *pos;
@@ -339,7 +339,7 @@ static loff_t ashmem_llseek(struct file *file, loff_t offset, int origin)
 		goto out;
 	}
 
-	ret = vfs_llseek(asma->file, offset, origin);
+	ret = asma->file->f_op->llseek(asma->file, offset, origin);
 	if (ret < 0)
 		goto out;
 
@@ -410,7 +410,7 @@ out:
 }
 
 /*
- * ashmem_shrink - our cache shrinker, called from mm/vmscan.c
+ * ashmem_shrink - our cache shrinker, called from mm/vmscan.c :: shrink_slab
  *
  * 'nr_to_scan' is the number of objects to scan for freeing.
  *
@@ -543,6 +543,7 @@ static int get_name(struct ashmem_area *asma, void __user *name)
 
 	mutex_lock(&ashmem_mutex);
 	if (asma->name[ASHMEM_NAME_PREFIX_LEN] != '\0') {
+
 		/*
 		 * Copying only `len', instead of ASHMEM_NAME_LEN, bytes
 		 * prevents us from revealing one user's stack to another.
@@ -744,10 +745,10 @@ static long ashmem_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 
 	switch (cmd) {
 	case ASHMEM_SET_NAME:
-		ret = set_name(asma, (void __user *)arg);
+		ret = set_name(asma, (void __user *) arg);
 		break;
 	case ASHMEM_GET_NAME:
-		ret = get_name(asma, (void __user *)arg);
+		ret = get_name(asma, (void __user *) arg);
 		break;
 	case ASHMEM_SET_SIZE:
 		ret = -EINVAL;
@@ -768,7 +769,7 @@ static long ashmem_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 	case ASHMEM_PIN:
 	case ASHMEM_UNPIN:
 	case ASHMEM_GET_PIN_STATUS:
-		ret = ashmem_pin_unpin(asma, cmd, (void __user *)arg);
+		ret = ashmem_pin_unpin(asma, cmd, (void __user *) arg);
 		break;
 	case ASHMEM_PURGE_ALL_CACHES:
 		ret = -EPERM;
@@ -778,6 +779,7 @@ static long ashmem_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 				.nr_to_scan = LONG_MAX,
 			};
 			ret = ashmem_shrink_count(&ashmem_shrinker, &sc);
+			nodes_setall(sc.nodes_to_scan);
 			ashmem_shrink_scan(&ashmem_shrinker, &sc);
 		}
 		break;
@@ -791,6 +793,7 @@ static long ashmem_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 static long compat_ashmem_ioctl(struct file *file, unsigned int cmd,
 				unsigned long arg)
 {
+
 	switch (cmd) {
 	case COMPAT_ASHMEM_SET_SIZE:
 		cmd = ASHMEM_SET_SIZE;

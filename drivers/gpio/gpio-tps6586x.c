@@ -97,8 +97,10 @@ static int tps6586x_gpio_probe(struct platform_device *pdev)
 	pdata = dev_get_platdata(pdev->dev.parent);
 	tps6586x_gpio = devm_kzalloc(&pdev->dev,
 				sizeof(*tps6586x_gpio), GFP_KERNEL);
-	if (!tps6586x_gpio)
+	if (!tps6586x_gpio) {
+		dev_err(&pdev->dev, "Could not allocate tps6586x_gpio\n");
 		return -ENOMEM;
+	}
 
 	tps6586x_gpio->parent = pdev->dev.parent;
 
@@ -137,8 +139,7 @@ static int tps6586x_gpio_remove(struct platform_device *pdev)
 {
 	struct tps6586x_gpio *tps6586x_gpio = platform_get_drvdata(pdev);
 
-	gpiochip_remove(&tps6586x_gpio->gpio_chip);
-	return 0;
+	return gpiochip_remove(&tps6586x_gpio->gpio_chip);
 }
 
 static struct platform_driver tps6586x_gpio_driver = {

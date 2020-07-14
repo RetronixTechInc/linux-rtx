@@ -17,12 +17,9 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#include <linux/errno.h>
 #include <linux/linkage.h>
 #include <linux/init.h>
 #include <asm/assembler.h>
-#include <asm/cpufeature.h>
-#include <asm/alternative-asm.h>
 
 #include "proc-macros.S"
 
@@ -34,7 +31,7 @@
  *	Corrupted registers: x0-x7, x9-x11
  */
 __flush_dcache_all:
-	dmb	sy				// ensure ordering with previous memory accesses
+	dsb	sy				// ensure ordering with previous memory accesses
 	mrs	x0, clidr_el1			// read clidr
 	and	x3, x0, #0x7000000		// extract loc from clidr
 	lsr	x3, x3, #23			// left align loc bit field
@@ -131,7 +128,7 @@ USER(9f, dc	cvau, x4	)		// clean D line to PoU
 	add	x4, x4, x2
 	cmp	x4, x1
 	b.lo	1b
-	dsb	ish
+	dsb	sy
 
 	icache_line_size x2, x3
 	sub	x3, x2, #1
@@ -141,12 +138,9 @@ USER(9f, ic	ivau, x4	)		// invalidate I line PoU
 	add	x4, x4, x2
 	cmp	x4, x1
 	b.lo	1b
-	dsb	ish
+9:						// ignore any faulting cache operation
+	dsb	sy
 	isb
-	mov	x0, #0
-	ret
-9:
-	mov	x0, #-EFAULT
 	ret
 ENDPROC(flush_icache_range)
 ENDPROC(__flush_cache_user_range)
@@ -216,7 +210,7 @@ __dma_clean_range:
 	dcache_line_size x2, x3
 	sub	x3, x2, #1
 	bic	x0, x0, x3
-1:	alternative_insn "dc cvac, x0", "dc civac, x0", ARM64_WORKAROUND_CLEAN_CACHE
+1:	dc	cvac, x0			// clean D / U line
 	add	x0, x0, x2
 	cmp	x0, x1
 	b.lo	1b

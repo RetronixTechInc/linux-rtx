@@ -119,7 +119,6 @@ struct svc_program		nfsd_program = {
 static bool nfsd_supported_minorversions[NFSD_SUPPORTED_MINOR_VERSION + 1] = {
 	[0] = 1,
 	[1] = 1,
-	[2] = 1,
 };
 
 int nfsd_vers(int vers, enum vers_op change)
@@ -409,7 +408,6 @@ int nfsd_create_serv(struct net *net)
 	if (nn->nfsd_serv == NULL)
 		return -ENOMEM;
 
-	nn->nfsd_serv->sv_maxconn = nn->max_connections;
 	error = svc_bind(nn->nfsd_serv, net);
 	if (error < 0) {
 		svc_destroy(nn->nfsd_serv);
@@ -474,7 +472,8 @@ int nfsd_set_nrthreads(int n, int *nthreads, struct net *net)
 	/* enforce a global maximum number of threads */
 	tot = 0;
 	for (i = 0; i < n; i++) {
-		nthreads[i] = min(nthreads[i], NFSD_MAXSERVS);
+		if (nthreads[i] > NFSD_MAXSERVS)
+			nthreads[i] = NFSD_MAXSERVS;
 		tot += nthreads[i];
 	}
 	if (tot > NFSD_MAXSERVS) {
@@ -523,11 +522,11 @@ nfsd_svc(int nrservs, struct net *net)
 
 	mutex_lock(&nfsd_mutex);
 	dprintk("nfsd: creating service\n");
-
-	nrservs = max(nrservs, 0);
-	nrservs = min(nrservs, NFSD_MAXSERVS);
+	if (nrservs <= 0)
+		nrservs = 0;
+	if (nrservs > NFSD_MAXSERVS)
+		nrservs = NFSD_MAXSERVS;
 	error = 0;
-
 	if (nrservs == 0 && nn->nfsd_serv == NULL)
 		goto out;
 
@@ -568,7 +567,6 @@ nfsd(void *vrqstp)
 	struct svc_rqst *rqstp = (struct svc_rqst *) vrqstp;
 	struct svc_xprt *perm_sock = list_entry(rqstp->rq_server->sv_permsocks.next, typeof(struct svc_xprt), xpt_list);
 	struct net *net = perm_sock->xpt_net;
-	struct nfsd_net *nn = net_generic(net, nfsd_net_id);
 	int err;
 
 	/* Lock module and set up kernel thread */
@@ -596,15 +594,18 @@ nfsd(void *vrqstp)
 	nfsdstats.th_cnt++;
 	mutex_unlock(&nfsd_mutex);
 
+	/*
+	 * We want less throttling in balance_dirty_pages() so that nfs to
+	 * localhost doesn't cause nfsd to lock up due to all the client's
+	 * dirty pages.
+	 */
+	current->flags |= PF_LESS_THROTTLE;
 	set_freezable();
 
 	/*
 	 * The main request loop
 	 */
 	for (;;) {
-		/* Update sv_maxconn if it has changed */
-		rqstp->rq_server->sv_maxconn = nn->max_connections;
-
 		/*
 		 * Find a socket with data available and call its
 		 * recvfrom routine.
@@ -693,7 +694,7 @@ nfsd_dispatch(struct svc_rqst *rqstp, __be32 *statp)
 	/* Now call the procedure handler, and encode NFS status. */
 	nfserr = proc->pc_func(rqstp, rqstp->rq_argp, rqstp->rq_resp);
 	nfserr = map_new_errors(rqstp->rq_vers, nfserr);
-	if (nfserr == nfserr_dropit || test_bit(RQ_DROPME, &rqstp->rq_flags)) {
+	if (nfserr == nfserr_dropit || rqstp->rq_dropme) {
 		dprintk("nfsd: Dropping request; may be revisited later\n");
 		nfsd_cache_update(rqstp, RC_NOCACHE, NULL);
 		return 0;

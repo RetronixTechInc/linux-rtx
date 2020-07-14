@@ -84,28 +84,12 @@ static void __usbhsp_pipe_xxx_set(struct usbhs_pipe *pipe,
 		usbhs_bset(priv, pipe_reg, mask, val);
 }
 
-static u16 __usbhsp_pipe_xxx_get(struct usbhs_pipe *pipe,
-				 u16 dcp_reg, u16 pipe_reg)
-{
-	struct usbhs_priv *priv = usbhs_pipe_to_priv(pipe);
-
-	if (usbhs_pipe_is_dcp(pipe))
-		return usbhs_read(priv, dcp_reg);
-	else
-		return usbhs_read(priv, pipe_reg);
-}
-
 /*
  *		DCPCFG/PIPECFG functions
  */
 static void usbhsp_pipe_cfg_set(struct usbhs_pipe *pipe, u16 mask, u16 val)
 {
 	__usbhsp_pipe_xxx_set(pipe, DCPCFG, PIPECFG, mask, val);
-}
-
-static u16 usbhsp_pipe_cfg_get(struct usbhs_pipe *pipe)
-{
-	return __usbhsp_pipe_xxx_get(pipe, DCPCFG, PIPECFG);
 }
 
 /*
@@ -594,19 +578,6 @@ int usbhs_pipe_is_dir_host(struct usbhs_pipe *pipe)
 	return usbhsp_flags_has(pipe, IS_DIR_HOST);
 }
 
-int usbhs_pipe_is_running(struct usbhs_pipe *pipe)
-{
-	return usbhsp_flags_has(pipe, IS_RUNNING);
-}
-
-void usbhs_pipe_running(struct usbhs_pipe *pipe, int running)
-{
-	if (running)
-		usbhsp_flags_set(pipe, IS_RUNNING);
-	else
-		usbhsp_flags_clr(pipe, IS_RUNNING);
-}
-
 void usbhs_pipe_data_sequence(struct usbhs_pipe *pipe, int sequence)
 {
 	u16 mask = (SQCLR | SQSET);
@@ -632,37 +603,10 @@ void usbhs_pipe_data_sequence(struct usbhs_pipe *pipe, int sequence)
 	usbhsp_pipectrl_set(pipe, mask, val);
 }
 
-static int usbhs_pipe_get_data_sequence(struct usbhs_pipe *pipe)
-{
-	return !!(usbhsp_pipectrl_get(pipe) & SQMON);
-}
-
 void usbhs_pipe_clear(struct usbhs_pipe *pipe)
 {
-	if (usbhs_pipe_is_dcp(pipe)) {
-		usbhs_fifo_clear_dcp(pipe);
-	} else {
-		usbhsp_pipectrl_set(pipe, ACLRM, ACLRM);
-		usbhsp_pipectrl_set(pipe, ACLRM, 0);
-	}
-}
-
-void usbhs_pipe_config_change_bfre(struct usbhs_pipe *pipe, int enable)
-{
-	int sequence;
-
-	if (usbhs_pipe_is_dcp(pipe))
-		return;
-
-	usbhsp_pipe_select(pipe);
-	/* check if the driver needs to change the BFRE value */
-	if (!(enable ^ !!(usbhsp_pipe_cfg_get(pipe) & BFRE)))
-		return;
-
-	sequence = usbhs_pipe_get_data_sequence(pipe);
-	usbhsp_pipe_cfg_set(pipe, BFRE, enable ? BFRE : 0);
-	usbhs_pipe_clear(pipe);
-	usbhs_pipe_data_sequence(pipe, sequence);
+	usbhsp_pipectrl_set(pipe, ACLRM, ACLRM);
+	usbhsp_pipectrl_set(pipe, ACLRM, 0);
 }
 
 static struct usbhs_pipe *usbhsp_get_pipe(struct usbhs_priv *priv, u32 type)
@@ -694,11 +638,6 @@ static struct usbhs_pipe *usbhsp_get_pipe(struct usbhs_priv *priv, u32 type)
 	usbhsp_flags_set(pipe, IS_USED);
 
 	return pipe;
-}
-
-static void usbhsp_put_pipe(struct usbhs_pipe *pipe)
-{
-	usbhsp_flags_init(pipe);
 }
 
 void usbhs_pipe_init(struct usbhs_priv *priv,
@@ -771,7 +710,6 @@ struct usbhs_pipe *usbhs_pipe_malloc(struct usbhs_priv *priv,
 	usbhsp_pipe_select(pipe);
 	usbhsp_pipe_cfg_set(pipe, 0xFFFF, pipecfg);
 	usbhsp_pipe_buf_set(pipe, 0xFFFF, pipebuf);
-	usbhs_pipe_clear(pipe);
 
 	usbhs_pipe_sequence_data0(pipe);
 
@@ -786,11 +724,6 @@ struct usbhs_pipe *usbhs_pipe_malloc(struct usbhs_priv *priv,
 	 */
 
 	return pipe;
-}
-
-void usbhs_pipe_free(struct usbhs_pipe *pipe)
-{
-	usbhsp_put_pipe(pipe);
 }
 
 void usbhs_pipe_select_fifo(struct usbhs_pipe *pipe, struct usbhs_fifo *fifo)

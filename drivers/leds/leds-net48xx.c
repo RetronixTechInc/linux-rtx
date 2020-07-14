@@ -53,6 +53,7 @@ static struct platform_driver net48xx_led_driver = {
 	.remove		= net48xx_led_remove,
 	.driver		= {
 		.name		= DRVNAME,
+		.owner		= THIS_MODULE,
 	},
 };
 

@@ -434,9 +434,9 @@ static int ds1305_proc(struct device *dev, struct seq_file *seq)
 	}
 
 done:
-	seq_printf(seq, "trickle_charge\t: %s%s\n", diodes, resistors);
-
-	return 0;
+	return seq_printf(seq,
+			"trickle_charge\t: %s%s\n",
+			diodes, resistors);
 }
 
 #else
@@ -756,17 +756,19 @@ static int ds1305_probe(struct spi_device *spi)
 		status = devm_request_irq(&spi->dev, spi->irq, ds1305_irq,
 				0, dev_name(&ds1305->rtc->dev), ds1305);
 		if (status < 0) {
-			dev_err(&spi->dev, "request_irq %d --> %d\n",
+			dev_dbg(&spi->dev, "request_irq %d --> %d\n",
 					spi->irq, status);
-		} else {
-			device_set_wakeup_capable(&spi->dev, 1);
+			return status;
 		}
+
+		device_set_wakeup_capable(&spi->dev, 1);
 	}
 
 	/* export NVRAM */
 	status = sysfs_create_bin_file(&spi->dev.kobj, &nvram);
 	if (status < 0) {
-		dev_err(&spi->dev, "register nvram --> %d\n", status);
+		dev_dbg(&spi->dev, "register nvram --> %d\n", status);
+		return status;
 	}
 
 	return 0;

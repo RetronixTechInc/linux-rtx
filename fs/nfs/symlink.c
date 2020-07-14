@@ -45,7 +45,7 @@ error:
 
 static void *nfs_follow_link(struct dentry *dentry, struct nameidata *nd)
 {
-	struct inode *inode = d_inode(dentry);
+	struct inode *inode = dentry->d_inode;
 	struct page *page;
 	void *err;
 

@@ -940,6 +940,11 @@ static int ftgmac100_mdiobus_write(struct mii_bus *bus, int phy_addr,
 	return -EIO;
 }
 
+static int ftgmac100_mdiobus_reset(struct mii_bus *bus)
+{
+	return 0;
+}
+
 /******************************************************************************
  * struct ethtool_ops functions
  *****************************************************************************/
@@ -1210,7 +1215,7 @@ static int ftgmac100_probe(struct platform_device *pdev)
 
 	SET_NETDEV_DEV(netdev, &pdev->dev);
 
-	netdev->ethtool_ops = &ftgmac100_ethtool_ops;
+	SET_ETHTOOL_OPS(netdev, &ftgmac100_ethtool_ops);
 	netdev->netdev_ops = &ftgmac100_netdev_ops;
 	netdev->features = NETIF_F_IP_CSUM | NETIF_F_GRO;
 
@@ -1257,6 +1262,7 @@ static int ftgmac100_probe(struct platform_device *pdev)
 	priv->mii_bus->priv = netdev;
 	priv->mii_bus->read = ftgmac100_mdiobus_read;
 	priv->mii_bus->write = ftgmac100_mdiobus_write;
+	priv->mii_bus->reset = ftgmac100_mdiobus_reset;
 	priv->mii_bus->irq = priv->phy_irq;
 
 	for (i = 0; i < PHY_MAX_ADDR; i++)
@@ -1335,6 +1341,7 @@ static struct platform_driver ftgmac100_driver = {
 	.remove		= __exit_p(ftgmac100_remove),
 	.driver		= {
 		.name	= DRV_NAME,
+		.owner	= THIS_MODULE,
 	},
 };
 

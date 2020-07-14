@@ -7,13 +7,17 @@ menu "Character devices"
 source "drivers/tty/Kconfig"
 
 config DEVMEM
-	bool "/dev/mem virtual device support"
+	bool "Memory device driver"
 	default y
 	help
-	  Say Y here if you want to support the /dev/mem device.
-	  The /dev/mem device is used to access areas of physical
-	  memory.
-	  When in doubt, say "Y".
+	  The memory driver provides two character devices, mem and kmem, which
+	  provide access to the system's memory. The mem device is a view of
+	  physical memory, and each byte in the device corresponds to the
+	  matching physical address. The kmem device is the same as mem, but
+	  the addresses correspond to the kernel's virtual address space rather
+	  than physical memory. These devices are standard parts of a Linux
+	  system and most users should say Y here. You might say N if very
+	  security conscience or memory is tight.
 
 config DEVKMEM
 	bool "/dev/kmem virtual device support"
@@ -49,7 +53,7 @@ config SGI_MBCS
 source "drivers/tty/serial/Kconfig"
 
 config TTY_PRINTK
-	tristate "TTY driver to output user messages via printk"
+	bool "TTY driver to output user messages via printk"
 	depends on EXPERT && TTY
 	default n
 	---help---
@@ -101,10 +105,25 @@ config FSL_OTP
 	  you access to the secure memory pages however.  You will need to
 	  write your own secure code and reader for that.
 
+	  Note that default access is read-only. To enable writes, you
+	  also need to select FSL_OTP_RW
+
 	  To compile this driver as a module, choose M here: the module
 	  will be called fsl_otp.
 
 	  If unsure, it is safe to say Y.
+
+config FSL_OTP_RW
+	bool "Freescale On-Chip OTP Memory Write Access"
+	depends on FSL_OTP
+	default n
+	help
+	  If you say Y here, you will get write access to the One Time
+	  Programmable registers on certain Freescale i.MX processors.
+	  Note that improper writes to these registers may prevent your
+	  processor from booting.
+
+	  If unsure, say N
 
 config PRINTER
 	tristate "Parallel printer support"
@@ -164,15 +183,6 @@ config PPDEV
 
 	  To compile this driver as a module, choose M here: the
 	  module will be called ppdev.
-
-	  If unsure, say N.
-
-config VPC3_S
-	tristate "PROcess FIeld BUS Support"
-	depends on SPI
-	help
-	  If you say Y here, you will get support for a character device
-	  interface into PROFIBUS.
 
 	  If unsure, say N.
 
@@ -441,7 +451,7 @@ config APPLICOM
 
 config SONYPI
 	tristate "Sony Vaio Programmable I/O Control Device support"
-	depends on X86_32 && PCI && INPUT
+	depends on X86 && PCI && INPUT && !64BIT
 	---help---
 	  This driver enables access to the Sony Programmable I/O Control
 	  Device which can be found in many (all ?) Sony Vaio laptops.
@@ -528,6 +538,17 @@ config RAW_DRIVER
 
           Applications should preferably open the device (eg /dev/hda1)
           with the O_DIRECT flag.
+
+config MAGSTRIPE
+	tristate "Neuron magstripe reader support through GPIO"
+	default n
+	help
+	   This driver enables support for a Neuron MCR-370T-1R-xxxx
+	   insertion-style magnetic stripe card reader, connected via
+	   GPIO. GPIO pin assignments are defined through the device tree.
+	   Only a single instance is currently supported.
+
+	   If compiled as a module, it will be named magdecode.ko
 
 config MAX_RAW_DEVS
 	int "Maximum number of RAW devices to support (1-65536)"
@@ -626,6 +647,16 @@ config MSM_SMD_PKT
 	  Enables userspace clients to read and write to some packet SMD
 	  ports via device interface for MSM chipset.
 
+config SAS
+	tristate "Slot Accounting Service driver"
+	default n
+	help
+	   This driver enables support for a 9-bit serial driver that
+	   uses MARK/SPACE parity to frame messages for the Slot Accounting
+	   System (SAS) protocol.
+
+	   If compiled as a module, it will be named sas.ko
+
 config TILE_SROM
 	bool "Character-device access via hypervisor to the Tilera SPI ROM"
 	depends on TILE
@@ -636,8 +667,6 @@ config TILE_SROM
 	  in /dev/srom/.  The Tilera hypervisor makes the flash
 	  device appear much like a simple EEPROM, and knows
 	  how to partition a single ROM for multiple purposes.
-
-source "drivers/char/xillybus/Kconfig"
 
 source "drivers/char/imx_amp/Kconfig"
 endmenu

@@ -31,11 +31,10 @@
 #include "inode-map.h"
 #include "volumes.h"
 #include "dev-replace.h"
-#include "qgroup.h"
 
 #define BTRFS_ROOT_TRANS_TAG 0
 
-static const unsigned int btrfs_blocked_trans_types[TRANS_STATE_MAX] = {
+static unsigned int btrfs_blocked_trans_types[TRANS_STATE_MAX] = {
 	[TRANS_STATE_RUNNING]		= 0U,
 	[TRANS_STATE_BLOCKED]		= (__TRANS_USERSPACE |
 					   __TRANS_START),
@@ -64,9 +63,6 @@ void btrfs_put_transaction(struct btrfs_transaction *transaction)
 	if (atomic_dec_and_test(&transaction->use_count)) {
 		BUG_ON(!list_empty(&transaction->list));
 		WARN_ON(!RB_EMPTY_ROOT(&transaction->delayed_refs.href_root));
-		if (transaction->delayed_refs.pending_csums)
-			printk(KERN_ERR "pending csums is %llu\n",
-			       transaction->delayed_refs.pending_csums);
 		while (!list_empty(&transaction->pending_chunks)) {
 			struct extent_map *em;
 
@@ -79,45 +75,10 @@ void btrfs_put_transaction(struct btrfs_transaction *transaction)
 	}
 }
 
-static void clear_btree_io_tree(struct extent_io_tree *tree)
+static noinline void switch_commit_root(struct btrfs_root *root)
 {
-	spin_lock(&tree->lock);
-	while (!RB_EMPTY_ROOT(&tree->state)) {
-		struct rb_node *node;
-		struct extent_state *state;
-
-		node = rb_first(&tree->state);
-		state = rb_entry(node, struct extent_state, rb_node);
-		rb_erase(&state->rb_node, &tree->state);
-		RB_CLEAR_NODE(&state->rb_node);
-		/*
-		 * btree io trees aren't supposed to have tasks waiting for
-		 * changes in the flags of extent states ever.
-		 */
-		ASSERT(!waitqueue_active(&state->wq));
-		free_extent_state(state);
-
-		cond_resched_lock(&tree->lock);
-	}
-	spin_unlock(&tree->lock);
-}
-
-static noinline void switch_commit_roots(struct btrfs_transaction *trans,
-					 struct btrfs_fs_info *fs_info)
-{
-	struct btrfs_root *root, *tmp;
-
-	down_write(&fs_info->commit_root_sem);
-	list_for_each_entry_safe(root, tmp, &trans->switch_commits,
-				 dirty_list) {
-		list_del_init(&root->dirty_list);
-		free_extent_buffer(root->commit_root);
-		root->commit_root = btrfs_root_node(root);
-		if (is_fstree(root->objectid))
-			btrfs_unpin_free_ino(root);
-		clear_btree_io_tree(&root->dirty_log_pages);
-	}
-	up_write(&fs_info->commit_root_sem);
+	free_extent_buffer(root->commit_root);
+	root->commit_root = btrfs_root_node(root);
 }
 
 static inline void extwriter_counter_inc(struct btrfs_transaction *trans,
@@ -220,14 +181,11 @@ loop:
 	 * commit the transaction.
 	 */
 	atomic_set(&cur_trans->use_count, 2);
-	cur_trans->have_free_bgs = 0;
 	cur_trans->start_time = get_seconds();
-	cur_trans->dirty_bg_run = 0;
 
 	cur_trans->delayed_refs.href_root = RB_ROOT;
 	atomic_set(&cur_trans->delayed_refs.num_entries, 0);
 	cur_trans->delayed_refs.num_heads_ready = 0;
-	cur_trans->delayed_refs.pending_csums = 0;
 	cur_trans->delayed_refs.num_heads = 0;
 	cur_trans->delayed_refs.flushing = 0;
 	cur_trans->delayed_refs.run_delayed_start = 0;
@@ -248,14 +206,8 @@ loop:
 	spin_lock_init(&cur_trans->delayed_refs.lock);
 
 	INIT_LIST_HEAD(&cur_trans->pending_snapshots);
+	INIT_LIST_HEAD(&cur_trans->ordered_operations);
 	INIT_LIST_HEAD(&cur_trans->pending_chunks);
-	INIT_LIST_HEAD(&cur_trans->switch_commits);
-	INIT_LIST_HEAD(&cur_trans->pending_ordered);
-	INIT_LIST_HEAD(&cur_trans->dirty_bgs);
-	INIT_LIST_HEAD(&cur_trans->io_bgs);
-	mutex_init(&cur_trans->cache_write_mutex);
-	cur_trans->num_dirty_bgs = 0;
-	spin_lock_init(&cur_trans->dirty_bgs_lock);
 	list_add_tail(&cur_trans->list, &fs_info->trans_list);
 	extent_io_tree_init(&cur_trans->dirty_pages,
 			     fs_info->btree_inode->i_mapping);
@@ -277,19 +229,18 @@ loop:
 static int record_root_in_trans(struct btrfs_trans_handle *trans,
 			       struct btrfs_root *root)
 {
-	if (test_bit(BTRFS_ROOT_REF_COWS, &root->state) &&
-	    root->last_trans < trans->transid) {
+	if (root->ref_cows && root->last_trans < trans->transid) {
 		WARN_ON(root == root->fs_info->extent_root);
 		WARN_ON(root->commit_root != root->node);
 
 		/*
-		 * see below for IN_TRANS_SETUP usage rules
+		 * see below for in_trans_setup usage rules
 		 * we have the reloc mutex held now, so there
 		 * is only one writer in this function
 		 */
-		set_bit(BTRFS_ROOT_IN_TRANS_SETUP, &root->state);
+		root->in_trans_setup = 1;
 
-		/* make sure readers find IN_TRANS_SETUP before
+		/* make sure readers find in_trans_setup before
 		 * they find our root->last_trans update
 		 */
 		smp_wmb();
@@ -316,7 +267,7 @@ static int record_root_in_trans(struct btrfs_trans_handle *trans,
 		 * But, we have to set root->last_trans before we
 		 * init the relocation root, otherwise, we trip over warnings
 		 * in ctree.c.  The solution used here is to flag ourselves
-		 * with root IN_TRANS_SETUP.  When this is 1, we're still
+		 * with root->in_trans_setup.  When this is 1, we're still
 		 * fixing up the reloc trees and everyone must wait.
 		 *
 		 * When this is zero, they can trust root->last_trans and fly
@@ -325,8 +276,8 @@ static int record_root_in_trans(struct btrfs_trans_handle *trans,
 		 * done before we pop in the zero below
 		 */
 		btrfs_init_reloc_root(trans, root);
-		smp_mb__before_atomic();
-		clear_bit(BTRFS_ROOT_IN_TRANS_SETUP, &root->state);
+		smp_wmb();
+		root->in_trans_setup = 0;
 	}
 	return 0;
 }
@@ -335,16 +286,16 @@ static int record_root_in_trans(struct btrfs_trans_handle *trans,
 int btrfs_record_root_in_trans(struct btrfs_trans_handle *trans,
 			       struct btrfs_root *root)
 {
-	if (!test_bit(BTRFS_ROOT_REF_COWS, &root->state))
+	if (!root->ref_cows)
 		return 0;
 
 	/*
-	 * see record_root_in_trans for comments about IN_TRANS_SETUP usage
+	 * see record_root_in_trans for comments about in_trans_setup usage
 	 * and barriers
 	 */
 	smp_rmb();
 	if (root->last_trans == trans->transid &&
-	    !test_bit(BTRFS_ROOT_IN_TRANS_SETUP, &root->state))
+	    !root->in_trans_setup)
 		return 0;
 
 	mutex_lock(&root->fs_info->reloc_mutex);
@@ -402,7 +353,7 @@ static int may_wait_transaction(struct btrfs_root *root, int type)
 static inline bool need_reserve_reloc_root(struct btrfs_root *root)
 {
 	if (!root->fs_info->reloc_ctl ||
-	    !test_bit(BTRFS_ROOT_REF_COWS, &root->state) ||
+	    !root->ref_cows ||
 	    root->root_key.objectid == BTRFS_TREE_RELOC_OBJECTID ||
 	    root->reloc_root)
 		return false;
@@ -420,9 +371,6 @@ start_transaction(struct btrfs_root *root, u64 num_items, unsigned int type,
 	u64 qgroup_reserved = 0;
 	bool reloc_reserved = false;
 	int ret;
-
-	/* Send isn't supposed to start transactions. */
-	ASSERT(current->journal_info != BTRFS_SEND_TRANS_STUB);
 
 	if (test_bit(BTRFS_FS_STATE_ERROR, &root->fs_info->fs_state))
 		return ERR_PTR(-EROFS);
@@ -444,7 +392,7 @@ start_transaction(struct btrfs_root *root, u64 num_items, unsigned int type,
 	if (num_items > 0 && root != root->fs_info->chunk_root) {
 		if (root->fs_info->quota_enabled &&
 		    is_fstree(root->root_key.objectid)) {
-			qgroup_reserved = num_items * root->nodesize;
+			qgroup_reserved = num_items * root->leafsize;
 			ret = btrfs_qgroup_reserve(root, qgroup_reserved);
 			if (ret)
 				return ERR_PTR(ret);
@@ -454,7 +402,7 @@ start_transaction(struct btrfs_root *root, u64 num_items, unsigned int type,
 		/*
 		 * Do the reservation for the relocation root creation
 		 */
-		if (need_reserve_reloc_root(root)) {
+		if (unlikely(need_reserve_reloc_root(root))) {
 			num_bytes += root->nodesize;
 			reloc_reserved = true;
 		}
@@ -524,12 +472,10 @@ again:
 	h->sync = false;
 	INIT_LIST_HEAD(&h->qgroup_ref_list);
 	INIT_LIST_HEAD(&h->new_bgs);
-	INIT_LIST_HEAD(&h->ordered);
 
 	smp_mb();
 	if (cur_trans->state >= TRANS_STATE_BLOCKED &&
 	    may_wait_transaction(root, type)) {
-		current->journal_info = h;
 		btrfs_commit_transaction(h, root);
 		goto again;
 	}
@@ -726,7 +672,7 @@ int btrfs_should_end_transaction(struct btrfs_trans_handle *trans,
 	updates = trans->delayed_ref_updates;
 	trans->delayed_ref_updates = 0;
 	if (updates) {
-		err = btrfs_run_delayed_refs(trans, root, updates * 2);
+		err = btrfs_run_delayed_refs(trans, root, updates);
 		if (err) /* Error code will also eval true */
 			return err;
 	}
@@ -742,7 +688,6 @@ static int __btrfs_end_transaction(struct btrfs_trans_handle *trans,
 	unsigned long cur = trans->delayed_ref_updates;
 	int lock = (trans->type != TRANS_JOIN_NOLOCK);
 	int err = 0;
-	int must_run_delayed_refs = 0;
 
 	if (trans->use_count > 1) {
 		trans->use_count--;
@@ -750,32 +695,13 @@ static int __btrfs_end_transaction(struct btrfs_trans_handle *trans,
 		return 0;
 	}
 
+	/*
+	 * do the qgroup accounting as early as possible
+	 */
+	err = btrfs_delayed_refs_qgroup_accounting(trans, info);
+
 	btrfs_trans_release_metadata(trans, root);
 	trans->block_rsv = NULL;
-
-	if (!list_empty(&trans->new_bgs))
-		btrfs_create_pending_block_groups(trans, root);
-
-	if (!list_empty(&trans->ordered)) {
-		spin_lock(&info->trans_lock);
-		list_splice_init(&trans->ordered, &cur_trans->pending_ordered);
-		spin_unlock(&info->trans_lock);
-	}
-
-	trans->delayed_ref_updates = 0;
-	if (!trans->sync) {
-		must_run_delayed_refs =
-			btrfs_should_throttle_delayed_refs(trans, root);
-		cur = max_t(unsigned long, cur, 32);
-
-		/*
-		 * don't make the caller wait if they are from a NOLOCK
-		 * or ATTACH transaction, it will deadlock with commit
-		 */
-		if (must_run_delayed_refs == 1 &&
-		    (trans->type & (__TRANS_JOIN_NOLOCK | __TRANS_ATTACH)))
-			must_run_delayed_refs = 2;
-	}
 
 	if (trans->qgroup_reserved) {
 		/*
@@ -784,6 +710,16 @@ static int __btrfs_end_transaction(struct btrfs_trans_handle *trans,
 		 */
 		btrfs_qgroup_free(trans->root, trans->qgroup_reserved);
 		trans->qgroup_reserved = 0;
+	}
+
+	if (!list_empty(&trans->new_bgs))
+		btrfs_create_pending_block_groups(trans, root);
+
+	trans->delayed_ref_updates = 0;
+	if (!trans->sync && btrfs_should_throttle_delayed_refs(trans, root)) {
+		cur = max_t(unsigned long, cur, 32);
+		trans->delayed_ref_updates = 0;
+		btrfs_run_delayed_refs(trans, root, cur);
 	}
 
 	btrfs_trans_release_metadata(trans, root);
@@ -835,10 +771,6 @@ static int __btrfs_end_transaction(struct btrfs_trans_handle *trans,
 	assert_qgroups_uptodate(trans);
 
 	kmem_cache_free(btrfs_trans_handle_cachep, trans);
-	if (must_run_delayed_refs) {
-		btrfs_async_run_delayed_refs(root, cur,
-					     must_run_delayed_refs == 1);
-	}
 	return err;
 }
 
@@ -871,39 +803,17 @@ int btrfs_write_marked_extents(struct btrfs_root *root,
 
 	while (!find_first_extent_bit(dirty_pages, start, &start, &end,
 				      mark, &cached_state)) {
-		bool wait_writeback = false;
-
-		err = convert_extent_bit(dirty_pages, start, end,
-					 EXTENT_NEED_WAIT,
-					 mark, &cached_state, GFP_NOFS);
-		/*
-		 * convert_extent_bit can return -ENOMEM, which is most of the
-		 * time a temporary error. So when it happens, ignore the error
-		 * and wait for writeback of this range to finish - because we
-		 * failed to set the bit EXTENT_NEED_WAIT for the range, a call
-		 * to btrfs_wait_marked_extents() would not know that writeback
-		 * for this range started and therefore wouldn't wait for it to
-		 * finish - we don't want to commit a superblock that points to
-		 * btree nodes/leafs for which writeback hasn't finished yet
-		 * (and without errors).
-		 * We cleanup any entries left in the io tree when committing
-		 * the transaction (through clear_btree_io_tree()).
-		 */
-		if (err == -ENOMEM) {
-			err = 0;
-			wait_writeback = true;
-		}
-		if (!err)
-			err = filemap_fdatawrite_range(mapping, start, end);
+		convert_extent_bit(dirty_pages, start, end, EXTENT_NEED_WAIT,
+				   mark, &cached_state, GFP_NOFS);
+		cached_state = NULL;
+		err = filemap_fdatawrite_range(mapping, start, end);
 		if (err)
 			werr = err;
-		else if (wait_writeback)
-			werr = filemap_fdatawait_range(mapping, start, end);
-		free_extent_state(cached_state);
-		cached_state = NULL;
 		cond_resched();
 		start = end + 1;
 	}
+	if (err)
+		werr = err;
 	return werr;
 }
 
@@ -922,55 +832,19 @@ int btrfs_wait_marked_extents(struct btrfs_root *root,
 	struct extent_state *cached_state = NULL;
 	u64 start = 0;
 	u64 end;
-	struct btrfs_inode *btree_ino = BTRFS_I(root->fs_info->btree_inode);
-	bool errors = false;
 
 	while (!find_first_extent_bit(dirty_pages, start, &start, &end,
 				      EXTENT_NEED_WAIT, &cached_state)) {
-		/*
-		 * Ignore -ENOMEM errors returned by clear_extent_bit().
-		 * When committing the transaction, we'll remove any entries
-		 * left in the io tree. For a log commit, we don't remove them
-		 * after committing the log because the tree can be accessed
-		 * concurrently - we do it only at transaction commit time when
-		 * it's safe to do it (through clear_btree_io_tree()).
-		 */
-		err = clear_extent_bit(dirty_pages, start, end,
-				       EXTENT_NEED_WAIT,
-				       0, 0, &cached_state, GFP_NOFS);
-		if (err == -ENOMEM)
-			err = 0;
-		if (!err)
-			err = filemap_fdatawait_range(mapping, start, end);
+		clear_extent_bit(dirty_pages, start, end, EXTENT_NEED_WAIT,
+				 0, 0, &cached_state, GFP_NOFS);
+		err = filemap_fdatawait_range(mapping, start, end);
 		if (err)
 			werr = err;
-		free_extent_state(cached_state);
-		cached_state = NULL;
 		cond_resched();
 		start = end + 1;
 	}
 	if (err)
 		werr = err;
-
-	if (root->root_key.objectid == BTRFS_TREE_LOG_OBJECTID) {
-		if ((mark & EXTENT_DIRTY) &&
-		    test_and_clear_bit(BTRFS_INODE_BTREE_LOG1_ERR,
-				       &btree_ino->runtime_flags))
-			errors = true;
-
-		if ((mark & EXTENT_NEW) &&
-		    test_and_clear_bit(BTRFS_INODE_BTREE_LOG2_ERR,
-				       &btree_ino->runtime_flags))
-			errors = true;
-	} else {
-		if (test_and_clear_bit(BTRFS_INODE_BTREE_ERR,
-				       &btree_ino->runtime_flags))
-			errors = true;
-	}
-
-	if (errors && !werr)
-		werr = -EIO;
-
 	return werr;
 }
 
@@ -998,17 +872,17 @@ static int btrfs_write_and_wait_marked_extents(struct btrfs_root *root,
 	return 0;
 }
 
-static int btrfs_write_and_wait_transaction(struct btrfs_trans_handle *trans,
+int btrfs_write_and_wait_transaction(struct btrfs_trans_handle *trans,
 				     struct btrfs_root *root)
 {
-	int ret;
-
-	ret = btrfs_write_and_wait_marked_extents(root,
+	if (!trans || !trans->transaction) {
+		struct inode *btree_inode;
+		btree_inode = root->fs_info->btree_inode;
+		return filemap_write_and_wait(btree_inode->i_mapping);
+	}
+	return btrfs_write_and_wait_marked_extents(root,
 					   &trans->transaction->dirty_pages,
 					   EXTENT_DIRTY);
-	clear_btree_io_tree(&trans->transaction->dirty_pages);
-
-	return ret;
 }
 
 /*
@@ -1030,6 +904,7 @@ static int update_cowonly_root(struct btrfs_trans_handle *trans,
 	struct btrfs_root *tree_root = root->fs_info->tree_root;
 
 	old_root_used = btrfs_root_used(&root->root_item);
+	btrfs_write_dirty_block_groups(trans, root);
 
 	while (1) {
 		old_root_bytenr = btrfs_root_bytenr(&root->root_item);
@@ -1045,7 +920,13 @@ static int update_cowonly_root(struct btrfs_trans_handle *trans,
 			return ret;
 
 		old_root_used = btrfs_root_used(&root->root_item);
+		ret = btrfs_write_dirty_block_groups(trans, root);
+		if (ret)
+			return ret;
 	}
+
+	if (root != root->fs_info->extent_root)
+		switch_commit_root(root);
 
 	return 0;
 }
@@ -1061,11 +942,13 @@ static noinline int commit_cowonly_roots(struct btrfs_trans_handle *trans,
 					 struct btrfs_root *root)
 {
 	struct btrfs_fs_info *fs_info = root->fs_info;
-	struct list_head *dirty_bgs = &trans->transaction->dirty_bgs;
-	struct list_head *io_bgs = &trans->transaction->io_bgs;
 	struct list_head *next;
 	struct extent_buffer *eb;
 	int ret;
+
+	ret = btrfs_run_delayed_refs(trans, root, (unsigned long)-1);
+	if (ret)
+		return ret;
 
 	eb = btrfs_lock_root_node(fs_info->tree_root);
 	ret = btrfs_cow_block(trans, fs_info->tree_root, eb, NULL,
@@ -1090,46 +973,25 @@ static noinline int commit_cowonly_roots(struct btrfs_trans_handle *trans,
 	if (ret)
 		return ret;
 
-	ret = btrfs_setup_space_cache(trans, root);
-	if (ret)
-		return ret;
-
 	/* run_qgroups might have added some more refs */
 	ret = btrfs_run_delayed_refs(trans, root, (unsigned long)-1);
 	if (ret)
 		return ret;
-again:
+
 	while (!list_empty(&fs_info->dirty_cowonly_roots)) {
 		next = fs_info->dirty_cowonly_roots.next;
 		list_del_init(next);
 		root = list_entry(next, struct btrfs_root, dirty_list);
-		clear_bit(BTRFS_ROOT_DIRTY, &root->state);
 
-		if (root != fs_info->extent_root)
-			list_add_tail(&root->dirty_list,
-				      &trans->transaction->switch_commits);
 		ret = update_cowonly_root(trans, root);
 		if (ret)
 			return ret;
-		ret = btrfs_run_delayed_refs(trans, root, (unsigned long)-1);
-		if (ret)
-			return ret;
 	}
 
-	while (!list_empty(dirty_bgs) || !list_empty(io_bgs)) {
-		ret = btrfs_write_dirty_block_groups(trans, root);
-		if (ret)
-			return ret;
-		ret = btrfs_run_delayed_refs(trans, root, (unsigned long)-1);
-		if (ret)
-			return ret;
-	}
+	down_write(&fs_info->extent_commit_sem);
+	switch_commit_root(fs_info->extent_root);
+	up_write(&fs_info->extent_commit_sem);
 
-	if (!list_empty(&fs_info->dirty_cowonly_roots))
-		goto again;
-
-	list_add_tail(&fs_info->extent_root->dirty_list,
-		      &trans->transaction->switch_commits);
 	btrfs_after_dev_replace_commit(fs_info);
 
 	return 0;
@@ -1182,12 +1044,15 @@ static noinline int commit_fs_roots(struct btrfs_trans_handle *trans,
 			btrfs_save_ino_cache(root, trans);
 
 			/* see comments in should_cow_block() */
-			clear_bit(BTRFS_ROOT_FORCE_COW, &root->state);
-			smp_mb__after_atomic();
+			root->force_cow = 0;
+			smp_wmb();
 
 			if (root->commit_root != root->node) {
-				list_add_tail(&root->dirty_list,
-					&trans->transaction->switch_commits);
+				mutex_lock(&root->fs_commit_mutex);
+				switch_commit_root(root);
+				btrfs_unpin_free_ino(root);
+				mutex_unlock(&root->fs_commit_mutex);
+
 				btrfs_set_root_node(&root->root_item,
 						    root->node);
 			}
@@ -1214,7 +1079,7 @@ int btrfs_defrag_root(struct btrfs_root *root)
 	struct btrfs_trans_handle *trans;
 	int ret;
 
-	if (test_and_set_bit(BTRFS_ROOT_DEFRAG_RUNNING, &root->state))
+	if (xchg(&root->defrag_running, 1))
 		return 0;
 
 	while (1) {
@@ -1237,7 +1102,7 @@ int btrfs_defrag_root(struct btrfs_root *root)
 			break;
 		}
 	}
-	clear_bit(BTRFS_ROOT_DEFRAG_RUNNING, &root->state);
+	root->defrag_running = 0;
 	return ret;
 }
 
@@ -1300,6 +1165,12 @@ static noinline int create_pending_snapshot(struct btrfs_trans_handle *trans,
 		if (pending->error)
 			goto no_free_objectid;
 	}
+
+	pending->error = btrfs_qgroup_inherit(trans, fs_info,
+					      root->root_key.objectid,
+					      objectid, pending->inherit);
+	if (pending->error)
+		goto no_free_objectid;
 
 	key.objectid = objectid;
 	key.offset = (u64)-1;
@@ -1397,26 +1268,8 @@ static noinline int create_pending_snapshot(struct btrfs_trans_handle *trans,
 		goto fail;
 	}
 
-	/*
-	 * We need to flush delayed refs in order to make sure all of our quota
-	 * operations have been done before we call btrfs_qgroup_inherit.
-	 */
-	ret = btrfs_run_delayed_refs(trans, root, (unsigned long)-1);
-	if (ret) {
-		btrfs_abort_transaction(trans, root, ret);
-		goto fail;
-	}
-
-	ret = btrfs_qgroup_inherit(trans, fs_info,
-				   root->root_key.objectid,
-				   objectid, pending->inherit);
-	if (ret) {
-		btrfs_abort_transaction(trans, root, ret);
-		goto fail;
-	}
-
 	/* see comments in should_cow_block() */
-	set_bit(BTRFS_ROOT_FORCE_COW, &root->state);
+	root->force_cow = 1;
 	smp_wmb();
 
 	btrfs_set_root_node(new_root_item, tmp);
@@ -1725,17 +1578,50 @@ static void cleanup_transaction(struct btrfs_trans_handle *trans,
 
 	trace_btrfs_transaction_commit(root);
 
+	btrfs_scrub_continue(root);
+
 	if (current->journal_info == trans)
 		current->journal_info = NULL;
-	btrfs_scrub_cancel(root->fs_info);
 
 	kmem_cache_free(btrfs_trans_handle_cachep, trans);
+}
+
+static int btrfs_flush_all_pending_stuffs(struct btrfs_trans_handle *trans,
+					  struct btrfs_root *root)
+{
+	int ret;
+
+	ret = btrfs_run_delayed_items(trans, root);
+	/*
+	 * running the delayed items may have added new refs. account
+	 * them now so that they hinder processing of more delayed refs
+	 * as little as possible.
+	 */
+	if (ret) {
+		btrfs_delayed_refs_qgroup_accounting(trans, root->fs_info);
+		return ret;
+	}
+
+	ret = btrfs_delayed_refs_qgroup_accounting(trans, root->fs_info);
+	if (ret)
+		return ret;
+
+	/*
+	 * rename don't use btrfs_join_transaction, so, once we
+	 * set the transaction to blocked above, we aren't going
+	 * to get any new ordered operations.  We can safely run
+	 * it here and no for sure that nothing new will be added
+	 * to the list
+	 */
+	ret = btrfs_run_ordered_operations(trans, root, 1);
+
+	return ret;
 }
 
 static inline int btrfs_start_delalloc_flush(struct btrfs_fs_info *fs_info)
 {
 	if (btrfs_test_opt(fs_info->tree_root, FLUSHONCOMMIT))
-		return btrfs_start_delalloc_roots(fs_info, 1, -1);
+		return btrfs_start_delalloc_roots(fs_info, 1);
 	return 0;
 }
 
@@ -1745,35 +1631,19 @@ static inline void btrfs_wait_delalloc_flush(struct btrfs_fs_info *fs_info)
 		btrfs_wait_ordered_roots(fs_info, -1);
 }
 
-static inline void
-btrfs_wait_pending_ordered(struct btrfs_transaction *cur_trans,
-			   struct btrfs_fs_info *fs_info)
-{
-	struct btrfs_ordered_extent *ordered;
-
-	spin_lock(&fs_info->trans_lock);
-	while (!list_empty(&cur_trans->pending_ordered)) {
-		ordered = list_first_entry(&cur_trans->pending_ordered,
-					   struct btrfs_ordered_extent,
-					   trans_list);
-		list_del_init(&ordered->trans_list);
-		spin_unlock(&fs_info->trans_lock);
-
-		wait_event(ordered->wait, test_bit(BTRFS_ORDERED_COMPLETE,
-						   &ordered->flags));
-		btrfs_put_ordered_extent(ordered);
-		spin_lock(&fs_info->trans_lock);
-	}
-	spin_unlock(&fs_info->trans_lock);
-}
-
 int btrfs_commit_transaction(struct btrfs_trans_handle *trans,
 			     struct btrfs_root *root)
 {
 	struct btrfs_transaction *cur_trans = trans->transaction;
 	struct btrfs_transaction *prev_trans = NULL;
-	struct btrfs_inode *btree_ino = BTRFS_I(root->fs_info->btree_inode);
 	int ret;
+
+	ret = btrfs_run_ordered_operations(trans, root, 0);
+	if (ret) {
+		btrfs_abort_transaction(trans, root, ret);
+		btrfs_end_transaction(trans, root);
+		return ret;
+	}
 
 	/* Stop the commit early if ->aborted is set */
 	if (unlikely(ACCESS_ONCE(cur_trans->aborted))) {
@@ -1816,48 +1686,13 @@ int btrfs_commit_transaction(struct btrfs_trans_handle *trans,
 		return ret;
 	}
 
-	if (!cur_trans->dirty_bg_run) {
-		int run_it = 0;
-
-		/* this mutex is also taken before trying to set
-		 * block groups readonly.  We need to make sure
-		 * that nobody has set a block group readonly
-		 * after a extents from that block group have been
-		 * allocated for cache files.  btrfs_set_block_group_ro
-		 * will wait for the transaction to commit if it
-		 * finds dirty_bg_run = 1
-		 *
-		 * The dirty_bg_run flag is also used to make sure only
-		 * one process starts all the block group IO.  It wouldn't
-		 * hurt to have more than one go through, but there's no
-		 * real advantage to it either.
-		 */
-		mutex_lock(&root->fs_info->ro_block_group_mutex);
-		if (!cur_trans->dirty_bg_run) {
-			run_it = 1;
-			cur_trans->dirty_bg_run = 1;
-		}
-		mutex_unlock(&root->fs_info->ro_block_group_mutex);
-
-		if (run_it)
-			ret = btrfs_start_dirty_block_groups(trans, root);
-	}
-	if (ret) {
-		btrfs_end_transaction(trans, root);
-		return ret;
-	}
-
 	spin_lock(&root->fs_info->trans_lock);
-	list_splice_init(&trans->ordered, &cur_trans->pending_ordered);
 	if (cur_trans->state >= TRANS_STATE_COMMIT_START) {
 		spin_unlock(&root->fs_info->trans_lock);
 		atomic_inc(&cur_trans->use_count);
 		ret = btrfs_end_transaction(trans, root);
 
 		wait_for_commit(root, cur_trans);
-
-		if (unlikely(cur_trans->aborted))
-			ret = cur_trans->aborted;
 
 		btrfs_put_transaction(cur_trans);
 
@@ -1875,11 +1710,8 @@ int btrfs_commit_transaction(struct btrfs_trans_handle *trans,
 			spin_unlock(&root->fs_info->trans_lock);
 
 			wait_for_commit(root, prev_trans);
-			ret = prev_trans->aborted;
 
 			btrfs_put_transaction(prev_trans);
-			if (ret)
-				goto cleanup_transaction;
 		} else {
 			spin_unlock(&root->fs_info->trans_lock);
 		}
@@ -1893,7 +1725,7 @@ int btrfs_commit_transaction(struct btrfs_trans_handle *trans,
 	if (ret)
 		goto cleanup_transaction;
 
-	ret = btrfs_run_delayed_items(trans, root);
+	ret = btrfs_flush_all_pending_stuffs(trans, root);
 	if (ret)
 		goto cleanup_transaction;
 
@@ -1901,13 +1733,11 @@ int btrfs_commit_transaction(struct btrfs_trans_handle *trans,
 		   extwriter_counter_read(cur_trans) == 0);
 
 	/* some pending stuffs might be added after the previous flush. */
-	ret = btrfs_run_delayed_items(trans, root);
+	ret = btrfs_flush_all_pending_stuffs(trans, root);
 	if (ret)
 		goto cleanup_transaction;
 
 	btrfs_wait_delalloc_flush(root->fs_info);
-
-	btrfs_wait_pending_ordered(cur_trans, root->fs_info);
 
 	btrfs_scrub_pause(root);
 	/*
@@ -1924,7 +1754,7 @@ int btrfs_commit_transaction(struct btrfs_trans_handle *trans,
 	/* ->aborted might be set after the previous check, so check it */
 	if (unlikely(ACCESS_ONCE(cur_trans->aborted))) {
 		ret = cur_trans->aborted;
-		goto scrub_continue;
+		goto cleanup_transaction;
 	}
 	/*
 	 * the reloc mutex makes sure that we stop
@@ -1941,7 +1771,7 @@ int btrfs_commit_transaction(struct btrfs_trans_handle *trans,
 	ret = create_pending_snapshots(trans, root->fs_info);
 	if (ret) {
 		mutex_unlock(&root->fs_info->reloc_mutex);
-		goto scrub_continue;
+		goto cleanup_transaction;
 	}
 
 	/*
@@ -1957,13 +1787,13 @@ int btrfs_commit_transaction(struct btrfs_trans_handle *trans,
 	ret = btrfs_run_delayed_items(trans, root);
 	if (ret) {
 		mutex_unlock(&root->fs_info->reloc_mutex);
-		goto scrub_continue;
+		goto cleanup_transaction;
 	}
 
 	ret = btrfs_run_delayed_refs(trans, root, (unsigned long)-1);
 	if (ret) {
 		mutex_unlock(&root->fs_info->reloc_mutex);
-		goto scrub_continue;
+		goto cleanup_transaction;
 	}
 
 	/*
@@ -1993,14 +1823,17 @@ int btrfs_commit_transaction(struct btrfs_trans_handle *trans,
 	if (ret) {
 		mutex_unlock(&root->fs_info->tree_log_mutex);
 		mutex_unlock(&root->fs_info->reloc_mutex);
-		goto scrub_continue;
+		goto cleanup_transaction;
 	}
 
 	/*
-	 * Since the transaction is done, we can apply the pending changes
-	 * before the next transaction.
+	 * Since the transaction is done, we should set the inode map cache flag
+	 * before any other comming transaction.
 	 */
-	btrfs_apply_pending_changes(root->fs_info);
+	if (btrfs_test_opt(root, CHANGE_INODE_CACHE))
+		btrfs_set_opt(root->fs_info->mount_opt, INODE_MAP_CACHE);
+	else
+		btrfs_clear_opt(root->fs_info->mount_opt, INODE_MAP_CACHE);
 
 	/* commit_fs_roots gets rid of all the tree log roots, it is now
 	 * safe to free the root of tree log roots
@@ -2011,7 +1844,7 @@ int btrfs_commit_transaction(struct btrfs_trans_handle *trans,
 	if (ret) {
 		mutex_unlock(&root->fs_info->tree_log_mutex);
 		mutex_unlock(&root->fs_info->reloc_mutex);
-		goto scrub_continue;
+		goto cleanup_transaction;
 	}
 
 	/*
@@ -2022,7 +1855,7 @@ int btrfs_commit_transaction(struct btrfs_trans_handle *trans,
 		ret = cur_trans->aborted;
 		mutex_unlock(&root->fs_info->tree_log_mutex);
 		mutex_unlock(&root->fs_info->reloc_mutex);
-		goto scrub_continue;
+		goto cleanup_transaction;
 	}
 
 	btrfs_prepare_extent_commit(trans, root);
@@ -2031,31 +1864,19 @@ int btrfs_commit_transaction(struct btrfs_trans_handle *trans,
 
 	btrfs_set_root_node(&root->fs_info->tree_root->root_item,
 			    root->fs_info->tree_root->node);
-	list_add_tail(&root->fs_info->tree_root->dirty_list,
-		      &cur_trans->switch_commits);
+	switch_commit_root(root->fs_info->tree_root);
 
 	btrfs_set_root_node(&root->fs_info->chunk_root->root_item,
 			    root->fs_info->chunk_root->node);
-	list_add_tail(&root->fs_info->chunk_root->dirty_list,
-		      &cur_trans->switch_commits);
-
-	switch_commit_roots(cur_trans, root->fs_info);
+	switch_commit_root(root->fs_info->chunk_root);
 
 	assert_qgroups_uptodate(trans);
-	ASSERT(list_empty(&cur_trans->dirty_bgs));
-	ASSERT(list_empty(&cur_trans->io_bgs));
 	update_super_roots(root);
 
 	btrfs_set_super_log_root(root->fs_info->super_copy, 0);
 	btrfs_set_super_log_root_level(root->fs_info->super_copy, 0);
 	memcpy(root->fs_info->super_for_commit, root->fs_info->super_copy,
 	       sizeof(*root->fs_info->super_copy));
-
-	btrfs_update_commit_device_size(root->fs_info);
-	btrfs_update_commit_device_bytes_used(root, cur_trans);
-
-	clear_bit(BTRFS_INODE_BTREE_LOG1_ERR, &btree_ino->runtime_flags);
-	clear_bit(BTRFS_INODE_BTREE_LOG2_ERR, &btree_ino->runtime_flags);
 
 	spin_lock(&root->fs_info->trans_lock);
 	cur_trans->state = TRANS_STATE_UNBLOCKED;
@@ -2070,13 +1891,13 @@ int btrfs_commit_transaction(struct btrfs_trans_handle *trans,
 		btrfs_error(root->fs_info, ret,
 			    "Error while writing out transaction");
 		mutex_unlock(&root->fs_info->tree_log_mutex);
-		goto scrub_continue;
+		goto cleanup_transaction;
 	}
 
 	ret = write_ctree_super(trans, root, 0);
 	if (ret) {
 		mutex_unlock(&root->fs_info->tree_log_mutex);
-		goto scrub_continue;
+		goto cleanup_transaction;
 	}
 
 	/*
@@ -2086,9 +1907,6 @@ int btrfs_commit_transaction(struct btrfs_trans_handle *trans,
 	mutex_unlock(&root->fs_info->tree_log_mutex);
 
 	btrfs_finish_extent_commit(trans, root);
-
-	if (cur_trans->have_free_bgs)
-		btrfs_clear_space_info_full(root->fs_info);
 
 	root->fs_info->last_trans_committed = cur_trans->transid;
 	/*
@@ -2122,8 +1940,6 @@ int btrfs_commit_transaction(struct btrfs_trans_handle *trans,
 
 	return ret;
 
-scrub_continue:
-	btrfs_scrub_continue(root);
 cleanup_transaction:
 	btrfs_trans_release_metadata(trans, root);
 	trans->block_rsv = NULL;
@@ -2161,6 +1977,19 @@ int btrfs_clean_one_deleted_snapshot(struct btrfs_root *root)
 	}
 	root = list_first_entry(&fs_info->dead_roots,
 			struct btrfs_root, root_list);
+	/*
+	 * Make sure root is not involved in send,
+	 * if we fail with first root, we return
+	 * directly rather than continue.
+	 */
+	spin_lock(&root->root_item_lock);
+	if (root->send_in_progress) {
+		spin_unlock(&fs_info->trans_lock);
+		spin_unlock(&root->root_item_lock);
+		return 0;
+	}
+	spin_unlock(&root->root_item_lock);
+
 	list_del_init(&root->root_list);
 	spin_unlock(&fs_info->trans_lock);
 
@@ -2173,35 +2002,9 @@ int btrfs_clean_one_deleted_snapshot(struct btrfs_root *root)
 		ret = btrfs_drop_snapshot(root, NULL, 0, 0);
 	else
 		ret = btrfs_drop_snapshot(root, NULL, 1, 0);
-
+	/*
+	 * If we encounter a transaction abort during snapshot cleaning, we
+	 * don't want to crash here
+	 */
 	return (ret < 0) ? 0 : 1;
-}
-
-void btrfs_apply_pending_changes(struct btrfs_fs_info *fs_info)
-{
-	unsigned long prev;
-	unsigned long bit;
-
-	prev = xchg(&fs_info->pending_changes, 0);
-	if (!prev)
-		return;
-
-	bit = 1 << BTRFS_PENDING_SET_INODE_MAP_CACHE;
-	if (prev & bit)
-		btrfs_set_opt(fs_info->mount_opt, INODE_MAP_CACHE);
-	prev &= ~bit;
-
-	bit = 1 << BTRFS_PENDING_CLEAR_INODE_MAP_CACHE;
-	if (prev & bit)
-		btrfs_clear_opt(fs_info->mount_opt, INODE_MAP_CACHE);
-	prev &= ~bit;
-
-	bit = 1 << BTRFS_PENDING_COMMIT;
-	if (prev & bit)
-		btrfs_debug(fs_info, "pending commit done");
-	prev &= ~bit;
-
-	if (prev)
-		btrfs_warn(fs_info,
-			"unknown pending changes left 0x%lx, ignoring", prev);
 }

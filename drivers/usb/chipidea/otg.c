@@ -1,7 +1,7 @@
 /*
  * otg.c - ChipIdea USB IP core OTG driver
  *
- * Copyright (C) 2013-2016 Freescale Semiconductor, Inc.
+ * Copyright (C) 2013-2015 Freescale Semiconductor, Inc.
  *
  * Author: Peter Chen
  *
@@ -15,6 +15,7 @@
  * are also included.
  */
 
+#include <linux/extcon.h>
 #include <linux/usb/otg.h>
 #include <linux/usb/gadget.h>
 #include <linux/usb/chipidea.h>
@@ -69,7 +70,6 @@ enum ci_role ci_otg_role(struct ci_hdrc *ci)
 static int ci_is_vbus_glitch(struct ci_hdrc *ci)
 {
 	int i;
-
 	for (i = 0; i < CI_VBUS_CONNECT_TIMEOUT_MS/20; i++) {
 		if (hw_read_otgsc(ci, OTGSC_AVV)) {
 			return 0;
@@ -85,6 +85,8 @@ static int ci_is_vbus_glitch(struct ci_hdrc *ci)
 
 void ci_handle_vbus_connected(struct ci_hdrc *ci)
 {
+	int bsv;
+
 	/*
 	 * TODO: if the platform does not supply 5v to udc, or use other way
 	 * to supply 5v, it needs to use other conditions to call
@@ -93,28 +95,41 @@ void ci_handle_vbus_connected(struct ci_hdrc *ci)
 	if (!ci->is_otg)
 		return;
 
-	if (hw_read_otgsc(ci, OTGSC_BSV) && !ci_is_vbus_glitch(ci))
+	bsv = hw_read_otgsc(ci, OTGSC_BSV) ? 1 : 0;
+
+	if (bsv && !ci_is_vbus_glitch(ci))
 		usb_gadget_vbus_connect(&ci->gadget);
+
+	extcon_set_cable_state_(&ci->extcon, 2, bsv);
 }
 
 void ci_handle_vbus_change(struct ci_hdrc *ci)
 {
+	int bsv;
+
 	if (!ci->is_otg)
 		return;
 
-	if (hw_read_otgsc(ci, OTGSC_BSV))
+
+	bsv = hw_read_otgsc(ci, OTGSC_BSV) ? 1 : 0;
+	if (bsv)
 		usb_gadget_vbus_connect(&ci->gadget);
 	else
 		usb_gadget_vbus_disconnect(&ci->gadget);
+
+	extcon_set_cable_state_(&ci->extcon, 2, bsv);
 }
 
 #define CI_VBUS_STABLE_TIMEOUT_MS 5000
 void ci_handle_id_switch(struct ci_hdrc *ci)
 {
 	enum ci_role role = ci_otg_role(ci);
-	int ret = 0;
 
 	if (role != ci->role) {
+		if (ci->is_otg) {
+			dev_info(ci->dev, "role %d to %d\n", ci->role, role);
+			extcon_set_cable_state_(&ci->extcon, role, 1);
+		}
 		dev_dbg(ci->dev, "switching from %s to %s\n",
 			ci_role(ci)->name, ci->roles[role]->name);
 
@@ -128,26 +143,20 @@ void ci_handle_id_switch(struct ci_hdrc *ci)
 
 		if (role == CI_ROLE_GADGET)
 			/* wait vbus lower than OTGSC_BSV */
-			ret = hw_wait_reg(ci, OP_OTGSC, OTGSC_BSV, 0,
+			hw_wait_reg(ci, OP_OTGSC, OTGSC_BSV, 0,
 					CI_VBUS_STABLE_TIMEOUT_MS);
-		else if (ci->vbus_active)
-			/*
-			 * If the role switch happens(e.g. during
-			 * system sleep), and we lose vbus drop
-			 * event, disconnect gadget for it before
-			 * start host.
-			 */
-		       usb_gadget_vbus_disconnect(&ci->gadget);
 
 		ci_role_start(ci, role);
-		/*
-		 * If the role switch happens(e.g. during system
-		 * sleep) and vbus keeps on afterwards, we connect
-		 * gadget as vbus connect event lost.
-		 */
-		if (ret == -ETIMEDOUT)
-			usb_gadget_vbus_connect(&ci->gadget);
-
+		if (ci->is_otg) {
+			role = ci->role;
+			if (role < CI_ROLE_END) {
+				extcon_set_cable_state_(&ci->extcon, role, 1);
+			} else {
+				role = 0;
+				extcon_set_cable_state_(&ci->extcon, role, 0);
+			}
+			extcon_set_cable_state_(&ci->extcon, role ^ 1, 0);
+		}
 	}
 }
 

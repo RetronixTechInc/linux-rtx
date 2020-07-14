@@ -29,8 +29,7 @@ static struct clk *prcc_kclk[(PRCC_NUM_PERIPH_CLUSTERS + 1) * PRCC_PERIPHS_PER_C
 #define PRCC_KCLK_STORE(clk, base, bit)        \
 	prcc_kclk[(base * PRCC_PERIPHS_PER_CLUSTER) + bit] = clk
 
-static struct clk *ux500_twocell_get(struct of_phandle_args *clkspec,
-				     void *data)
+struct clk *ux500_twocell_get(struct of_phandle_args *clkspec, void *data)
 {
 	struct clk **clk_data = data;
 	unsigned int base, bit;

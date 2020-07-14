@@ -121,6 +121,7 @@ static int abx500_clk_probe(struct platform_device *pdev)
 static struct platform_driver abx500_clk_driver = {
 	.driver = {
 		.name = "abx500-clk",
+		.owner = THIS_MODULE,
 	},
 	.probe	= abx500_clk_probe,
 };

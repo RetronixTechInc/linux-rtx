@@ -20,6 +20,8 @@
 #include <linux/init.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
+#include <linux/of_gpio.h>
+#include <linux/of_irq.h>
 #include <linux/rfkill.h>
 #include <linux/platform_device.h>
 #include <linux/clk.h>
@@ -36,6 +38,8 @@ struct rfkill_gpio_data {
 	struct gpio_desc	*shutdown_gpio;
 
 	struct rfkill		*rfkill_dev;
+	char			*reset_name;
+	char			*shutdown_name;
 	struct clk		*clk;
 
 	bool			clk_enabled;
@@ -45,14 +49,17 @@ static int rfkill_gpio_set_power(void *data, bool blocked)
 {
 	struct rfkill_gpio_data *rfkill = data;
 
-	if (!blocked && !IS_ERR(rfkill->clk) && !rfkill->clk_enabled)
-		clk_enable(rfkill->clk);
-
-	gpiod_set_value_cansleep(rfkill->shutdown_gpio, !blocked);
-	gpiod_set_value_cansleep(rfkill->reset_gpio, !blocked);
-
-	if (blocked && !IS_ERR(rfkill->clk) && rfkill->clk_enabled)
-		clk_disable(rfkill->clk);
+	if (blocked) {
+		gpiod_set_value(rfkill->shutdown_gpio, 1);
+		gpiod_set_value(rfkill->reset_gpio, 1);
+		if (!IS_ERR(rfkill->clk) && rfkill->clk_enabled)
+			clk_disable_unprepare(rfkill->clk);
+	} else {
+		if (!IS_ERR(rfkill->clk) && !rfkill->clk_enabled)
+			clk_prepare_enable(rfkill->clk);
+		gpiod_set_value(rfkill->reset_gpio, 0);
+		gpiod_set_value(rfkill->shutdown_gpio, 0);
+	}
 
 	rfkill->clk_enabled = !blocked;
 
@@ -61,15 +68,6 @@ static int rfkill_gpio_set_power(void *data, bool blocked)
 
 static const struct rfkill_ops rfkill_gpio_ops = {
 	.set_block = rfkill_gpio_set_power,
-};
-
-static const struct acpi_gpio_params reset_gpios = { 0, 0, false };
-static const struct acpi_gpio_params shutdown_gpios = { 1, 0, false };
-
-static const struct acpi_gpio_mapping acpi_rfkill_default_gpios[] = {
-	{ "reset-gpios", &reset_gpios, 1 },
-	{ "shutdown-gpios", &shutdown_gpios, 1 },
-	{ },
 };
 
 static int rfkill_gpio_acpi_probe(struct device *dev,
@@ -84,16 +82,34 @@ static int rfkill_gpio_acpi_probe(struct device *dev,
 	rfkill->name = dev_name(dev);
 	rfkill->type = (unsigned)id->driver_data;
 
-	return acpi_dev_add_driver_gpios(ACPI_COMPANION(dev),
-					 acpi_rfkill_default_gpios);
+	return 0;
+}
+
+static int rfkill_gpio_get_pdata_from_of(struct device *dev,
+		struct rfkill_gpio_data *rfkill)
+{
+	struct device_node *np = dev->of_node;
+
+	if (!np) {
+		np = of_find_matching_node(NULL, dev->driver->of_match_table);
+		if (!np) {
+			dev_notice(dev, "device tree node not available\n");
+			return -ENODEV;
+		}
+	}
+	of_property_read_u32(np, "type", &rfkill->type);
+	of_property_read_string(np, "name", &rfkill->name);
+	return 0;
 }
 
 static int rfkill_gpio_probe(struct platform_device *pdev)
 {
 	struct rfkill_gpio_platform_data *pdata = pdev->dev.platform_data;
 	struct rfkill_gpio_data *rfkill;
+	const char *clk_name = NULL;
 	struct gpio_desc *gpio;
 	int ret;
+	int len;
 
 	rfkill = devm_kzalloc(&pdev->dev, sizeof(*rfkill), GFP_KERNEL);
 	if (!rfkill)
@@ -104,25 +120,42 @@ static int rfkill_gpio_probe(struct platform_device *pdev)
 		if (ret)
 			return ret;
 	} else if (pdata) {
+		clk_name = pdata->power_clk_name;
 		rfkill->name = pdata->name;
 		rfkill->type = pdata->type;
 	} else {
-		return -ENODEV;
+		ret = rfkill_gpio_get_pdata_from_of(&pdev->dev, rfkill);
+		if (ret) {
+			dev_err(&pdev->dev, "no platform data\n");
+			return ret;
+		}
 	}
 
-	rfkill->clk = devm_clk_get(&pdev->dev, NULL);
+	len = strlen(rfkill->name);
+	rfkill->reset_name = devm_kzalloc(&pdev->dev, len + 7, GFP_KERNEL);
+	if (!rfkill->reset_name)
+		return -ENOMEM;
 
-	gpio = devm_gpiod_get(&pdev->dev, "reset");
+	rfkill->shutdown_name = devm_kzalloc(&pdev->dev, len + 10, GFP_KERNEL);
+	if (!rfkill->shutdown_name)
+		return -ENOMEM;
+
+	snprintf(rfkill->reset_name, len + 7 , "%s_reset", rfkill->name);
+	snprintf(rfkill->shutdown_name, len + 10, "%s_shutdown", rfkill->name);
+
+	rfkill->clk = devm_clk_get(&pdev->dev, clk_name);
+
+	gpio = devm_gpiod_get_index(&pdev->dev, rfkill->reset_name, 0);
 	if (!IS_ERR(gpio)) {
-		ret = gpiod_direction_output(gpio, 0);
+		ret = gpiod_direction_output(gpio, 1);
 		if (ret)
 			return ret;
 		rfkill->reset_gpio = gpio;
 	}
 
-	gpio = devm_gpiod_get(&pdev->dev, "shutdown");
+	gpio = devm_gpiod_get_index(&pdev->dev, rfkill->shutdown_name, 0);
 	if (!IS_ERR(gpio)) {
-		ret = gpiod_direction_output(gpio, 0);
+		ret = gpiod_direction_output(gpio, 1);
 		if (ret)
 			return ret;
 		rfkill->shutdown_gpio = gpio;
@@ -134,6 +167,14 @@ static int rfkill_gpio_probe(struct platform_device *pdev)
 	if ((!rfkill->reset_gpio && !rfkill->shutdown_gpio) || !rfkill->name) {
 		dev_err(&pdev->dev, "invalid platform data\n");
 		return -EINVAL;
+	}
+
+	if (pdata && pdata->gpio_runtime_setup) {
+		ret = pdata->gpio_runtime_setup(pdev);
+		if (ret) {
+			dev_err(&pdev->dev, "can't set up gpio\n");
+			return ret;
+		}
 	}
 
 	rfkill->rfkill_dev = rfkill_alloc(rfkill->name, &pdev->dev,
@@ -156,35 +197,35 @@ static int rfkill_gpio_probe(struct platform_device *pdev)
 static int rfkill_gpio_remove(struct platform_device *pdev)
 {
 	struct rfkill_gpio_data *rfkill = platform_get_drvdata(pdev);
+	struct rfkill_gpio_platform_data *pdata = pdev->dev.platform_data;
 
+	if (pdata && pdata->gpio_runtime_close)
+		pdata->gpio_runtime_close(pdev);
 	rfkill_unregister(rfkill->rfkill_dev);
 	rfkill_destroy(rfkill->rfkill_dev);
-
-	acpi_dev_remove_driver_gpios(ACPI_COMPANION(&pdev->dev));
 
 	return 0;
 }
 
-#ifdef CONFIG_ACPI
 static const struct acpi_device_id rfkill_acpi_match[] = {
-	{ "BCM2E1A", RFKILL_TYPE_BLUETOOTH },
-	{ "BCM2E39", RFKILL_TYPE_BLUETOOTH },
-	{ "BCM2E3D", RFKILL_TYPE_BLUETOOTH },
-	{ "BCM2E40", RFKILL_TYPE_BLUETOOTH },
-	{ "BCM2E64", RFKILL_TYPE_BLUETOOTH },
 	{ "BCM4752", RFKILL_TYPE_GPS },
-	{ "LNV4752", RFKILL_TYPE_GPS },
 	{ },
 };
-MODULE_DEVICE_TABLE(acpi, rfkill_acpi_match);
-#endif
+
+static const struct of_device_id rfkill_gpio_of_match_table[] = {
+	{ .compatible = "net,rfkill-gpio" },
+	{ }
+};
+MODULE_DEVICE_TABLE(of, rfkill_gpio_of_match_table);
 
 static struct platform_driver rfkill_gpio_driver = {
 	.probe = rfkill_gpio_probe,
 	.remove = rfkill_gpio_remove,
 	.driver = {
 		.name = "rfkill_gpio",
+		.owner = THIS_MODULE,
 		.acpi_match_table = ACPI_PTR(rfkill_acpi_match),
+		.of_match_table = of_match_ptr(rfkill_gpio_of_match_table),
 	},
 };
 

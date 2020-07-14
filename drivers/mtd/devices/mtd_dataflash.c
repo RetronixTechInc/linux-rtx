@@ -10,6 +10,7 @@
  * 2 of the License, or (at your option) any later version.
 */
 #include <linux/module.h>
+#include <linux/init.h>
 #include <linux/slab.h>
 #include <linux/delay.h>
 #include <linux/device.h>
@@ -149,7 +150,7 @@ static int dataflash_erase(struct mtd_info *mtd, struct erase_info *instr)
 {
 	struct dataflash	*priv = mtd->priv;
 	struct spi_device	*spi = priv->spi;
-	struct spi_transfer	x = { };
+	struct spi_transfer	x = { .tx_dma = 0, };
 	struct spi_message	msg;
 	unsigned		blocksize = priv->page_size << 3;
 	uint8_t			*command;
@@ -235,7 +236,7 @@ static int dataflash_read(struct mtd_info *mtd, loff_t from, size_t len,
 			       size_t *retlen, u_char *buf)
 {
 	struct dataflash	*priv = mtd->priv;
-	struct spi_transfer	x[2] = { };
+	struct spi_transfer	x[2] = { { .tx_dma = 0, }, };
 	struct spi_message	msg;
 	unsigned int		addr;
 	uint8_t			*command;
@@ -301,7 +302,7 @@ static int dataflash_write(struct mtd_info *mtd, loff_t to, size_t len,
 {
 	struct dataflash	*priv = mtd->priv;
 	struct spi_device	*spi = priv->spi;
-	struct spi_transfer	x[2] = { };
+	struct spi_transfer	x[2] = { { .tx_dma = 0, }, };
 	struct spi_message	msg;
 	unsigned int		pageaddr, addr, offset, writelen;
 	size_t			remaining = len;
@@ -439,8 +440,8 @@ static int dataflash_write(struct mtd_info *mtd, loff_t to, size_t len,
 
 #ifdef CONFIG_MTD_DATAFLASH_OTP
 
-static int dataflash_get_otp_info(struct mtd_info *mtd, size_t len,
-				  size_t *retlen, struct otp_info *info)
+static int dataflash_get_otp_info(struct mtd_info *mtd,
+		struct otp_info *info, size_t len)
 {
 	/* Report both blocks as identical:  bytes 0..64, locked.
 	 * Unless the user block changed from all-ones, we can't
@@ -449,8 +450,7 @@ static int dataflash_get_otp_info(struct mtd_info *mtd, size_t len,
 	info->start = 0;
 	info->length = 64;
 	info->locked = 1;
-	*retlen = sizeof(*info);
-	return 0;
+	return sizeof(*info);
 }
 
 static ssize_t otp_read(struct spi_device *spi, unsigned base,
@@ -542,18 +542,14 @@ static int dataflash_write_user_otp(struct mtd_info *mtd,
 	struct dataflash	*priv = mtd->priv;
 	int			status;
 
-	if (from >= 64) {
-		/*
-		 * Attempting to write beyond the end of OTP memory,
-		 * no data can be written.
-		 */
-		*retlen = 0;
-		return 0;
-	}
+	if (len > 64)
+		return -EINVAL;
 
-	/* Truncate the write to fit into OTP memory. */
+	/* Strictly speaking, we *could* truncate the write ... but
+	 * let's not do that for the only write that's ever possible.
+	 */
 	if ((from + len) > 64)
-		len = 64 - from;
+		return -EINVAL;
 
 	/* OUT: OP_WRITE_SECURITY, 3 zeroes, 64 data-or-zero bytes
 	 * IN:  ignore all

@@ -13,7 +13,6 @@
  */
 
 #include <linux/device.h>
-#include <linux/err.h>
 #include <linux/module.h>
 #include <linux/list.h>
 #include <linux/mutex.h>
@@ -43,7 +42,7 @@ static int acpi_dma_parse_resource_group(const struct acpi_csrt_group *grp,
 {
 	const struct acpi_csrt_shared_info *si;
 	struct list_head resource_list;
-	struct resource_entry *rentry;
+	struct resource_list_entry *rentry;
 	resource_size_t mem = 0, irq = 0;
 	int ret;
 
@@ -56,10 +55,10 @@ static int acpi_dma_parse_resource_group(const struct acpi_csrt_group *grp,
 		return 0;
 
 	list_for_each_entry(rentry, &resource_list, node) {
-		if (resource_type(rentry->res) == IORESOURCE_MEM)
-			mem = rentry->res->start;
-		else if (resource_type(rentry->res) == IORESOURCE_IRQ)
-			irq = rentry->res->start;
+		if (resource_type(&rentry->res) == IORESOURCE_MEM)
+			mem = rentry->res.start;
+		else if (resource_type(&rentry->res) == IORESOURCE_IRQ)
+			irq = rentry->res.start;
 	}
 
 	acpi_dev_free_resource_list(&resource_list);
@@ -266,7 +265,7 @@ EXPORT_SYMBOL_GPL(devm_acpi_dma_controller_register);
  */
 void devm_acpi_dma_controller_free(struct device *dev)
 {
-	WARN_ON(devres_release(dev, devm_acpi_dma_release, NULL, NULL));
+	WARN_ON(devres_destroy(dev, devm_acpi_dma_release, NULL, NULL));
 }
 EXPORT_SYMBOL_GPL(devm_acpi_dma_controller_free);
 
@@ -344,7 +343,7 @@ static int acpi_dma_parse_fixed_dma(struct acpi_resource *res, void *data)
  * @index:	index of FixedDMA descriptor for @dev
  *
  * Return:
- * Pointer to appropriate dma channel on success or an error pointer.
+ * Pointer to appropriate dma channel on success or NULL on error.
  */
 struct dma_chan *acpi_dma_request_slave_chan_by_index(struct device *dev,
 		size_t index)
@@ -359,10 +358,10 @@ struct dma_chan *acpi_dma_request_slave_chan_by_index(struct device *dev,
 
 	/* Check if the device was enumerated by ACPI */
 	if (!dev || !ACPI_HANDLE(dev))
-		return ERR_PTR(-ENODEV);
+		return NULL;
 
 	if (acpi_bus_get_device(ACPI_HANDLE(dev), &adev))
-		return ERR_PTR(-ENODEV);
+		return NULL;
 
 	memset(&pdata, 0, sizeof(pdata));
 	pdata.index = index;
@@ -377,7 +376,7 @@ struct dma_chan *acpi_dma_request_slave_chan_by_index(struct device *dev,
 	acpi_dev_free_resource_list(&resource_list);
 
 	if (dma_spec->slave_id < 0 || dma_spec->chan_id < 0)
-		return ERR_PTR(-ENODEV);
+		return NULL;
 
 	mutex_lock(&acpi_dma_lock);
 
@@ -400,7 +399,7 @@ struct dma_chan *acpi_dma_request_slave_chan_by_index(struct device *dev,
 	}
 
 	mutex_unlock(&acpi_dma_lock);
-	return chan ? chan : ERR_PTR(-EPROBE_DEFER);
+	return chan;
 }
 EXPORT_SYMBOL_GPL(acpi_dma_request_slave_chan_by_index);
 
@@ -414,7 +413,7 @@ EXPORT_SYMBOL_GPL(acpi_dma_request_slave_chan_by_index);
  * the first FixedDMA descriptor is TX and second is RX.
  *
  * Return:
- * Pointer to appropriate dma channel on success or an error pointer.
+ * Pointer to appropriate dma channel on success or NULL on error.
  */
 struct dma_chan *acpi_dma_request_slave_chan_by_name(struct device *dev,
 		const char *name)
@@ -426,7 +425,7 @@ struct dma_chan *acpi_dma_request_slave_chan_by_name(struct device *dev,
 	else if (!strcmp(name, "rx"))
 		index = 1;
 	else
-		return ERR_PTR(-ENODEV);
+		return NULL;
 
 	return acpi_dma_request_slave_chan_by_index(dev, index);
 }

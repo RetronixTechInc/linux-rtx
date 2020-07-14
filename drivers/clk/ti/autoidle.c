@@ -119,7 +119,7 @@ int __init of_ti_clk_autoidle_setup(struct device_node *node)
 	clk->name = node->name;
 	clk->reg = ti_clk_get_reg_addr(node, 0);
 
-	if (IS_ERR(clk->reg)) {
+	if (!clk->reg) {
 		kfree(clk);
 		return -EINVAL;
 	}

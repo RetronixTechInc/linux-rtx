@@ -41,11 +41,11 @@
 #define DEBUG_SUBSYSTEM S_LLITE
 
 #include <linux/fs.h>
-#include <linux/uaccess.h>
+#include <asm/uaccess.h>
 #include <linux/file.h>
 #include <linux/kmod.h>
 
-#include "../include/lustre_lite.h"
+#include <lustre_lite.h>
 #include "llite_internal.h"
 
 /* for obd_capa.c_list, client capa might stay in three places:
@@ -63,16 +63,14 @@ static struct list_head *ll_capa_list = &capa_list[CAPA_SITE_CLIENT];
 struct timer_list ll_capa_timer;
 /* for debug: indicate whether capa on llite is enabled or not */
 static atomic_t ll_capa_debug = ATOMIC_INIT(0);
-static unsigned long long ll_capa_renewed;
-static unsigned long long ll_capa_renewal_noent;
-static unsigned long long ll_capa_renewal_failed;
-static unsigned long long ll_capa_renewal_retries;
+static unsigned long long ll_capa_renewed = 0;
+static unsigned long long ll_capa_renewal_noent = 0;
+static unsigned long long ll_capa_renewal_failed = 0;
+static unsigned long long ll_capa_renewal_retries = 0;
 
-static int ll_update_capa(struct obd_capa *ocapa, struct lustre_capa *capa);
-
-static inline void update_capa_timer(struct obd_capa *ocapa, unsigned long expiry)
+static inline void update_capa_timer(struct obd_capa *ocapa, cfs_time_t expiry)
 {
-	if (time_before(expiry, ll_capa_timer.expires) ||
+	if (cfs_time_before(expiry, ll_capa_timer.expires) ||
 	    !timer_pending(&ll_capa_timer)) {
 		mod_timer(&ll_capa_timer, expiry);
 		DEBUG_CAPA(D_SEC, &ocapa->c_capa,
@@ -80,7 +78,7 @@ static inline void update_capa_timer(struct obd_capa *ocapa, unsigned long expir
 	}
 }
 
-static inline unsigned long capa_renewal_time(struct obd_capa *ocapa)
+static inline cfs_time_t capa_renewal_time(struct obd_capa *ocapa)
 {
 	return cfs_time_sub(ocapa->c_expiry,
 			    cfs_time_seconds(ocapa->c_capa.lc_timeout) / 2);
@@ -88,7 +86,7 @@ static inline unsigned long capa_renewal_time(struct obd_capa *ocapa)
 
 static inline int capa_is_to_expire(struct obd_capa *ocapa)
 {
-	return time_before_eq(capa_renewal_time(ocapa), cfs_time_current());
+	return cfs_time_beforeq(capa_renewal_time(ocapa), cfs_time_current());
 }
 
 static inline int have_expired_capa(void)
@@ -359,7 +357,7 @@ struct obd_capa *ll_osscapa_get(struct inode *inode, __u64 opc)
 		ocapa = NULL;
 
 		if (atomic_read(&ll_capa_debug)) {
-			CERROR("no capability for "DFID" opc %#llx\n",
+			CERROR("no capability for "DFID" opc "LPX64"\n",
 			       PFID(&lli->lli_fid), opc);
 			atomic_set(&ll_capa_debug, 0);
 		}
@@ -511,13 +509,13 @@ struct obd_capa *ll_add_capa(struct inode *inode, struct obd_capa *ocapa)
 	return ocapa;
 }
 
-static inline void delay_capa_renew(struct obd_capa *oc, unsigned long delay)
+static inline void delay_capa_renew(struct obd_capa *oc, cfs_time_t delay)
 {
 	/* NB: set a fake expiry for this capa to prevent it renew too soon */
 	oc->c_expiry = cfs_time_add(oc->c_expiry, cfs_time_seconds(delay));
 }
 
-static int ll_update_capa(struct obd_capa *ocapa, struct lustre_capa *capa)
+int ll_update_capa(struct obd_capa *ocapa, struct lustre_capa *capa)
 {
 	struct inode *inode = ocapa->u.cli.inode;
 	int rc = 0;
@@ -540,9 +538,10 @@ static int ll_update_capa(struct obd_capa *ocapa, struct lustre_capa *capa)
 			if (rc == -EIO && !capa_is_expired(ocapa)) {
 				delay_capa_renew(ocapa, 120);
 				DEBUG_CAPA(D_ERROR, &ocapa->c_capa,
-					   "renewal failed: -EIO, retry in 2 mins");
+					   "renewal failed: -EIO, "
+					   "retry in 2 mins");
 				ll_capa_renewal_retries++;
-				goto retry;
+				GOTO(retry, rc);
 			} else {
 				DEBUG_CAPA(D_ERROR, &ocapa->c_capa,
 					   "renewal failed(rc: %d) for", rc);

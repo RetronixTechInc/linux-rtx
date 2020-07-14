@@ -35,10 +35,10 @@
 #ifndef __LNET_API_SUPPORT_H__
 #define __LNET_API_SUPPORT_H__
 
-#include "linux/api-support.h"
+#include <linux/lnet/linux/api-support.h>
 
-#include "../libcfs/libcfs.h"
-#include "types.h"
-#include "lnet.h"
+#include <linux/libcfs/libcfs.h>
+#include <linux/lnet/types.h>
+#include <linux/lnet/lnet.h>
 
 #endif

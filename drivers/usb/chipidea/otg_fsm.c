@@ -28,7 +28,6 @@
 #include "ci.h"
 #include "bits.h"
 #include "otg.h"
-#include "udc.h"
 #include "otg_fsm.h"
 #include "udc.h"
 #include "host.h"
@@ -215,13 +214,16 @@ static unsigned otg_timer_ms[] = {
 	TB_AIDL_BDIS,
 	TB_SE0_SRP,
 	TB_SRP_FAIL,
-	0,
 	TB_DATA_PLS,
 	TB_SSEND_SRP,
+	0,
 	TA_DP_END,
 	TA_TST_MAINT,
 	TB_SRP_REQD,
 	TB_TST_SUSP,
+	TA_ADP_PRB,
+	TB_ADP_PRB,
+	TB_ADP_SNS,
 	0,
 };
 
@@ -340,7 +342,10 @@ static int b_aidl_bdis_tmout(struct ci_hdrc *ci)
 static int b_se0_srp_tmout(struct ci_hdrc *ci)
 {
 	ci->fsm.b_se0_srp = 1;
-	return 0;
+	if (ci->fsm.power_up)
+		return 1;
+	else
+		return 0;
 }
 
 static int b_srp_fail_tmout(struct ci_hdrc *ci)
@@ -422,6 +427,19 @@ static int b_tst_susp_tmout(struct ci_hdrc *ci)
 	return 1;
 }
 
+/* used to enable ADP probe irq for next */
+static int adp_prb_tmout(struct ci_hdrc *ci)
+{
+	ci->adp_probe_event = true;
+	return 0;
+}
+
+static int b_adp_sns_tmout(struct ci_hdrc *ci)
+{
+	ci->adp_sense_event = true;
+	return 0;
+}
+
 /*
  * Keep this list in the same order as timers indexed
  * by enum otg_fsm_timer in include/linux/usb/otg-fsm.h
@@ -436,13 +454,16 @@ static int (*otg_timer_handlers[])(struct ci_hdrc *) = {
 	b_aidl_bdis_tmout,	/* B_AIDL_BDIS */
 	b_se0_srp_tmout,	/* B_SE0_SRP */
 	b_srp_fail_tmout,	/* B_SRP_FAIL */
-	NULL,			/* A_WAIT_ENUM */
 	b_data_pls_tmout,	/* B_DATA_PLS */
 	b_ssend_srp_tmout,	/* B_SSEND_SRP */
+	NULL,			/* A_WAIT_ENUM */
 	a_dp_end_tmout,		/* A_DP_END */
 	a_tst_maint_tmout,	/* A_TST_MAINT */
 	b_srp_reqd_tmout,	/* B_SRP_REQD */
 	b_tst_susp_tmout,	/* B_TST_SUSP */
+	adp_prb_tmout,		/* ADP_PRB for A */
+	adp_prb_tmout,		/* ADP_PRB for B */
+	b_adp_sns_tmout,	/* B_ADP_SNS */
 	NULL,			/* HNP_POLLING */
 };
 
@@ -516,6 +537,7 @@ static int ci_otg_init_timers(struct ci_hdrc *ci)
 
 	setup_timer(&ci->hnp_polling_timer, hnp_polling_timer_work,
 							(unsigned long)ci);
+
 	return 0;
 }
 
@@ -538,6 +560,7 @@ static void ci_otg_fsm_add_timer(struct otg_fsm *fsm, enum otg_fsm_timer t)
 		else
 			ci_otg_add_timer(ci, t);
 	}
+
 	return;
 }
 
@@ -645,6 +668,7 @@ static int ci_otg_start_host(struct otg_fsm *fsm, int on)
 		ci_role_start(ci, CI_ROLE_HOST);
 	} else {
 		ci_role_stop(ci);
+		hw_device_reset(ci);
 		ci_role_start(ci, CI_ROLE_GADGET);
 	}
 	return 0;
@@ -667,6 +691,44 @@ static int ci_otg_start_gadget(struct otg_fsm *fsm, int on)
 	return 0;
 }
 
+static void ci_otg_start_adp_prb(struct otg_fsm *fsm)
+{
+	struct ci_hdrc  *ci = container_of(fsm, struct ci_hdrc, fsm);
+
+	if (!ci->platdata->ci_otg_caps.adp_support)
+		return;
+
+	if (ci->platdata->notify_event)
+		ci->platdata->notify_event(ci,
+			CI_HDRC_IMX_ADP_PROBE_START);
+	pm_runtime_get(ci->dev);
+}
+
+static void ci_otg_start_adp_sns(struct otg_fsm *fsm)
+{
+	struct ci_hdrc  *ci = container_of(fsm, struct ci_hdrc, fsm);
+
+	if (!ci->platdata->ci_otg_caps.adp_support || !ci->driver)
+		return;
+
+	/* TODO If power_up and vbus is off, do one ADP probe before SRP */
+
+	/*
+	 * start a timer to see if the ADP sense irq
+	 * can be generated before time out, if yes, means
+	 * the A device still connected and is doing
+	 * ADP probe; if no, means the connection
+	 * lost(after VBus off, OTG A-device can NOT
+	 * connect with B-dev but does not do ADP probe)
+	 * then B-dev start ADP probe.
+	 */
+	otg_add_timer(fsm, B_ADP_SNS);
+	if (ci->platdata->notify_event)
+		ci->platdata->notify_event(ci,
+			CI_HDRC_IMX_ADP_SENSE_ENABLE);
+	return;
+}
+
 static struct otg_fsm_ops ci_otg_ops = {
 	.drv_vbus = ci_otg_drv_vbus,
 	.loc_conn = ci_otg_loc_conn,
@@ -676,7 +738,49 @@ static struct otg_fsm_ops ci_otg_ops = {
 	.del_timer = ci_otg_fsm_del_timer,
 	.start_host = ci_otg_start_host,
 	.start_gadget = ci_otg_start_gadget,
+	.start_adp_prb = ci_otg_start_adp_prb,
+	.start_adp_sns = ci_otg_start_adp_sns,
 };
+
+static int ci_otg_fsm_adp_work(struct ci_hdrc *ci)
+{
+	struct otg_fsm *fsm = &ci->fsm;
+
+	if (!ci->platdata->notify_event ||
+		!ci->platdata->ci_otg_caps.adp_support)
+		return -ENOTSUPP;
+
+	if (ci->adp_probe_event) {
+		ci->adp_probe_event = false;
+		/*
+		 * Continue ADP probe if probe is on-going
+		 * Do not release pm since the charge
+		 * time is very short, rely on probe
+		 * irq handler to release pm count
+		 */
+		if (fsm->adp_prb)
+			ci->platdata->notify_event(ci,
+				CI_HDRC_IMX_ADP_PROBE_ENABLE);
+		else
+			pm_runtime_put_sync(ci->dev);
+		return 0;
+	} else if (ci->adp_sense_event) {
+		ci->adp_sense_event = false;
+
+		/* If connection is still there, continue sense */
+		if (ci->platdata->notify_event(ci,
+				CI_HDRC_IMX_ADP_SENSE_CONNECTION)) {
+			otg_add_timer(&ci->fsm, B_ADP_SNS);
+		} else {
+			ci->fsm.adp_sns = 0;
+			/* start do probe after sense failed */
+			otg_start_adp_prb(fsm);
+		}
+		pm_runtime_put_sync(ci->dev);
+		return 0;
+	}
+	return 1;
+}
 
 int ci_otg_fsm_work(struct ci_hdrc *ci)
 {
@@ -702,6 +806,9 @@ int ci_otg_fsm_work(struct ci_hdrc *ci)
 	}
 
 	pm_runtime_get_sync(ci->dev);
+	if (!ci_otg_fsm_adp_work(ci))
+		return 0;
+
 	if (otg_statemachine(&ci->fsm)) {
 		if (ci->fsm.otg->state == OTG_STATE_A_IDLE) {
 			/*
@@ -729,14 +836,6 @@ int ci_otg_fsm_work(struct ci_hdrc *ci)
 				ci->id_event = false;
 		} else if (ci->fsm.otg->state == OTG_STATE_B_IDLE) {
 			ci->fsm.b_sess_vld = hw_read_otgsc(ci, OTGSC_BSV);
-			if (ci->fsm.b_sess_vld) {
-				ci->fsm.power_up = 0;
-				/*
-				 * Further transite to b_periphearl state
-				 * when register gadget driver with vbus on
-				 */
-				ci_otg_queue_work(ci);
-			}
 		} else if (ci->fsm.otg->state == OTG_STATE_A_HOST ||
 			ci->fsm.otg->state == OTG_STATE_A_WAIT_VFALL) {
 			pm_runtime_mark_last_busy(ci->dev);
@@ -841,6 +940,61 @@ static void ci_otg_fsm_event(struct ci_hdrc *ci)
 	}
 }
 
+static irqreturn_t ci_otg_fsm_adp_int(struct ci_hdrc *ci)
+{
+	struct otg_fsm *fsm = &ci->fsm;
+	irqreturn_t retval =  IRQ_NONE;
+	bool adp_int = false;
+
+	if (!ci->platdata->notify_event ||
+		!ci->platdata->ci_otg_caps.adp_support)
+		return retval;
+
+	adp_int = ci->platdata->notify_event(ci,
+			CI_HDRC_IMX_ADP_IS_PROBE_INT);
+	if (adp_int) {
+		adp_int = ci->platdata->notify_event(ci,
+				CI_HDRC_IMX_ADP_ATTACH_EVENT);
+		if (adp_int) {
+			if (!fsm->id)
+				fsm->a_bus_drop = 0;
+			/*
+			 * For B device, ADP may come after BSV rise,
+			 * this case should be handle by BSV irq
+			 */
+			if (!fsm->id || !fsm->b_sess_vld)
+				fsm->adp_change = 1;
+
+			ci_otg_queue_work(ci);
+		} else {
+			/* contine probe */
+			if (fsm->id)
+				otg_add_timer(fsm, B_ADP_PRB);
+			else
+				otg_add_timer(fsm, A_ADP_PRB);
+		}
+
+		pm_runtime_put(ci->dev);
+		return IRQ_HANDLED;
+	}
+
+	adp_int = ci->platdata->notify_event(ci,
+			CI_HDRC_IMX_ADP_IS_SENSE_INT);
+	if (adp_int) {
+		/*
+		 * Indicates the A-dev is doing ADP probe.
+		 * continue sense, and reset B_ADP_SNS
+		 * timer, this irq will be disabled by the
+		 * timer time out func.
+		 * If A-dev start session by turn on Vbus
+		 * B-dev should disable adp sense.
+		 */
+		if (!fsm->b_sess_vld)
+			otg_add_timer(fsm, B_ADP_SNS);
+	}
+	return retval;
+}
+
 /*
  * ci_otg_irq - otg fsm related irq handling
  * and also update otg fsm variable by monitoring usb host and udc
@@ -854,9 +1008,12 @@ irqreturn_t ci_otg_fsm_irq(struct ci_hdrc *ci)
 	struct otg_fsm *fsm = &ci->fsm;
 
 	otgsc = hw_read_otgsc(ci, ~0);
-	otg_int_src = otgsc & OTGSC_INT_STATUS_BITS & (otgsc >> 8);
 	fsm->id = (otgsc & OTGSC_ID) ? 1 : 0;
 
+	if (ci_otg_fsm_adp_int(ci) == IRQ_HANDLED)
+		return IRQ_HANDLED;
+
+	otg_int_src = otgsc & OTGSC_INT_STATUS_BITS & (otgsc >> 8);
 	if (otg_int_src) {
 		if (otg_int_src & OTGSC_DPIS) {
 			hw_write_otgsc(ci, OTGSC_DPIS, OTGSC_DPIS);

@@ -43,16 +43,17 @@
 
 #define DEBUG_SUBSYSTEM S_FLD
 
-#include "../../include/linux/libcfs/libcfs.h"
-#include <linux/module.h>
+# include <linux/libcfs/libcfs.h>
+# include <linux/module.h>
 
-#include "../include/obd.h"
-#include "../include/obd_class.h"
-#include "../include/dt_object.h"
-#include "../include/obd_support.h"
-#include "../include/lustre_req_layout.h"
-#include "../include/lustre_fld.h"
-#include "../include/lustre_fid.h"
+#include <obd.h>
+#include <obd_class.h>
+#include <dt_object.h>
+#include <md_object.h>
+#include <obd_support.h>
+#include <lustre_req_layout.h>
+#include <lustre_fld.h>
+#include <lustre_fid.h>
 #include "fld_internal.h"
 
 static int
@@ -87,29 +88,20 @@ fld_proc_hash_seq_show(struct seq_file *m, void *unused)
 }
 
 static ssize_t
-fld_proc_hash_seq_write(struct file *file,
-				const char __user *buffer,
-				size_t count, loff_t *off)
+fld_proc_hash_seq_write(struct file *file, const char *buffer,
+			size_t count, loff_t *off)
 {
-	struct lu_client_fld *fld;
+	struct lu_client_fld *fld = ((struct seq_file *)file->private_data)->private;
 	struct lu_fld_hash *hash = NULL;
-	char fh_name[8];
 	int i;
 
-	if (count > sizeof(fh_name))
-		return -ENAMETOOLONG;
-
-	if (copy_from_user(fh_name, buffer, count) != 0)
-		return -EFAULT;
-
-	fld = ((struct seq_file *)file->private_data)->private;
 	LASSERT(fld != NULL);
 
 	for (i = 0; fld_hash[i].fh_name != NULL; i++) {
 		if (count != strlen(fld_hash[i].fh_name))
 			continue;
 
-		if (!strncmp(fld_hash[i].fh_name, fh_name, count)) {
+		if (!strncmp(fld_hash[i].fh_name, buffer, count)) {
 			hash = &fld_hash[i];
 			break;
 		}
@@ -154,7 +146,7 @@ static int fld_proc_cache_flush_release(struct inode *inode, struct file *file)
 	return 0;
 }
 
-static struct file_operations fld_proc_cache_flush_fops = {
+struct file_operations fld_proc_cache_flush_fops = {
 	.owner		= THIS_MODULE,
 	.open		= fld_proc_cache_flush_open,
 	.write		= fld_proc_cache_flush_write,
@@ -168,5 +160,4 @@ struct lprocfs_vars fld_client_proc_list[] = {
 	{ "targets", &fld_proc_targets_fops },
 	{ "hash", &fld_proc_hash_fops },
 	{ "cache_flush", &fld_proc_cache_flush_fops },
-	{ NULL }
-};
+	{ NULL }};

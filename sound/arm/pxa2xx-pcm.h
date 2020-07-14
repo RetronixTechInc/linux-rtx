@@ -9,11 +9,12 @@
  * it under the terms of the GNU General Public License version 2 as
  * published by the Free Software Foundation.
  */
+#include <mach/dma.h>
 
 struct pxa2xx_runtime_data {
 	int dma_ch;
 	struct snd_dmaengine_dai_dma_data *params;
-	struct pxa_dma_desc *dma_desc_array;
+	pxa_dma_desc *dma_desc_array;
 	dma_addr_t dma_desc_array_phys;
 };
 

@@ -274,6 +274,7 @@ static struct platform_driver spdif_in_driver = {
 	.probe		= spdif_in_probe,
 	.driver		= {
 		.name	= "spdif-in",
+		.owner	= THIS_MODULE,
 	},
 };
 

@@ -41,12 +41,9 @@
 #define DDRPHY_OFFSETW_CON0	0x30
 #define DDRPHY_OFFSETW_CON1	0x34
 #define DDRPHY_OFFSETW_CON2	0x38
-#define DDRPHY_CA_WLDSKEW_CON0	0x6c
 #define DDRPHY_CA_DSKEW_CON0	0x7c
 #define DDRPHY_CA_DSKEW_CON1	0x80
 #define DDRPHY_CA_DSKEW_CON2	0x84
-
-#define ANADIG_DIGPROG		0x800
 
 	.align 3
 
@@ -174,25 +171,11 @@
 	ldr	r7, =0x7f
 	str	r7, [r5, #DDRPHY_OFFSETW_CON2]
 
-	ldr	r7, [r9, #ANADIG_DIGPROG]
-	and	r7, r7, #0x11
-	cmp	r7, #0x11
-	bne	20f
+	ldr	r7, =0x0
+	str	r7, [r5, #DDRPHY_CA_DSKEW_CON0]
+	str	r7, [r5, #DDRPHY_CA_DSKEW_CON1]
+	str	r7, [r5, #DDRPHY_CA_DSKEW_CON2]
 
-	ldr	r7, =0x0
-	str	r7, [r5, #DDRPHY_CA_WLDSKEW_CON0]
-	ldr	r7, =0x60606060
-	str	r7, [r5, #DDRPHY_CA_DSKEW_CON0]
-	str	r7, [r5, #DDRPHY_CA_DSKEW_CON1]
-	ldr	r7, =0x00006060
-	str	r7, [r5, #DDRPHY_CA_DSKEW_CON2]
-	b	21f
-20:
-	ldr	r7, =0x0
-	str	r7, [r5, #DDRPHY_CA_DSKEW_CON0]
-	str	r7, [r5, #DDRPHY_CA_DSKEW_CON1]
-	str	r7, [r5, #DDRPHY_CA_DSKEW_CON2]
-21:
 	ldr	r7, =0x1100007f
 	str	r7, [r5, #DDRPHY_OFFSETD_CON0]
 	ldr	r7, =0x1000007f
@@ -227,11 +210,6 @@
 
 	ldr	r7, =0x0
 	str	r7, [r4, #DDRC_DBG1]
-
-	/* enable auto self-refresh */
-	ldr	r7, [r4, #DDRC_PWRCTL]
-	orr	r7, r7, #(1 << 0)
-	str	r7, [r4, #DDRC_PWRCTL]
 
 	.endm
 
@@ -291,7 +269,7 @@
 	ldr	r8, =0x9880
 	str	r7, [r2, r8]
 
-	ldr	r7, =0x1010007e
+	ldr	r7, =0x02020070
 	str	r7, [r5, #DDRPHY_MDLL_CON0]
 
 	ldr	r7, =0x10000008
@@ -309,25 +287,11 @@
 	ldr	r7, =0x8
 	str	r7, [r5, #DDRPHY_OFFSETW_CON2]
 
-	ldr	r7, [r9, #ANADIG_DIGPROG]
-	and	r7, r7, #0x11
-	cmp	r7, #0x11
-	bne	22f
-
-	ldr	r7, =0x40404040
-	str	r7, [r5, #DDRPHY_CA_WLDSKEW_CON0]
-	ldr	r7, =0x18181818
-	str	r7, [r5, #DDRPHY_CA_DSKEW_CON0]
-	str	r7, [r5, #DDRPHY_CA_DSKEW_CON1]
-	ldr	r7, =0x40401818
-	str	r7, [r5, #DDRPHY_CA_DSKEW_CON2]
-	b	23f
-22:
 	ldr	r7, =0x0
 	str	r7, [r5, #DDRPHY_CA_DSKEW_CON0]
 	str	r7, [r5, #DDRPHY_CA_DSKEW_CON1]
 	str	r7, [r5, #DDRPHY_CA_DSKEW_CON2]
-23:
+
 	ldr	r7, =0x11000008
 	str	r7, [r5, #DDRPHY_OFFSETD_CON0]
 	ldr	r7, =0x10000008
@@ -426,15 +390,10 @@
 	ldr	r7, =0x0
 	str	r7, [r4, #DDRC_DBG1]
 
-	/* enable auto self-refresh */
-	ldr	r7, [r4, #DDRC_PWRCTL]
-	orr	r7, r7, #(1 << 0)
-	str	r7, [r4, #DDRC_PWRCTL]
-
 	.endm
 
 ENTRY(imx7d_ddr3_freq_change)
-	push	{r2 - r9}
+	push	{r2 - r8}
 
 	/*
 	 * To ensure no page table walks occur in DDR, we
@@ -487,7 +446,6 @@ ENTRY(imx7d_ddr3_freq_change)
 	ldr	r3, =IMX_IO_P2V(MX7D_IOMUXC_GPR_BASE_ADDR)
 	ldr	r4, =IMX_IO_P2V(MX7D_DDRC_BASE_ADDR)
 	ldr	r5, =IMX_IO_P2V(MX7D_DDRC_PHY_BASE_ADDR)
-	ldr	r9, =IMX_IO_P2V(MX7D_ANATOP_BASE_ADDR)
 
 	ldr	r6, =100000000
 	cmp	r0, r6
@@ -568,7 +526,7 @@ done:
 	nop
 
 	/* Restore registers */
-	pop	{r2 - r9}
+	pop	{r2 - r8}
 	mov	pc, lr
 	.ltorg
 ENDPROC(imx7d_ddr3_freq_change)

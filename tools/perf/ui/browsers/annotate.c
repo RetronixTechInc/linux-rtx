@@ -27,7 +27,6 @@ static struct annotate_browser_opt {
 	bool hide_src_code,
 	     use_offset,
 	     jump_arrows,
-	     show_linenr,
 	     show_nr_jumps;
 } annotate_browser__opts = {
 	.use_offset	= true,
@@ -129,11 +128,7 @@ static void annotate_browser__write(struct ui_browser *browser, void *entry, int
 	if (!*dl->line)
 		slsmg_write_nstring(" ", width - pcnt_width);
 	else if (dl->offset == -1) {
-		if (dl->line_nr && annotate_browser__opts.show_linenr)
-			printed = scnprintf(bf, sizeof(bf), "%-*d ",
-					ab->addr_width + 1, dl->line_nr);
-		else
-			printed = scnprintf(bf, sizeof(bf), "%*s  ",
+		printed = scnprintf(bf, sizeof(bf), "%*s  ",
 				    ab->addr_width, " ");
 		slsmg_write_nstring(bf, printed);
 		slsmg_write_nstring(dl->line, width - printed - pcnt_width + 1);
@@ -517,7 +512,7 @@ static bool annotate_browser__jump(struct annotate_browser *browser)
 	}
 
 	annotate_browser__set_top(browser, dl, idx);
-
+	
 	return true;
 }
 
@@ -738,7 +733,6 @@ static int annotate_browser__run(struct annotate_browser *browser,
 		"o             Toggle disassembler output/simplified view\n"
 		"s             Toggle source code view\n"
 		"/             Search string\n"
-		"k             Toggle line numbers\n"
 		"r             Run available scripts\n"
 		"?             Search string backwards\n");
 			continue;
@@ -747,10 +741,6 @@ static int annotate_browser__run(struct annotate_browser *browser,
 				script_browse(NULL);
 				continue;
 			}
-		case 'k':
-			annotate_browser__opts.show_linenr =
-				!annotate_browser__opts.show_linenr;
-			break;
 		case 'H':
 			nd = browser->curr_hot;
 			break;
@@ -829,16 +819,10 @@ out:
 	return key;
 }
 
-int map_symbol__tui_annotate(struct map_symbol *ms, struct perf_evsel *evsel,
-			     struct hist_browser_timer *hbt)
-{
-	return symbol__tui_annotate(ms->sym, ms->map, evsel, hbt);
-}
-
 int hist_entry__tui_annotate(struct hist_entry *he, struct perf_evsel *evsel,
 			     struct hist_browser_timer *hbt)
 {
-	return map_symbol__tui_annotate(&he->ms, evsel, hbt);
+	return symbol__tui_annotate(he->ms.sym, he->ms.map, evsel, hbt);
 }
 
 static void annotate_browser__mark_jump_targets(struct annotate_browser *browser,
@@ -873,6 +857,7 @@ static void annotate_browser__mark_jump_targets(struct annotate_browser *browser
 
 		++browser->nr_jumps;
 	}
+		
 }
 
 static inline int width_jumps(int n)
@@ -999,7 +984,6 @@ static struct annotate_config {
 } annotate__configs[] = {
 	ANNOTATE_CFG(hide_src_code),
 	ANNOTATE_CFG(jump_arrows),
-	ANNOTATE_CFG(show_linenr),
 	ANNOTATE_CFG(show_nr_jumps),
 	ANNOTATE_CFG(use_offset),
 };

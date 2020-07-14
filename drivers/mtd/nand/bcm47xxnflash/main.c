@@ -73,6 +73,7 @@ static struct platform_driver bcm47xxnflash_driver = {
 	.remove = bcm47xxnflash_remove,
 	.driver = {
 		.name = "bcma_nflash",
+		.owner = THIS_MODULE,
 	},
 };
 

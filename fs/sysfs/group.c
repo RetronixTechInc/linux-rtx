@@ -18,7 +18,7 @@
 #include "sysfs.h"
 
 
-static void remove_files(struct kernfs_node *parent,
+static void remove_files(struct kernfs_node *parent, struct kobject *kobj,
 			 const struct attribute_group *grp)
 {
 	struct attribute *const *attr;
@@ -29,7 +29,7 @@ static void remove_files(struct kernfs_node *parent,
 			kernfs_remove_by_name(parent, (*attr)->name);
 	if (grp->bin_attrs)
 		for (bin_attr = grp->bin_attrs; *bin_attr; bin_attr++)
-			kernfs_remove_by_name(parent, (*bin_attr)->attr.name);
+			sysfs_remove_bin_file(kobj, *bin_attr);
 }
 
 static int create_files(struct kernfs_node *parent, struct kobject *kobj,
@@ -41,7 +41,7 @@ static int create_files(struct kernfs_node *parent, struct kobject *kobj,
 
 	if (grp->attrs) {
 		for (i = 0, attr = grp->attrs; *attr && !error; i++, attr++) {
-			umode_t mode = (*attr)->mode;
+			umode_t mode = 0;
 
 			/*
 			 * In update mode, we're changing the permissions or
@@ -55,19 +55,14 @@ static int create_files(struct kernfs_node *parent, struct kobject *kobj,
 				if (!mode)
 					continue;
 			}
-
-			WARN(mode & ~(SYSFS_PREALLOC | 0664),
-			     "Attribute %s: Invalid permissions 0%o\n",
-			     (*attr)->name, mode);
-
-			mode &= SYSFS_PREALLOC | 0664;
 			error = sysfs_add_file_mode_ns(parent, *attr, false,
-						       mode, NULL);
+						       (*attr)->mode | mode,
+						       NULL);
 			if (unlikely(error))
 				break;
 		}
 		if (error) {
-			remove_files(parent, grp);
+			remove_files(parent, kobj, grp);
 			goto exit;
 		}
 	}
@@ -75,16 +70,13 @@ static int create_files(struct kernfs_node *parent, struct kobject *kobj,
 	if (grp->bin_attrs) {
 		for (bin_attr = grp->bin_attrs; *bin_attr; bin_attr++) {
 			if (update)
-				kernfs_remove_by_name(parent,
-						(*bin_attr)->attr.name);
-			error = sysfs_add_file_mode_ns(parent,
-					&(*bin_attr)->attr, true,
-					(*bin_attr)->attr.mode, NULL);
+				sysfs_remove_bin_file(kobj, *bin_attr);
+			error = sysfs_create_bin_file(kobj, *bin_attr);
 			if (error)
 				break;
 		}
 		if (error)
-			remove_files(parent, grp);
+			remove_files(parent, kobj, grp);
 	}
 exit:
 	return error;
@@ -104,7 +96,7 @@ static int internal_create_group(struct kobject *kobj, int update,
 		return -EINVAL;
 	if (!grp->attrs && !grp->bin_attrs) {
 		WARN(1, "sysfs: (bin_)attrs not set by subsystem for group: %s/%s\n",
-			kobj->name, grp->name ?: "");
+			kobj->name, grp->name ? "" : grp->name);
 		return -EINVAL;
 	}
 	if (grp->name) {
@@ -229,7 +221,7 @@ void sysfs_remove_group(struct kobject *kobj,
 		kernfs_get(kn);
 	}
 
-	remove_files(kn, grp);
+	remove_files(kn, kobj, grp);
 	if (grp->name)
 		kernfs_remove(kn);
 

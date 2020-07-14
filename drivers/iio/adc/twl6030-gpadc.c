@@ -28,6 +28,7 @@
  * 02110-1301 USA
  *
  */
+#include <linux/init.h>
 #include <linux/interrupt.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
@@ -994,6 +995,7 @@ static struct platform_driver twl6030_gpadc_driver = {
 	.remove		= twl6030_gpadc_remove,
 	.driver		= {
 		.name	= DRIVER_NAME,
+		.owner	= THIS_MODULE,
 		.pm	= &twl6030_gpadc_pm_ops,
 		.of_match_table = of_twl6030_match_tbl,
 	},

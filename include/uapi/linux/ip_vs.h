@@ -358,8 +358,6 @@ enum {
 
 	IPVS_SVC_ATTR_PE_NAME,		/* name of ct retriever */
 
-	IPVS_SVC_ATTR_STATS64,		/* nested attribute for service stats */
-
 	__IPVS_SVC_ATTR_MAX,
 };
 
@@ -386,11 +384,6 @@ enum {
 	IPVS_DEST_ATTR_PERSIST_CONNS,	/* persistent connections */
 
 	IPVS_DEST_ATTR_STATS,		/* nested attribute for dest stats */
-
-	IPVS_DEST_ATTR_ADDR_FAMILY,	/* Address family of address */
-
-	IPVS_DEST_ATTR_STATS64,		/* nested attribute for dest stats */
-
 	__IPVS_DEST_ATTR_MAX,
 };
 
@@ -414,8 +407,7 @@ enum {
 /*
  * Attributes used to describe service or destination entry statistics
  *
- * Used inside nested attributes IPVS_SVC_ATTR_STATS, IPVS_DEST_ATTR_STATS,
- * IPVS_SVC_ATTR_STATS64 and IPVS_DEST_ATTR_STATS64.
+ * Used inside nested attributes IPVS_SVC_ATTR_STATS and IPVS_DEST_ATTR_STATS
  */
 enum {
 	IPVS_STATS_ATTR_UNSPEC = 0,

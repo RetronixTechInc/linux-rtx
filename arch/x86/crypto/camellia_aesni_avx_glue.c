@@ -335,8 +335,7 @@ static struct crypto_alg cmll_algs[10] = { {
 	.cra_name		= "__ecb-camellia-aesni",
 	.cra_driver_name	= "__driver-ecb-camellia-aesni",
 	.cra_priority		= 0,
-	.cra_flags		= CRYPTO_ALG_TYPE_BLKCIPHER |
-				  CRYPTO_ALG_INTERNAL,
+	.cra_flags		= CRYPTO_ALG_TYPE_BLKCIPHER,
 	.cra_blocksize		= CAMELLIA_BLOCK_SIZE,
 	.cra_ctxsize		= sizeof(struct camellia_ctx),
 	.cra_alignmask		= 0,
@@ -355,8 +354,7 @@ static struct crypto_alg cmll_algs[10] = { {
 	.cra_name		= "__cbc-camellia-aesni",
 	.cra_driver_name	= "__driver-cbc-camellia-aesni",
 	.cra_priority		= 0,
-	.cra_flags		= CRYPTO_ALG_TYPE_BLKCIPHER |
-				  CRYPTO_ALG_INTERNAL,
+	.cra_flags		= CRYPTO_ALG_TYPE_BLKCIPHER,
 	.cra_blocksize		= CAMELLIA_BLOCK_SIZE,
 	.cra_ctxsize		= sizeof(struct camellia_ctx),
 	.cra_alignmask		= 0,
@@ -375,8 +373,7 @@ static struct crypto_alg cmll_algs[10] = { {
 	.cra_name		= "__ctr-camellia-aesni",
 	.cra_driver_name	= "__driver-ctr-camellia-aesni",
 	.cra_priority		= 0,
-	.cra_flags		= CRYPTO_ALG_TYPE_BLKCIPHER |
-				  CRYPTO_ALG_INTERNAL,
+	.cra_flags		= CRYPTO_ALG_TYPE_BLKCIPHER,
 	.cra_blocksize		= 1,
 	.cra_ctxsize		= sizeof(struct camellia_ctx),
 	.cra_alignmask		= 0,
@@ -396,8 +393,7 @@ static struct crypto_alg cmll_algs[10] = { {
 	.cra_name		= "__lrw-camellia-aesni",
 	.cra_driver_name	= "__driver-lrw-camellia-aesni",
 	.cra_priority		= 0,
-	.cra_flags		= CRYPTO_ALG_TYPE_BLKCIPHER |
-				  CRYPTO_ALG_INTERNAL,
+	.cra_flags		= CRYPTO_ALG_TYPE_BLKCIPHER,
 	.cra_blocksize		= CAMELLIA_BLOCK_SIZE,
 	.cra_ctxsize		= sizeof(struct camellia_lrw_ctx),
 	.cra_alignmask		= 0,
@@ -420,8 +416,7 @@ static struct crypto_alg cmll_algs[10] = { {
 	.cra_name		= "__xts-camellia-aesni",
 	.cra_driver_name	= "__driver-xts-camellia-aesni",
 	.cra_priority		= 0,
-	.cra_flags		= CRYPTO_ALG_TYPE_BLKCIPHER |
-				  CRYPTO_ALG_INTERNAL,
+	.cra_flags		= CRYPTO_ALG_TYPE_BLKCIPHER,
 	.cra_blocksize		= CAMELLIA_BLOCK_SIZE,
 	.cra_ctxsize		= sizeof(struct camellia_xts_ctx),
 	.cra_alignmask		= 0,

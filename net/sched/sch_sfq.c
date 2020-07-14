@@ -125,7 +125,7 @@ struct sfq_sched_data {
 	u8		cur_depth;	/* depth of longest slot */
 	u8		flags;
 	unsigned short  scaled_quantum; /* SFQ_ALLOT_SIZE(quantum) */
-	struct tcf_proto __rcu *filter_list;
+	struct tcf_proto *filter_list;
 	sfq_index	*ht;		/* Hash table ('divisor' slots) */
 	struct sfq_slot	*slots;		/* Flows table ('maxflows' entries) */
 
@@ -187,7 +187,6 @@ static unsigned int sfq_classify(struct sk_buff *skb, struct Qdisc *sch,
 {
 	struct sfq_sched_data *q = qdisc_priv(sch);
 	struct tcf_result res;
-	struct tcf_proto *fl;
 	int result;
 
 	if (TC_H_MAJ(skb->priority) == sch->handle &&
@@ -195,14 +194,13 @@ static unsigned int sfq_classify(struct sk_buff *skb, struct Qdisc *sch,
 	    TC_H_MIN(skb->priority) <= q->divisor)
 		return TC_H_MIN(skb->priority);
 
-	fl = rcu_dereference_bh(q->filter_list);
-	if (!fl) {
+	if (!q->filter_list) {
 		skb_flow_dissect(skb, &sfq_skb_cb(skb)->keys);
 		return sfq_hash(q, skb) + 1;
 	}
 
 	*qerr = NET_XMIT_SUCCESS | __NET_XMIT_BYPASS;
-	result = tc_classify(skb, fl, &res);
+	result = tc_classify(skb, q->filter_list, &res);
 	if (result >= 0) {
 #ifdef CONFIG_NET_CLS_ACT
 		switch (result) {
@@ -312,6 +310,11 @@ static inline void slot_queue_add(struct sfq_slot *slot, struct sk_buff *skb)
 	slot->skblist_prev = skb;
 }
 
+#define	slot_queue_walk(slot, skb)		\
+	for (skb = slot->skblist_next;		\
+	     skb != (struct sk_buff *)slot;	\
+	     skb = skb->next)
+
 static unsigned int sfq_drop(struct Qdisc *sch)
 {
 	struct sfq_sched_data *q = qdisc_priv(sch);
@@ -331,8 +334,8 @@ drop:
 		sfq_dec(q, x);
 		kfree_skb(skb);
 		sch->q.qlen--;
-		qdisc_qstats_drop(sch);
-		qdisc_qstats_backlog_dec(sch, skb);
+		sch->qstats.drops++;
+		sch->qstats.backlog -= len;
 		return len;
 	}
 
@@ -379,7 +382,7 @@ sfq_enqueue(struct sk_buff *skb, struct Qdisc *sch)
 	hash = sfq_classify(skb, sch, &ret);
 	if (hash == 0) {
 		if (ret & __NET_XMIT_BYPASS)
-			qdisc_qstats_drop(sch);
+			sch->qstats.drops++;
 		kfree_skb(skb);
 		return ret;
 	}
@@ -409,7 +412,7 @@ sfq_enqueue(struct sk_buff *skb, struct Qdisc *sch)
 			break;
 
 		case RED_PROB_MARK:
-			qdisc_qstats_overlimit(sch);
+			sch->qstats.overlimits++;
 			if (sfq_prob_mark(q)) {
 				/* We know we have at least one packet in queue */
 				if (sfq_headdrop(q) &&
@@ -426,7 +429,7 @@ sfq_enqueue(struct sk_buff *skb, struct Qdisc *sch)
 			goto congestion_drop;
 
 		case RED_HARD_MARK:
-			qdisc_qstats_overlimit(sch);
+			sch->qstats.overlimits++;
 			if (sfq_hard_mark(q)) {
 				/* We know we have at least one packet in queue */
 				if (sfq_headdrop(q) &&
@@ -461,7 +464,7 @@ congestion_drop:
 	}
 
 enqueue:
-	qdisc_qstats_backlog_inc(sch, skb);
+	sch->qstats.backlog += qdisc_pkt_len(skb);
 	slot->backlog += qdisc_pkt_len(skb);
 	slot_queue_add(slot, skb);
 	sfq_inc(q, x);
@@ -520,7 +523,7 @@ next_slot:
 	sfq_dec(q, a);
 	qdisc_bstats_update(sch, skb);
 	sch->q.qlen--;
-	qdisc_qstats_backlog_dec(sch, skb);
+	sch->qstats.backlog -= qdisc_pkt_len(skb);
 	slot->backlog -= qdisc_pkt_len(skb);
 	/* Is the slot empty? */
 	if (slot->qlen == 0) {
@@ -586,8 +589,7 @@ static void sfq_rehash(struct Qdisc *sch)
 		if (x == SFQ_EMPTY_SLOT) {
 			x = q->dep[0].next; /* get a free slot */
 			if (x >= SFQ_MAX_FLOWS) {
-drop:
-				qdisc_qstats_backlog_dec(sch, skb);
+drop:				sch->qstats.backlog -= qdisc_pkt_len(skb);
 				kfree_skb(skb);
 				dropped++;
 				continue;
@@ -714,7 +716,12 @@ static void *sfq_alloc(size_t sz)
 
 static void sfq_free(void *addr)
 {
-	kvfree(addr);
+	if (addr) {
+		if (is_vmalloc_addr(addr))
+			vfree(addr);
+		else
+			kfree(addr);
+	}
 }
 
 static void sfq_destroy(struct Qdisc *sch)
@@ -839,8 +846,7 @@ static void sfq_put(struct Qdisc *q, unsigned long cl)
 {
 }
 
-static struct tcf_proto __rcu **sfq_find_tcf(struct Qdisc *sch,
-					     unsigned long cl)
+static struct tcf_proto **sfq_find_tcf(struct Qdisc *sch, unsigned long cl)
 {
 	struct sfq_sched_data *q = qdisc_priv(sch);
 
@@ -871,7 +877,7 @@ static int sfq_dump_class_stats(struct Qdisc *sch, unsigned long cl,
 		qs.qlen = slot->qlen;
 		qs.backlog = slot->backlog;
 	}
-	if (gnet_stats_copy_queue(d, NULL, &qs, qs.qlen) < 0)
+	if (gnet_stats_copy_queue(d, &qs) < 0)
 		return -1;
 	return gnet_stats_copy_app(d, &xstats, sizeof(xstats));
 }

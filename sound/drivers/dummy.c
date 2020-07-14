@@ -245,8 +245,9 @@ struct dummy_systimer_pcm {
 
 static void dummy_systimer_rearm(struct dummy_systimer_pcm *dpcm)
 {
-	mod_timer(&dpcm->timer, jiffies +
-		(dpcm->frac_period_rest + dpcm->rate - 1) / dpcm->rate);
+	dpcm->timer.expires = jiffies +
+		(dpcm->frac_period_rest + dpcm->rate - 1) / dpcm->rate;
+	add_timer(&dpcm->timer);
 }
 
 static void dummy_systimer_update(struct dummy_systimer_pcm *dpcm)
@@ -339,8 +340,9 @@ static int dummy_systimer_create(struct snd_pcm_substream *substream)
 	if (!dpcm)
 		return -ENOMEM;
 	substream->runtime->private_data = dpcm;
-	setup_timer(&dpcm->timer, dummy_systimer_callback,
-			(unsigned long) dpcm);
+	init_timer(&dpcm->timer);
+	dpcm->timer.data = (unsigned long) dpcm;
+	dpcm->timer.function = dummy_systimer_callback;
 	spin_lock_init(&dpcm->lock);
 	dpcm->substream = substream;
 	return 0;
@@ -1052,8 +1054,8 @@ static int snd_dummy_probe(struct platform_device *devptr)
 	int idx, err;
 	int dev = devptr->id;
 
-	err = snd_card_new(&devptr->dev, index[dev], id[dev], THIS_MODULE,
-			   sizeof(struct snd_dummy), &card);
+	err = snd_card_create(index[dev], id[dev], THIS_MODULE,
+			      sizeof(struct snd_dummy), &card);
 	if (err < 0)
 		return err;
 	dummy = card->private_data;
@@ -1112,6 +1114,8 @@ static int snd_dummy_probe(struct platform_device *devptr)
 
 	dummy_proc_init(dummy);
 
+	snd_card_set_dev(card, &devptr->dev);
+
 	err = snd_card_register(card);
 	if (err == 0) {
 		platform_set_drvdata(devptr, card);
@@ -1160,6 +1164,7 @@ static struct platform_driver snd_dummy_driver = {
 	.remove		= snd_dummy_remove,
 	.driver		= {
 		.name	= SND_DUMMY_DRIVER,
+		.owner	= THIS_MODULE,
 		.pm	= SND_DUMMY_PM_OPS,
 	},
 };

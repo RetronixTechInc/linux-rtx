@@ -17,7 +17,7 @@
 
 
 struct ingress_qdisc_data {
-	struct tcf_proto __rcu	*filter_list;
+	struct tcf_proto	*filter_list;
 };
 
 /* ------------------------- Class/flow operations ------------------------- */
@@ -46,8 +46,7 @@ static void ingress_walk(struct Qdisc *sch, struct qdisc_walker *walker)
 {
 }
 
-static struct tcf_proto __rcu **ingress_find_tcf(struct Qdisc *sch,
-						 unsigned long cl)
+static struct tcf_proto **ingress_find_tcf(struct Qdisc *sch, unsigned long cl)
 {
 	struct ingress_qdisc_data *p = qdisc_priv(sch);
 
@@ -60,16 +59,15 @@ static int ingress_enqueue(struct sk_buff *skb, struct Qdisc *sch)
 {
 	struct ingress_qdisc_data *p = qdisc_priv(sch);
 	struct tcf_result res;
-	struct tcf_proto *fl = rcu_dereference_bh(p->filter_list);
 	int result;
 
-	result = tc_classify(skb, fl, &res);
+	result = tc_classify(skb, p->filter_list, &res);
 
 	qdisc_bstats_update(sch, skb);
 	switch (result) {
 	case TC_ACT_SHOT:
 		result = TC_ACT_SHOT;
-		qdisc_qstats_drop(sch);
+		sch->qstats.drops++;
 		break;
 	case TC_ACT_STOLEN:
 	case TC_ACT_QUEUED:
@@ -88,19 +86,11 @@ static int ingress_enqueue(struct sk_buff *skb, struct Qdisc *sch)
 
 /* ------------------------------------------------------------- */
 
-static int ingress_init(struct Qdisc *sch, struct nlattr *opt)
-{
-	net_inc_ingress_queue();
-
-	return 0;
-}
-
 static void ingress_destroy(struct Qdisc *sch)
 {
 	struct ingress_qdisc_data *p = qdisc_priv(sch);
 
 	tcf_destroy_chain(&p->filter_list);
-	net_dec_ingress_queue();
 }
 
 static int ingress_dump(struct Qdisc *sch, struct sk_buff *skb)
@@ -110,7 +100,8 @@ static int ingress_dump(struct Qdisc *sch, struct sk_buff *skb)
 	nest = nla_nest_start(skb, TCA_OPTIONS);
 	if (nest == NULL)
 		goto nla_put_failure;
-	return nla_nest_end(skb, nest);
+	nla_nest_end(skb, nest);
+	return skb->len;
 
 nla_put_failure:
 	nla_nest_cancel(skb, nest);
@@ -132,7 +123,6 @@ static struct Qdisc_ops ingress_qdisc_ops __read_mostly = {
 	.id		=	"ingress",
 	.priv_size	=	sizeof(struct ingress_qdisc_data),
 	.enqueue	=	ingress_enqueue,
-	.init		=	ingress_init,
 	.destroy	=	ingress_destroy,
 	.dump		=	ingress_dump,
 	.owner		=	THIS_MODULE,

@@ -97,9 +97,6 @@ MODULE_LICENSE("GPL");
 
 static struct microcode_ops	*microcode_ops;
 
-bool dis_ucode_ldr;
-module_param(dis_ucode_ldr, bool, 0);
-
 /*
  * Synchronization.
  *
@@ -465,8 +462,6 @@ static void mc_bp_resume(void)
 
 	if (uci->valid && uci->mc)
 		microcode_ops->apply_microcode(cpu);
-	else if (!uci->mc)
-		reload_early_microcode();
 }
 
 static struct syscore_ops mc_syscore_ops = {
@@ -550,9 +545,6 @@ static int __init microcode_init(void)
 {
 	struct cpuinfo_x86 *c = &cpu_data(0);
 	int error;
-
-	if (paravirt_enabled() || dis_ucode_ldr)
-		return -EINVAL;
 
 	if (c->x86_vendor == X86_VENDOR_INTEL)
 		microcode_ops = init_intel_microcode();

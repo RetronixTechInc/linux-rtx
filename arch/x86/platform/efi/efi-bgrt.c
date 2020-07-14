@@ -40,40 +40,20 @@ void __init efi_bgrt_init(void)
 	if (ACPI_FAILURE(status))
 		return;
 
-	if (bgrt_tab->header.length < sizeof(*bgrt_tab)) {
-		pr_err("Ignoring BGRT: invalid length %u (expected %zu)\n",
-		       bgrt_tab->header.length, sizeof(*bgrt_tab));
+	if (bgrt_tab->header.length < sizeof(*bgrt_tab))
 		return;
-	}
-	if (bgrt_tab->version != 1) {
-		pr_err("Ignoring BGRT: invalid version %u (expected 1)\n",
-		       bgrt_tab->version);
+	if (bgrt_tab->version != 1 || bgrt_tab->status != 1)
 		return;
-	}
-	if (bgrt_tab->status != 1) {
-		pr_err("Ignoring BGRT: invalid status %u (expected 1)\n",
-		       bgrt_tab->status);
+	if (bgrt_tab->image_type != 0 || !bgrt_tab->image_address)
 		return;
-	}
-	if (bgrt_tab->image_type != 0) {
-		pr_err("Ignoring BGRT: invalid image type %u (expected 0)\n",
-		       bgrt_tab->image_type);
-		return;
-	}
-	if (!bgrt_tab->image_address) {
-		pr_err("Ignoring BGRT: null image address\n");
-		return;
-	}
 
 	image = efi_lookup_mapped_addr(bgrt_tab->image_address);
 	if (!image) {
-		image = early_ioremap(bgrt_tab->image_address,
+		image = early_memremap(bgrt_tab->image_address,
 				       sizeof(bmp_header));
 		ioremapped = true;
-		if (!image) {
-			pr_err("Ignoring BGRT: failed to map image header memory\n");
+		if (!image)
 			return;
-		}
 	}
 
 	memcpy_fromio(&bmp_header, image, sizeof(bmp_header));
@@ -81,18 +61,14 @@ void __init efi_bgrt_init(void)
 		early_iounmap(image, sizeof(bmp_header));
 	bgrt_image_size = bmp_header.size;
 
-	bgrt_image = kmalloc(bgrt_image_size, GFP_KERNEL | __GFP_NOWARN);
-	if (!bgrt_image) {
-		pr_err("Ignoring BGRT: failed to allocate memory for image (wanted %zu bytes)\n",
-		       bgrt_image_size);
+	bgrt_image = kmalloc(bgrt_image_size, GFP_KERNEL);
+	if (!bgrt_image)
 		return;
-	}
 
 	if (ioremapped) {
-		image = early_ioremap(bgrt_tab->image_address,
+		image = early_memremap(bgrt_tab->image_address,
 				       bmp_header.size);
 		if (!image) {
-			pr_err("Ignoring BGRT: failed to map image memory\n");
 			kfree(bgrt_image);
 			bgrt_image = NULL;
 			return;

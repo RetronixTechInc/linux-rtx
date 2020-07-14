@@ -27,13 +27,9 @@ struct vm_event_state {
 
 DECLARE_PER_CPU(struct vm_event_state, vm_event_states);
 
-/*
- * vm counters are allowed to be racy. Use raw_cpu_ops to avoid the
- * local_irq_disable overhead.
- */
 static inline void __count_vm_event(enum vm_event_item item)
 {
-	raw_cpu_inc(vm_event_states.event[item]);
+	__this_cpu_inc(vm_event_states.event[item]);
 }
 
 static inline void count_vm_event(enum vm_event_item item)
@@ -43,7 +39,7 @@ static inline void count_vm_event(enum vm_event_item item)
 
 static inline void __count_vm_events(enum vm_event_item item, long delta)
 {
-	raw_cpu_add(vm_event_states.event[item], delta);
+	__this_cpu_add(vm_event_states.event[item], delta);
 }
 
 static inline void count_vm_events(enum vm_event_item item, long delta)
@@ -93,12 +89,6 @@ static inline void vm_events_fold_cpu(int cpu)
 #else
 #define count_vm_tlb_event(x)     do {} while (0)
 #define count_vm_tlb_events(x, y) do { (void)(y); } while (0)
-#endif
-
-#ifdef CONFIG_DEBUG_VM_VMACACHE
-#define count_vm_vmacache_event(x) count_vm_event(x)
-#else
-#define count_vm_vmacache_event(x) do {} while (0)
 #endif
 
 #define __count_zone_vm_events(item, zone, delta) \
@@ -197,6 +187,8 @@ extern void zone_statistics(struct zone *, struct zone *, gfp_t gfp);
 #define add_zone_page_state(__z, __i, __d) mod_zone_page_state(__z, __i, __d)
 #define sub_zone_page_state(__z, __i, __d) mod_zone_page_state(__z, __i, -(__d))
 
+extern void inc_zone_state(struct zone *, enum zone_stat_item);
+
 #ifdef CONFIG_SMP
 void __mod_zone_page_state(struct zone *, enum zone_stat_item item, int);
 void __inc_zone_page_state(struct page *, enum zone_stat_item);
@@ -238,16 +230,16 @@ static inline void __inc_zone_state(struct zone *zone, enum zone_stat_item item)
 	atomic_long_inc(&vm_stat[item]);
 }
 
-static inline void __dec_zone_state(struct zone *zone, enum zone_stat_item item)
-{
-	atomic_long_dec(&zone->vm_stat[item]);
-	atomic_long_dec(&vm_stat[item]);
-}
-
 static inline void __inc_zone_page_state(struct page *page,
 			enum zone_stat_item item)
 {
 	__inc_zone_state(page_zone(page), item);
+}
+
+static inline void __dec_zone_state(struct zone *zone, enum zone_stat_item item)
+{
+	atomic_long_dec(&zone->vm_stat[item]);
+	atomic_long_dec(&vm_stat[item]);
 }
 
 static inline void __dec_zone_page_state(struct page *page,
@@ -263,9 +255,6 @@ static inline void __dec_zone_page_state(struct page *page,
 #define inc_zone_page_state __inc_zone_page_state
 #define dec_zone_page_state __dec_zone_page_state
 #define mod_zone_page_state __mod_zone_page_state
-
-#define inc_zone_state __inc_zone_state
-#define dec_zone_state __dec_zone_state
 
 #define set_pgdat_percpu_threshold(pgdat, callback) { }
 

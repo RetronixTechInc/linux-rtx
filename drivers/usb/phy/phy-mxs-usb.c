@@ -1,5 +1,5 @@
 /*
- * Copyright 2012-2016 Freescale Semiconductor, Inc.
+ * Copyright 2012-2015 Freescale Semiconductor, Inc.
  * Copyright (C) 2012 Marek Vasut <marex@denx.de>
  * on behalf of DENX Software Engineering GmbH
  *
@@ -256,9 +256,6 @@ static bool mxs_phy_get_vbus_status(struct mxs_phy *mxs_phy)
 {
 	unsigned int vbus_value = 0;
 
-	if (!mxs_phy->regmap_anatop)
-		return false;
-
 	if (mxs_phy->port_id == 0)
 		regmap_read(mxs_phy->regmap_anatop,
 			ANADIG_USB1_VBUS_DET_STAT,
@@ -281,7 +278,7 @@ static void __mxs_phy_disconnect_line(struct mxs_phy *mxs_phy, bool disconnect)
 
 	if (disconnect)
 		writel_relaxed(BM_USBPHY_DEBUG_CLKGATE,
-			base + HW_USBPHY_DEBUG_CLR);
+			base + HW_USBPHY_DEBUG_SET);
 
 	if (mxs_phy->port_id == 0) {
 		reg = disconnect ? ANADIG_USB1_LOOPBACK_SET
@@ -299,7 +296,7 @@ static void __mxs_phy_disconnect_line(struct mxs_phy *mxs_phy, bool disconnect)
 
 	if (!disconnect)
 		writel_relaxed(BM_USBPHY_DEBUG_CLKGATE,
-			base + HW_USBPHY_DEBUG_SET);
+			base + HW_USBPHY_DEBUG_CLR);
 
 	/* Delay some time, and let Linestate be SE0 for controller */
 	if (disconnect)
@@ -558,8 +555,10 @@ static int mxs_phy_probe(struct platform_device *pdev)
 	}
 
 	mxs_phy = devm_kzalloc(&pdev->dev, sizeof(*mxs_phy), GFP_KERNEL);
-	if (!mxs_phy)
+	if (!mxs_phy) {
+		dev_err(&pdev->dev, "Failed to allocate USB PHY structure!\n");
 		return -ENOMEM;
+	}
 
 	/* Some SoCs don't have anatop registers */
 	if (of_get_property(np, "fsl,anatop", NULL)) {
@@ -687,6 +686,7 @@ static struct platform_driver mxs_phy_driver = {
 	.remove = mxs_phy_remove,
 	.driver = {
 		.name = DRIVER_NAME,
+		.owner	= THIS_MODULE,
 		.of_match_table = mxs_phy_dt_ids,
 		.pm = &mxs_phy_pm,
 	 },

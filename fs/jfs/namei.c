@@ -84,7 +84,7 @@ static int jfs_create(struct inode *dip, struct dentry *dentry, umode_t mode,
 	struct inode *iplist[2];
 	struct tblock *tblk;
 
-	jfs_info("jfs_create: dip:0x%p name:%pd", dip, dentry);
+	jfs_info("jfs_create: dip:0x%p name:%s", dip, dentry->d_name.name);
 
 	dquot_initialize(dip);
 
@@ -216,7 +216,7 @@ static int jfs_mkdir(struct inode *dip, struct dentry *dentry, umode_t mode)
 	struct inode *iplist[2];
 	struct tblock *tblk;
 
-	jfs_info("jfs_mkdir: dip:0x%p name:%pd", dip, dentry);
+	jfs_info("jfs_mkdir: dip:0x%p name:%s", dip, dentry->d_name.name);
 
 	dquot_initialize(dip);
 
@@ -346,13 +346,13 @@ static int jfs_rmdir(struct inode *dip, struct dentry *dentry)
 {
 	int rc;
 	tid_t tid;		/* transaction id */
-	struct inode *ip = d_inode(dentry);
+	struct inode *ip = dentry->d_inode;
 	ino_t ino;
 	struct component_name dname;
 	struct inode *iplist[2];
 	struct tblock *tblk;
 
-	jfs_info("jfs_rmdir: dip:0x%p name:%pd", dip, dentry);
+	jfs_info("jfs_rmdir: dip:0x%p name:%s", dip, dentry->d_name.name);
 
 	/* Init inode for quota operations. */
 	dquot_initialize(dip);
@@ -472,7 +472,7 @@ static int jfs_unlink(struct inode *dip, struct dentry *dentry)
 {
 	int rc;
 	tid_t tid;		/* transaction id */
-	struct inode *ip = d_inode(dentry);
+	struct inode *ip = dentry->d_inode;
 	ino_t ino;
 	struct component_name dname;	/* object name */
 	struct inode *iplist[2];
@@ -480,7 +480,7 @@ static int jfs_unlink(struct inode *dip, struct dentry *dentry)
 	s64 new_size = 0;
 	int commit_flag;
 
-	jfs_info("jfs_unlink: dip:0x%p name:%pd", dip, dentry);
+	jfs_info("jfs_unlink: dip:0x%p name:%s", dip, dentry->d_name.name);
 
 	/* Init inode for quota operations. */
 	dquot_initialize(dip);
@@ -791,13 +791,14 @@ static int jfs_link(struct dentry *old_dentry,
 {
 	int rc;
 	tid_t tid;
-	struct inode *ip = d_inode(old_dentry);
+	struct inode *ip = old_dentry->d_inode;
 	ino_t ino;
 	struct component_name dname;
 	struct btstack btstack;
 	struct inode *iplist[2];
 
-	jfs_info("jfs_link: %pd %pd", old_dentry, dentry);
+	jfs_info("jfs_link: %s %s", old_dentry->d_name.name,
+		 dentry->d_name.name);
 
 	dquot_initialize(dir);
 
@@ -879,7 +880,7 @@ static int jfs_symlink(struct inode *dip, struct dentry *dentry,
 	struct component_name dname;
 	int ssize;		/* source pathname size */
 	struct btstack btstack;
-	struct inode *ip = d_inode(dentry);
+	struct inode *ip = dentry->d_inode;
 	unchar *i_fastsymlink;
 	s64 xlen = 0;
 	int bmask = 0, xsize;
@@ -1081,13 +1082,14 @@ static int jfs_rename(struct inode *old_dir, struct dentry *old_dentry,
 	int commit_flag;
 
 
-	jfs_info("jfs_rename: %pd %pd", old_dentry, new_dentry);
+	jfs_info("jfs_rename: %s %s", old_dentry->d_name.name,
+		 new_dentry->d_name.name);
 
 	dquot_initialize(old_dir);
 	dquot_initialize(new_dir);
 
-	old_ip = d_inode(old_dentry);
-	new_ip = d_inode(new_dentry);
+	old_ip = old_dentry->d_inode;
+	new_ip = new_dentry->d_inode;
 
 	if ((rc = get_UCSname(&old_dname, old_dentry)))
 		goto out1;
@@ -1353,7 +1355,7 @@ static int jfs_mknod(struct inode *dir, struct dentry *dentry,
 	if (!new_valid_dev(rdev))
 		return -EINVAL;
 
-	jfs_info("jfs_mknod: %pd", dentry);
+	jfs_info("jfs_mknod: %s", dentry->d_name.name);
 
 	dquot_initialize(dir);
 
@@ -1442,7 +1444,7 @@ static struct dentry *jfs_lookup(struct inode *dip, struct dentry *dentry, unsig
 	struct component_name key;
 	int rc;
 
-	jfs_info("jfs_lookup: name = %pd", dentry);
+	jfs_info("jfs_lookup: name = %s", dentry->d_name.name);
 
 	if ((rc = get_UCSname(&key, dentry)))
 		return ERR_PTR(rc);
@@ -1500,9 +1502,9 @@ struct dentry *jfs_get_parent(struct dentry *dentry)
 	unsigned long parent_ino;
 
 	parent_ino =
-		le32_to_cpu(JFS_IP(d_inode(dentry))->i_dtroot.header.idotdot);
+		le32_to_cpu(JFS_IP(dentry->d_inode)->i_dtroot.header.idotdot);
 
-	return d_obtain_alias(jfs_iget(d_inode(dentry)->i_sb, parent_ino));
+	return d_obtain_alias(jfs_iget(dentry->d_inode->i_sb, parent_ino));
 }
 
 const struct inode_operations jfs_dir_inode_operations = {
@@ -1578,7 +1580,7 @@ static int jfs_ci_revalidate(struct dentry *dentry, unsigned int flags)
 	 * positive dentry isn't good idea. So it's unsupported like
 	 * rename("filename", "FILENAME") for now.
 	 */
-	if (d_really_is_positive(dentry))
+	if (dentry->d_inode)
 		return 1;
 
 	/*

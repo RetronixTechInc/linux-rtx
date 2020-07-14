@@ -48,18 +48,18 @@ EXPORT_SYMBOL(sw_sync_pt_create);
 
 static struct sync_pt *sw_sync_pt_dup(struct sync_pt *sync_pt)
 {
-	struct sw_sync_pt *pt = (struct sw_sync_pt *)sync_pt;
+	struct sw_sync_pt *pt = (struct sw_sync_pt *) sync_pt;
 	struct sw_sync_timeline *obj =
-		(struct sw_sync_timeline *)sync_pt_parent(sync_pt);
+		(struct sw_sync_timeline *)sync_pt->parent;
 
-	return (struct sync_pt *)sw_sync_pt_create(obj, pt->value);
+	return (struct sync_pt *) sw_sync_pt_create(obj, pt->value);
 }
 
 static int sw_sync_pt_has_signaled(struct sync_pt *sync_pt)
 {
 	struct sw_sync_pt *pt = (struct sw_sync_pt *)sync_pt;
 	struct sw_sync_timeline *obj =
-		(struct sw_sync_timeline *)sync_pt_parent(sync_pt);
+		(struct sw_sync_timeline *)sync_pt->parent;
 
 	return sw_sync_cmp(obj->value, pt->value) >= 0;
 }
@@ -94,10 +94,9 @@ static void sw_sync_timeline_value_str(struct sync_timeline *sync_timeline,
 }
 
 static void sw_sync_pt_value_str(struct sync_pt *sync_pt,
-				 char *str, int size)
+				       char *str, int size)
 {
 	struct sw_sync_pt *pt = (struct sw_sync_pt *)sync_pt;
-
 	snprintf(str, size, "%d", pt->value);
 }
 
@@ -110,6 +109,7 @@ static struct sync_timeline_ops sw_sync_timeline_ops = {
 	.timeline_value_str = sw_sync_timeline_value_str,
 	.pt_value_str = sw_sync_pt_value_str,
 };
+
 
 struct sw_sync_timeline *sw_sync_timeline_create(const char *name)
 {
@@ -156,7 +156,6 @@ static int sw_sync_open(struct inode *inode, struct file *file)
 static int sw_sync_release(struct inode *inode, struct file *file)
 {
 	struct sw_sync_timeline *obj = file->private_data;
-
 	sync_timeline_destroy(&obj->obj);
 	return 0;
 }

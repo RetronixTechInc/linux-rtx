@@ -5,8 +5,8 @@
  *    Jan Glauber <jang@linux.vnet.ibm.com>
  */
 
-#define KMSG_COMPONENT "zpci"
-#define pr_fmt(fmt) KMSG_COMPONENT ": " fmt
+#define COMPONENT "zPCI"
+#define pr_fmt(fmt) COMPONENT ": " fmt
 
 #include <linux/kernel.h>
 #include <linux/pci.h>
@@ -76,7 +76,7 @@ static void __zpci_event_availability(struct zpci_ccdf_avail *ccdf)
 
 	switch (ccdf->pec) {
 	case 0x0301: /* Standby -> Configured */
-		if (!zdev || zdev->state != ZPCI_FN_STATE_STANDBY)
+		if (!zdev || zdev->state == ZPCI_FN_STATE_CONFIGURED)
 			break;
 		zdev->state = ZPCI_FN_STATE_CONFIGURED;
 		zdev->fh = ccdf->fh;
@@ -86,8 +86,7 @@ static void __zpci_event_availability(struct zpci_ccdf_avail *ccdf)
 		pci_rescan_bus(zdev->bus);
 		break;
 	case 0x0302: /* Reserved -> Standby */
-		if (!zdev)
-			clp_add_pci_device(ccdf->fid, ccdf->fh, 0);
+		clp_add_pci_device(ccdf->fid, ccdf->fh, 0);
 		break;
 	case 0x0303: /* Deconfiguration requested */
 		if (pdev)

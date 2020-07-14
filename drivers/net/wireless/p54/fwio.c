@@ -220,7 +220,6 @@ int p54_download_eeprom(struct p54_common *priv, void *buf,
 	struct sk_buff *skb;
 	size_t eeprom_hdr_size;
 	int ret = 0;
-	long timeout;
 
 	if (priv->fw_var >= 0x509)
 		eeprom_hdr_size = sizeof(*eeprom_hdr);
@@ -250,11 +249,9 @@ int p54_download_eeprom(struct p54_common *priv, void *buf,
 
 	p54_tx(priv, skb);
 
-	timeout = wait_for_completion_interruptible_timeout(
-			&priv->eeprom_comp, HZ);
-	if (timeout <= 0) {
-		wiphy_err(priv->hw->wiphy,
-			"device does not respond or signal received!\n");
+	if (!wait_for_completion_interruptible_timeout(
+	     &priv->eeprom_comp, HZ)) {
+		wiphy_err(priv->hw->wiphy, "device does not respond!\n");
 		ret = -EBUSY;
 	}
 	priv->eeprom = NULL;
@@ -671,7 +668,7 @@ int p54_upload_key(struct p54_common *priv, u8 algo, int slot, u8 idx, u8 len,
 	if (addr)
 		memcpy(rxkey->mac, addr, ETH_ALEN);
 	else
-		eth_broadcast_addr(rxkey->mac);
+		memset(rxkey->mac, ~0, ETH_ALEN);
 
 	switch (algo) {
 	case P54_CRYPTO_WEP:

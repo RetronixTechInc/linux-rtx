@@ -1,7 +1,8 @@
-#include <linux/types.h>
+#include <sys/types.h>
 #include <stdlib.h>
 #include <unistd.h>
 #include <stdio.h>
+#include <inttypes.h>
 #include <ctype.h>
 #include <string.h>
 
@@ -133,7 +134,8 @@ static int read_via_objdump(const char *filename, u64 addr, void *buf,
 }
 
 static int read_object_code(u64 addr, size_t len, u8 cpumode,
-			    struct thread *thread, struct state *state)
+			    struct thread *thread, struct machine *machine,
+			    struct state *state)
 {
 	struct addr_location al;
 	unsigned char buf1[BUFSZ];
@@ -144,7 +146,8 @@ static int read_object_code(u64 addr, size_t len, u8 cpumode,
 
 	pr_debug("Reading object code for memory address: %#"PRIx64"\n", addr);
 
-	thread__find_addr_map(thread, cpumode, MAP__FUNCTION, addr, &al);
+	thread__find_addr_map(thread, machine, cpumode, MAP__FUNCTION, addr,
+			      &al);
 	if (!al.map || !al.map->dso) {
 		pr_debug("thread__find_addr_map failed\n");
 		return -1;
@@ -168,8 +171,8 @@ static int read_object_code(u64 addr, size_t len, u8 cpumode,
 		len = al.map->end - addr;
 
 	/* Read the object code using perf */
-	ret_len = dso__data_read_offset(al.map->dso, thread->mg->machine,
-					al.addr, buf1, len);
+	ret_len = dso__data_read_offset(al.map->dso, machine, al.addr, buf1,
+					len);
 	if (ret_len != len) {
 		pr_debug("dso__data_read_offset failed\n");
 		return -1;
@@ -254,7 +257,7 @@ static int process_sample_event(struct machine *machine,
 		return -1;
 	}
 
-	thread = machine__findnew_thread(machine, sample.pid, sample.tid);
+	thread = machine__findnew_thread(machine, sample.pid, sample.pid);
 	if (!thread) {
 		pr_debug("machine__findnew_thread failed\n");
 		return -1;
@@ -262,7 +265,8 @@ static int process_sample_event(struct machine *machine,
 
 	cpumode = event->header.misc & PERF_RECORD_MISC_CPUMODE_MASK;
 
-	return read_object_code(sample.ip, READLEN, cpumode, thread, state);
+	return read_object_code(sample.ip, READLEN, cpumode, thread, machine,
+				state);
 }
 
 static int process_event(struct machine *machine, struct perf_evlist *evlist,
@@ -500,7 +504,6 @@ static int do_test_code_reading(bool try_kcore)
 		if (ret < 0) {
 			if (!excl_kernel) {
 				excl_kernel = true;
-				perf_evlist__set_maps(evlist, NULL, NULL);
 				perf_evlist__delete(evlist);
 				evlist = NULL;
 				continue;

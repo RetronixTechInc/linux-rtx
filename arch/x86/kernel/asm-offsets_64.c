@@ -1,7 +1,3 @@
-#ifndef __LINUX_KBUILD_H
-# error "Please do not build this file directly, build asm-offsets.c instead"
-#endif
-
 #include <asm/ia32.h>
 
 #define __SYSCALL_64(nr, sym, compat) [nr] = 1,
@@ -52,6 +48,7 @@ int main(void)
 
 #define ENTRY(entry) OFFSET(pt_regs_ ## entry, pt_regs, entry)
 	ENTRY(bx);
+	ENTRY(bx);
 	ENTRY(cx);
 	ENTRY(dx);
 	ENTRY(sp);
@@ -81,7 +78,6 @@ int main(void)
 #undef ENTRY
 
 	OFFSET(TSS_ist, tss_struct, x86_tss.ist);
-	OFFSET(TSS_sp0, tss_struct, x86_tss.sp0);
 	BLANK();
 
 	DEFINE(__NR_syscall_max, sizeof(syscalls_64) - 1);

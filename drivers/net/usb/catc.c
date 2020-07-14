@@ -641,7 +641,7 @@ static void catc_set_multicast_list(struct net_device *netdev)
 	u8 broadcast[ETH_ALEN];
 	u8 rx = RxEnable | RxPolarity | RxMultiCast;
 
-	eth_broadcast_addr(broadcast);
+	memset(broadcast, 0xff, ETH_ALEN);
 	memset(catc->multicast, 0, 64);
 
 	catc_multicast(broadcast, catc->multicast);
@@ -793,7 +793,7 @@ static int catc_probe(struct usb_interface *intf, const struct usb_device_id *id
 
 	netdev->netdev_ops = &catc_netdev_ops;
 	netdev->watchdog_timeo = TX_TIMEOUT;
-	netdev->ethtool_ops = &ops;
+	SET_ETHTOOL_OPS(netdev, &ops);
 
 	catc->usbdev = usbdev;
 	catc->netdev = netdev;
@@ -880,7 +880,7 @@ static int catc_probe(struct usb_interface *intf, const struct usb_device_id *id
 		
 		dev_dbg(dev, "Filling the multicast list.\n");
 	  
-		eth_broadcast_addr(broadcast);
+		memset(broadcast, 0xff, ETH_ALEN);
 		catc_multicast(broadcast, catc->multicast);
 		catc_multicast(netdev->dev_addr, catc->multicast);
 		catc_write_mem(catc, 0xfa80, catc->multicast, 64);

@@ -135,13 +135,13 @@ static int vmw_fill_compat_cap(struct vmw_private *dev_priv, void *bounce,
 		(pair_offset + max_size * sizeof(SVGA3dCapPair)) / sizeof(u32);
 	compat_cap->header.type = SVGA3DCAPS_RECORD_DEVCAPS;
 
-	spin_lock(&dev_priv->cap_lock);
+	mutex_lock(&dev_priv->hw_mutex);
 	for (i = 0; i < max_size; ++i) {
 		vmw_write(dev_priv, SVGA_REG_DEV_CAP, i);
 		compat_cap->pairs[i][0] = i;
 		compat_cap->pairs[i][1] = vmw_read(dev_priv, SVGA_REG_DEV_CAP);
 	}
-	spin_unlock(&dev_priv->cap_lock);
+	mutex_unlock(&dev_priv->hw_mutex);
 
 	return 0;
 }
@@ -191,12 +191,12 @@ int vmw_get_cap_3d_ioctl(struct drm_device *dev, void *data,
 		if (num > SVGA3D_DEVCAP_MAX)
 			num = SVGA3D_DEVCAP_MAX;
 
-		spin_lock(&dev_priv->cap_lock);
+		mutex_lock(&dev_priv->hw_mutex);
 		for (i = 0; i < num; ++i) {
 			vmw_write(dev_priv, SVGA_REG_DEV_CAP, i);
 			*bounce32++ = vmw_read(dev_priv, SVGA_REG_DEV_CAP);
 		}
-		spin_unlock(&dev_priv->cap_lock);
+		mutex_unlock(&dev_priv->hw_mutex);
 	} else if (gb_objects) {
 		ret = vmw_fill_compat_cap(dev_priv, bounce, size);
 		if (unlikely(ret != 0))
@@ -226,6 +226,7 @@ int vmw_present_ioctl(struct drm_device *dev, void *data,
 	struct drm_vmw_present_arg *arg =
 		(struct drm_vmw_present_arg *)data;
 	struct vmw_surface *surface;
+	struct vmw_master *vmaster = vmw_master(file_priv->master);
 	struct drm_vmw_rect __user *clips_ptr;
 	struct drm_vmw_rect *clips = NULL;
 	struct drm_framebuffer *fb;
@@ -270,7 +271,7 @@ int vmw_present_ioctl(struct drm_device *dev, void *data,
 	}
 	vfb = vmw_framebuffer_to_vfb(fb);
 
-	ret = ttm_read_lock(&dev_priv->reservation_sem, true);
+	ret = ttm_read_lock(&vmaster->lock, true);
 	if (unlikely(ret != 0))
 		goto out_no_ttm_lock;
 
@@ -290,7 +291,7 @@ int vmw_present_ioctl(struct drm_device *dev, void *data,
 	vmw_surface_unreference(&surface);
 
 out_no_surface:
-	ttm_read_unlock(&dev_priv->reservation_sem);
+	ttm_read_unlock(&vmaster->lock);
 out_no_ttm_lock:
 	drm_framebuffer_unreference(fb);
 out_no_fb:
@@ -310,6 +311,7 @@ int vmw_present_readback_ioctl(struct drm_device *dev, void *data,
 	struct drm_vmw_fence_rep __user *user_fence_rep =
 		(struct drm_vmw_fence_rep __user *)
 		(unsigned long)arg->fence_rep;
+	struct vmw_master *vmaster = vmw_master(file_priv->master);
 	struct drm_vmw_rect __user *clips_ptr;
 	struct drm_vmw_rect *clips = NULL;
 	struct drm_framebuffer *fb;
@@ -359,7 +361,7 @@ int vmw_present_readback_ioctl(struct drm_device *dev, void *data,
 		goto out_no_ttm_lock;
 	}
 
-	ret = ttm_read_lock(&dev_priv->reservation_sem, true);
+	ret = ttm_read_lock(&vmaster->lock, true);
 	if (unlikely(ret != 0))
 		goto out_no_ttm_lock;
 
@@ -367,7 +369,7 @@ int vmw_present_readback_ioctl(struct drm_device *dev, void *data,
 			       vfb, user_fence_rep,
 			       clips, num_clips);
 
-	ttm_read_unlock(&dev_priv->reservation_sem);
+	ttm_read_unlock(&vmaster->lock);
 out_no_ttm_lock:
 	drm_framebuffer_unreference(fb);
 out_no_fb:

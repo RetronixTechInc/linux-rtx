@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2015-2016 Freescale Semiconductor, Inc.
+ * Copyright (C) 2015 Freescale Semiconductor, Inc.
  *
  * The code contained herein is licensed under the GNU General Public
  * License. You may obtain a copy of the GNU General Public License
@@ -68,7 +68,7 @@ static struct snd_soc_jack_gpio imx_hp_jack_gpio = {
 	.invert = 1,
 };
 
-static int hpjack_status_check(void *data)
+static int hpjack_status_check(void)
 {
 	struct imx_priv *priv = &card_priv;
 	struct platform_device *pdev = priv->pdev;
@@ -78,7 +78,7 @@ static int hpjack_status_check(void *data)
 	if (!gpio_is_valid(priv->hp_gpio))
 		return 0;
 
-	hp_status = gpio_get_value(priv->hp_gpio);
+	hp_status = gpio_get_value(priv->hp_gpio) ? 1 : 0;
 	buf = kmalloc(32, GFP_ATOMIC);
 	if (!buf) {
 		dev_err(&pdev->dev, "%s kmalloc failed\n", __func__);
@@ -128,7 +128,7 @@ static int imx_hifi_hw_params(struct snd_pcm_substream *substream,
 	struct snd_soc_dai *codec_dai = rtd->codec_dai;
 	struct snd_soc_dai *cpu_dai = rtd->cpu_dai;
 	struct snd_soc_codec *codec = codec_dai->codec;
-	struct snd_soc_card *card = rtd->card;
+	struct snd_soc_card *card = codec->card;
 	struct device *dev = card->dev;
 	struct imx_wm8958_data *data = snd_soc_card_get_drvdata(card);
 	bool tx = substream->stream == SNDRV_PCM_STREAM_PLAYBACK;
@@ -300,14 +300,16 @@ static int imx_wm8958_gpio_init(struct snd_soc_card *card)
 		imx_hp_jack_gpio.gpio = priv->hp_gpio;
 		imx_hp_jack_gpio.jack_status_check = hpjack_status_check;
 
-		ret = snd_soc_card_jack_new(card, "Headphone Jack",
-				SND_JACK_HEADPHONE, &imx_hp_jack,
-				imx_hp_jack_pins, ARRAY_SIZE(imx_hp_jack_pins));
+		ret = snd_soc_jack_new(codec, "Headphone Jack",
+				SND_JACK_HEADPHONE, &imx_hp_jack);
 		if (ret)
 			return ret;
-
+		ret = snd_soc_jack_add_pins(&imx_hp_jack,
+			ARRAY_SIZE(imx_hp_jack_pins), imx_hp_jack_pins);
+		if (ret)
+			return ret;
 		ret = snd_soc_jack_add_gpios(&imx_hp_jack, 1,
-				&imx_hp_jack_gpio);
+						&imx_hp_jack_gpio);
 		if (ret)
 			return ret;
 	}
@@ -326,7 +328,7 @@ static ssize_t show_headphone(struct device_driver *dev, char *buf)
 	}
 
 	/* Check if headphone is plugged in */
-	hp_status = gpio_get_value(priv->hp_gpio);
+	hp_status = gpio_get_value(priv->hp_gpio) ? 1 : 0;
 
 	if (hp_status != priv->hp_active_low)
 		strcpy(buf, "headphone\n");
@@ -355,9 +357,7 @@ static int imx_wm8958_set_bias_level(struct snd_soc_card *card,
 			if (!IS_ERR(data->mclk)) {
 				ret = clk_prepare_enable(data->mclk);
 				if (ret) {
-					dev_err(card->dev,
-						"Failed to enable MCLK: %d\n",
-						ret);
+					dev_err(card->dev, "Failed to enable MCLK: %d\n", ret);
 					return ret;
 				}
 			}
@@ -479,7 +479,6 @@ static int imx_wm8958_probe(struct platform_device *pdev)
 	data->dai.dai_fmt |= SND_SOC_DAIFMT_I2S | SND_SOC_DAIFMT_NB_NF;
 	data->card.set_bias_level = imx_wm8958_set_bias_level;
 	data->card.set_bias_level_post = imx_wm8958_set_bias_level_post;
-	data->card.owner = THIS_MODULE;
 
 	data->card.dev = &pdev->dev;
 	ret = snd_soc_of_parse_card_name(&data->card, "model");
@@ -544,6 +543,7 @@ MODULE_DEVICE_TABLE(of, imx_wm8958_dt_ids);
 static struct platform_driver imx_wm8958_driver = {
 	.driver = {
 		.name = "imx-wm8958",
+		.owner = THIS_MODULE,
 		.pm = &snd_soc_pm_ops,
 		.of_match_table = imx_wm8958_dt_ids,
 	},

@@ -1,6 +1,6 @@
 menuconfig ION
 	bool "Ion Memory Manager"
-	depends on HAVE_MEMBLOCK && HAS_DMA && MMU
+	depends on HAVE_MEMBLOCK
 	select GENERIC_ALLOCATOR
 	select DMA_SHARED_BUFFER
 	---help---
@@ -32,14 +32,6 @@ config ION_TEGRA
 	depends on ARCH_TEGRA && ION
 	help
 	  Choose this option if you wish to use ion on an nVidia Tegra.
-
-config ION_POOL_CACHE_POLICY
-	bool "Ion set page pool cache policy"
-	depends on ION && X86
-	default y if X86
-	help
-	  Choose this option if need to explicity set cache policy of the
-	  pages in the page pool.
 
 config ION_MXC
 	tristate "Ion for imx platform"

@@ -28,7 +28,6 @@ struct platform_device {
 	struct resource	*resource;
 
 	const struct platform_device_id	*id_entry;
-	char *driver_override; /* Driver name to force a match */
 
 	/* MFD cell pointer */
 	struct mfd_cell *mfd_cell;
@@ -59,7 +58,7 @@ extern int platform_add_devices(struct platform_device **, int);
 
 struct platform_device_info {
 		struct device *parent;
-		struct fwnode_handle *fwnode;
+		struct acpi_dev_node acpi_node;
 
 		const char *name;
 		int id;
@@ -197,10 +196,8 @@ extern void platform_driver_unregister(struct platform_driver *);
 /* non-hotpluggable platform devices may use this so that probe() and
  * its support may live in __init sections, conserving runtime memory.
  */
-#define platform_driver_probe(drv, probe) \
-	__platform_driver_probe(drv, probe, THIS_MODULE)
-extern int __platform_driver_probe(struct platform_driver *driver,
-		int (*probe)(struct platform_device *), struct module *module);
+extern int platform_driver_probe(struct platform_driver *driver,
+		int (*probe)(struct platform_device *));
 
 static inline void *platform_get_drvdata(const struct platform_device *pdev)
 {
@@ -240,12 +237,10 @@ static void __exit __platform_driver##_exit(void) \
 } \
 module_exit(__platform_driver##_exit);
 
-#define platform_create_bundle(driver, probe, res, n_res, data, size) \
-	__platform_create_bundle(driver, probe, res, n_res, data, size, THIS_MODULE)
-extern struct platform_device *__platform_create_bundle(
+extern struct platform_device *platform_create_bundle(
 	struct platform_driver *driver, int (*probe)(struct platform_device *),
 	struct resource *res, unsigned int n_res,
-	const void *data, size_t size, struct module *module);
+	const void *data, size_t size);
 
 /* early platform driver interface */
 struct early_platform_driver {

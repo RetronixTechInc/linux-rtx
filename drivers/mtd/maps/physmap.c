@@ -217,6 +217,7 @@ static struct platform_driver physmap_flash_driver = {
 	.shutdown	= physmap_flash_shutdown,
 	.driver		= {
 		.name	= "physmap-flash",
+		.owner	= THIS_MODULE,
 	},
 };
 

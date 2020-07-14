@@ -1,6 +1,7 @@
 /*
  * Copyright 2005-2016 Freescale Semiconductor, Inc. All Rights Reserved.
  */
+
 /*
  * The code contained herein is licensed under the GNU General Public
  * License. You may obtain a copy of the GNU General Public License
@@ -636,6 +637,9 @@ static int ipu_probe(struct platform_device *pdev)
 		/* Set MCU_T to divide MCU access window into 2 */
 		ipu_cm_write(ipu, 0x00400000L | (IPU_MCU_T_DEFAULT << 18),
 			     IPU_DISP_GEN);
+	} else {
+		ipu->fg_csc_type = ipu->bg_csc_type = CSC_NONE;
+		ipu->color_key_4rgb = true;
 	}
 
 	/* setup ipu clk tree after ipu reset  */
@@ -819,13 +823,13 @@ int32_t ipu_init_channel(struct ipu_soc *ipu, ipu_channel_t channel, ipu_channel
 		ipu->csi_channel[params->csi_mem.csi] = channel;
 
 		/*SMFC setting*/
-		if (params->csi_mem.mipi_en) {
+		if (params->csi_mem.mipi.en) {
 			ipu_conf |= (1 << (IPU_CONF_CSI0_DATA_SOURCE_OFFSET +
 				params->csi_mem.csi));
-			_ipu_smfc_init(ipu, channel, params->csi_mem.mipi_vc,
+			_ipu_smfc_init(ipu, channel, params->csi_mem.mipi.vc,
 				params->csi_mem.csi);
-			_ipu_csi_set_mipi_di(ipu, params->csi_mem.mipi_vc,
-				params->csi_mem.mipi_id, params->csi_mem.csi);
+			_ipu_csi_set_mipi_di(ipu, params->csi_mem.mipi.vc,
+				params->csi_mem.mipi.id, params->csi_mem.csi);
 		} else {
 			ipu_conf &= ~(1 << (IPU_CONF_CSI0_DATA_SOURCE_OFFSET +
 				params->csi_mem.csi));
@@ -850,12 +854,12 @@ int32_t ipu_init_channel(struct ipu_soc *ipu, ipu_channel_t channel, ipu_channel
 		ipu->ic_use_count++;
 		ipu->csi_channel[params->csi_prp_enc_mem.csi] = channel;
 
-		if (params->csi_prp_enc_mem.mipi_en) {
+		if (params->csi_prp_enc_mem.mipi.en) {
 			ipu_conf |= (1 << (IPU_CONF_CSI0_DATA_SOURCE_OFFSET +
 				params->csi_prp_enc_mem.csi));
 			_ipu_csi_set_mipi_di(ipu,
-				params->csi_prp_enc_mem.mipi_vc,
-				params->csi_prp_enc_mem.mipi_id,
+				params->csi_prp_enc_mem.mipi.vc,
+				params->csi_prp_enc_mem.mipi.id,
 				params->csi_prp_enc_mem.csi);
 		} else
 			ipu_conf &= ~(1 << (IPU_CONF_CSI0_DATA_SOURCE_OFFSET +
@@ -891,12 +895,12 @@ int32_t ipu_init_channel(struct ipu_soc *ipu, ipu_channel_t channel, ipu_channel
 		ipu->ic_use_count++;
 		ipu->csi_channel[params->csi_prp_vf_mem.csi] = channel;
 
-		if (params->csi_prp_vf_mem.mipi_en) {
+		if (params->csi_prp_vf_mem.mipi.en) {
 			ipu_conf |= (1 << (IPU_CONF_CSI0_DATA_SOURCE_OFFSET +
 				params->csi_prp_vf_mem.csi));
 			_ipu_csi_set_mipi_di(ipu,
-				params->csi_prp_vf_mem.mipi_vc,
-				params->csi_prp_vf_mem.mipi_id,
+				params->csi_prp_vf_mem.mipi.vc,
+				params->csi_prp_vf_mem.mipi.id,
 				params->csi_prp_vf_mem.csi);
 		} else
 			ipu_conf &= ~(1 << (IPU_CONF_CSI0_DATA_SOURCE_OFFSET +
@@ -1107,13 +1111,47 @@ err:
 }
 EXPORT_SYMBOL(ipu_init_channel);
 
+int32_t ipu_channel_request(struct ipu_soc *ipu, ipu_channel_t channel,
+		ipu_channel_params_t *params, struct ipu_chan **p_ipu_chan)
+{
+	struct ipu_chan *ipu_chan;
+	unsigned channel_id = IPU_CHAN_ID(channel);
+	int32_t ret;
+
+	dev_dbg(ipu->dev, "init channel = %d\n", channel_id);
+	*p_ipu_chan = NULL;
+	if (channel_id >= ARRAY_SIZE(ipu->chan)) {
+		dev_err(ipu->dev, "%s: ch = %d is too big!\n", __func__,
+				channel_id);
+		return -ENODEV;
+	}
+	ipu_chan = &ipu->chan[channel_id];
+	if (ipu_chan->p_ipu_chan && (ipu_chan->p_ipu_chan != p_ipu_chan)) {
+		dev_err(ipu->dev, "%s: ch = %d is busy!\n", __func__,
+				channel_id);
+		return -EBUSY;
+	}
+	ipu_chan->p_ipu_chan = p_ipu_chan;
+	ipu_chan->ipu = ipu;
+	ipu_chan->channel = channel;
+	ret = ipu_init_channel(ipu, channel, params);
+	if (ret)
+		ipu_chan->p_ipu_chan = NULL;
+	else
+		*p_ipu_chan = ipu_chan;
+	return ret;
+}
+EXPORT_SYMBOL(ipu_channel_request);
+
 /*!
  * This function is called to uninitialize a logical IPU channel.
  *
  * @param	ipu	ipu handler
  * @param       channel Input parameter for the logical channel ID to uninit.
+ * @param    params  Input parameter containing union of channel
+ *			 initialization parameters.
  */
-void ipu_uninit_channel(struct ipu_soc *ipu, ipu_channel_t channel)
+void ipu_uninit_channel(struct ipu_soc *ipu, ipu_channel_t channel, ipu_channel_params_t *params)
 {
 	uint32_t reg;
 	uint32_t in_dma, out_dma = 0;
@@ -1254,7 +1292,7 @@ void ipu_uninit_channel(struct ipu_soc *ipu, ipu_channel_t channel)
 		break;
 	case MEM_DC_SYNC:
 		dc_chan = 1;
-		_ipu_dc_uninit(ipu, 1);
+		_ipu_dc_uninit(ipu, 1, params->mem_dc_sync.di);
 		ipu->di_use_count[ipu->dc_di_assignment[1]]--;
 		ipu->dc_use_count--;
 		ipu->dmfc_use_count--;
@@ -1262,7 +1300,7 @@ void ipu_uninit_channel(struct ipu_soc *ipu, ipu_channel_t channel)
 	case MEM_BG_SYNC:
 		dc_chan = 5;
 		_ipu_dp_uninit(ipu, channel);
-		_ipu_dc_uninit(ipu, 5);
+		_ipu_dc_uninit(ipu, 5, params->mem_dp_bg_sync.di);
 		ipu->di_use_count[ipu->dc_di_assignment[5]]--;
 		ipu->dc_use_count--;
 		ipu->dp_use_count--;
@@ -1276,13 +1314,13 @@ void ipu_uninit_channel(struct ipu_soc *ipu, ipu_channel_t channel)
 		break;
 	case DIRECT_ASYNC0:
 		dc_chan = 8;
-		_ipu_dc_uninit(ipu, 8);
+		_ipu_dc_uninit(ipu, 8, params->direct_async.di);
 		ipu->di_use_count[ipu->dc_di_assignment[8]]--;
 		ipu->dc_use_count--;
 		break;
 	case DIRECT_ASYNC1:
 		dc_chan = 9;
-		_ipu_dc_uninit(ipu, 9);
+		_ipu_dc_uninit(ipu, 9, params->direct_async.di);
 		ipu->di_use_count[ipu->dc_di_assignment[9]]--;
 		ipu->dc_use_count--;
 		break;
@@ -1349,6 +1387,18 @@ void ipu_uninit_channel(struct ipu_soc *ipu, ipu_channel_t channel)
 	WARN_ON(ipu->smfc_use_count < 0);
 }
 EXPORT_SYMBOL(ipu_uninit_channel);
+
+void ipu_channel_free(struct ipu_chan **p_ipu_chan)
+{
+	struct ipu_chan *ipu_chan = *p_ipu_chan;
+
+	*p_ipu_chan = NULL;
+	if (ipu_chan) {
+		ipu_chan->p_ipu_chan = NULL;
+		ipu_uninit_channel(ipu_chan->ipu, ipu_chan->channel, NULL);
+	}
+}
+EXPORT_SYMBOL(ipu_channel_free);
 
 /*!
  * This function is called to initialize buffer(s) for logical IPU channel.
@@ -2772,6 +2822,15 @@ int32_t ipu_disable_channel(struct ipu_soc *ipu, ipu_channel_t channel, bool wai
 }
 EXPORT_SYMBOL(ipu_disable_channel);
 
+int32_t ipu_channel_disable(struct ipu_chan *ipu_chan, bool wait_for_stop)
+{
+	if (ipu_chan)
+		if (!IS_ERR(ipu_chan))
+			return ipu_disable_channel(ipu_chan->ipu, ipu_chan->channel, wait_for_stop);
+	return 0;
+}
+EXPORT_SYMBOL(ipu_channel_disable);
+
 /*!
  * This function enables CSI.
  *
@@ -3129,14 +3188,16 @@ void ipu_free_irq(struct ipu_soc *ipu, uint32_t irq, void *dev_id)
 
 	_ipu_get(ipu);
 
+	if (ipu->irq_list[irq].dev_id != dev_id)
+		return;
+
 	spin_lock_irqsave(&ipu->int_reg_spin_lock, lock_flags);
 
 	/* disable the interrupt */
 	reg = ipu_cm_read(ipu, IPUIRQ_2_CTRLREG(irq));
 	reg &= ~IPUIRQ_2_MASK(irq);
 	ipu_cm_write(ipu, reg, IPUIRQ_2_CTRLREG(irq));
-	if (ipu->irq_list[irq].dev_id == dev_id)
-		memset(&ipu->irq_list[irq], 0, sizeof(ipu->irq_list[irq]));
+	memset(&ipu->irq_list[irq], 0, sizeof(ipu->irq_list[irq]));
 
 	spin_unlock_irqrestore(&ipu->int_reg_spin_lock, lock_flags);
 

@@ -33,25 +33,25 @@
  */
 #define DEBUG_SUBSYSTEM S_ECHO
 
-#include "../include/lprocfs_status.h"
-#include "../include/obd_class.h"
+#include <lprocfs_status.h>
+#include <obd_class.h>
 
-#if defined(CONFIG_PROC_FS)
+#ifdef LPROCFS
 LPROC_SEQ_FOPS_RO_TYPE(echo, uuid);
 static struct lprocfs_vars lprocfs_echo_obd_vars[] = {
-	{ "uuid",	 &echo_uuid_fops,	NULL, 0 },
-	{ NULL }
+	{ "uuid",	 &echo_uuid_fops,	0, 0 },
+	{ 0 }
 };
 
 LPROC_SEQ_FOPS_RO_TYPE(echo, numrefs);
 static struct lprocfs_vars lprocfs_echo_module_vars[] = {
-	{ "num_refs",     &echo_numrefs_fops,     NULL, 0 },
-	{ NULL }
+	{ "num_refs",     &echo_numrefs_fops,     0, 0 },
+	{ 0 }
 };
 
 void lprocfs_echo_init_vars(struct lprocfs_static_vars *lvars)
 {
-	lvars->module_vars  = lprocfs_echo_module_vars;
-	lvars->obd_vars     = lprocfs_echo_obd_vars;
+    lvars->module_vars  = lprocfs_echo_module_vars;
+    lvars->obd_vars     = lprocfs_echo_obd_vars;
 }
-#endif /* CONFIG_PROC_FS */
+#endif /* LPROCFS */

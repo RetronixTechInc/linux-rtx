@@ -624,7 +624,6 @@ static void max8925_irq_sync_unlock(struct irq_data *data)
 static void max8925_irq_enable(struct irq_data *data)
 {
 	struct max8925_chip *chip = irq_data_get_irq_chip_data(data);
-
 	max8925_irqs[data->irq - chip->irq_base].enable
 		= max8925_irqs[data->irq - chip->irq_base].offs;
 }
@@ -632,7 +631,6 @@ static void max8925_irq_enable(struct irq_data *data)
 static void max8925_irq_disable(struct irq_data *data)
 {
 	struct max8925_chip *chip = irq_data_get_irq_chip_data(data);
-
 	max8925_irqs[data->irq - chip->irq_base].enable = 0;
 }
 

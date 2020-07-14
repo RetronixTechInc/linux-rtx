@@ -391,6 +391,8 @@ out:
 		batadv_neigh_ifinfo_free_ref(router_gw_tq);
 	if (router_orig_tq)
 		batadv_neigh_ifinfo_free_ref(router_orig_tq);
+
+	return;
 }
 
 /**
@@ -592,16 +594,15 @@ static int batadv_write_buffer_text(struct batadv_priv *bat_priv,
 
 	curr_gw = batadv_gw_get_selected_gw_node(bat_priv);
 
-	seq_printf(seq, "%s %pM (%3i) %pM [%10s]: %u.%u/%u.%u MBit\n",
-		   (curr_gw == gw_node ? "=>" : "  "),
-		   gw_node->orig_node->orig,
-		   router_ifinfo->bat_iv.tq_avg, router->addr,
-		   router->if_incoming->net_dev->name,
-		   gw_node->bandwidth_down / 10,
-		   gw_node->bandwidth_down % 10,
-		   gw_node->bandwidth_up / 10,
-		   gw_node->bandwidth_up % 10);
-	ret = seq_has_overflowed(seq) ? -1 : 0;
+	ret = seq_printf(seq, "%s %pM (%3i) %pM [%10s]: %u.%u/%u.%u MBit\n",
+			 (curr_gw == gw_node ? "=>" : "  "),
+			 gw_node->orig_node->orig,
+			 router_ifinfo->bat_iv.tq_avg, router->addr,
+			 router->if_incoming->net_dev->name,
+			 gw_node->bandwidth_down / 10,
+			 gw_node->bandwidth_down % 10,
+			 gw_node->bandwidth_up / 10,
+			 gw_node->bandwidth_up % 10);
 
 	if (curr_gw)
 		batadv_gw_node_free_ref(curr_gw);
@@ -686,7 +687,7 @@ batadv_gw_dhcp_recipient_get(struct sk_buff *skb, unsigned int *header_len,
 	if (!pskb_may_pull(skb, *header_len + ETH_HLEN))
 		return BATADV_DHCP_NO;
 
-	ethhdr = eth_hdr(skb);
+	ethhdr = (struct ethhdr *)skb->data;
 	proto = ethhdr->h_proto;
 	*header_len += ETH_HLEN;
 
@@ -695,7 +696,7 @@ batadv_gw_dhcp_recipient_get(struct sk_buff *skb, unsigned int *header_len,
 		if (!pskb_may_pull(skb, *header_len + VLAN_HLEN))
 			return BATADV_DHCP_NO;
 
-		vhdr = vlan_eth_hdr(skb);
+		vhdr = (struct vlan_ethhdr *)skb->data;
 		proto = vhdr->h_vlan_encapsulated_proto;
 		*header_len += VLAN_HLEN;
 	}
@@ -734,7 +735,7 @@ batadv_gw_dhcp_recipient_get(struct sk_buff *skb, unsigned int *header_len,
 		return BATADV_DHCP_NO;
 
 	/* skb->data might have been reallocated by pskb_may_pull() */
-	ethhdr = eth_hdr(skb);
+	ethhdr = (struct ethhdr *)skb->data;
 	if (ntohs(ethhdr->h_proto) == ETH_P_8021Q)
 		ethhdr = (struct ethhdr *)(skb->data + VLAN_HLEN);
 
@@ -771,12 +772,11 @@ batadv_gw_dhcp_recipient_get(struct sk_buff *skb, unsigned int *header_len,
 		if (*p != ETH_ALEN)
 			return BATADV_DHCP_NO;
 
-		ether_addr_copy(chaddr, skb->data + chaddr_offset);
+		memcpy(chaddr, skb->data + chaddr_offset, ETH_ALEN);
 	}
 
 	return ret;
 }
-
 /**
  * batadv_gw_out_of_range - check if the dhcp request destination is the best gw
  * @bat_priv: the bat priv with all the soft interface information

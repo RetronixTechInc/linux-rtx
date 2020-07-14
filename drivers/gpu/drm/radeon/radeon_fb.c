@@ -48,40 +48,10 @@ struct radeon_fbdev {
 	struct radeon_device *rdev;
 };
 
-/**
- * radeon_fb_helper_set_par - Hide cursor on CRTCs used by fbdev.
- *
- * @info: fbdev info
- *
- * This function hides the cursor on all CRTCs used by fbdev.
- */
-static int radeon_fb_helper_set_par(struct fb_info *info)
-{
-	int ret;
-
-	ret = drm_fb_helper_set_par(info);
-
-	/* XXX: with universal plane support fbdev will automatically disable
-	 * all non-primary planes (including the cursor)
-	 */
-	if (ret == 0) {
-		struct drm_fb_helper *fb_helper = info->par;
-		int i;
-
-		for (i = 0; i < fb_helper->crtc_count; i++) {
-			struct drm_crtc *crtc = fb_helper->crtc_info[i].mode_set.crtc;
-
-			radeon_crtc_cursor_set2(crtc, NULL, 0, 0, 0, 0, 0);
-		}
-	}
-
-	return ret;
-}
-
 static struct fb_ops radeonfb_ops = {
 	.owner = THIS_MODULE,
 	.fb_check_var = drm_fb_helper_check_var,
-	.fb_set_par = radeon_fb_helper_set_par,
+	.fb_set_par = drm_fb_helper_set_par,
 	.fb_fillrect = cfb_fillrect,
 	.fb_copyarea = cfb_copyarea,
 	.fb_imageblit = cfb_imageblit,
@@ -157,7 +127,8 @@ static int radeonfb_create_pinned_object(struct radeon_fbdev *rfbdev,
 	aligned_size = ALIGN(size, PAGE_SIZE);
 	ret = radeon_gem_object_create(rdev, aligned_size, 0,
 				       RADEON_GEM_DOMAIN_VRAM,
-				       0, true, &gobj);
+				       false, true,
+				       &gobj);
 	if (ret) {
 		printk(KERN_ERR "failed to allocate framebuffer (%d)\n",
 		       aligned_size);
@@ -219,8 +190,7 @@ out_unref:
 static int radeonfb_create(struct drm_fb_helper *helper,
 			   struct drm_fb_helper_surface_size *sizes)
 {
-	struct radeon_fbdev *rfbdev =
-		container_of(helper, struct radeon_fbdev, helper);
+	struct radeon_fbdev *rfbdev = (struct radeon_fbdev *)helper;
 	struct radeon_device *rdev = rfbdev->rdev;
 	struct fb_info *info;
 	struct drm_framebuffer *fb = NULL;
@@ -361,7 +331,7 @@ static int radeon_fbdev_destroy(struct drm_device *dev, struct radeon_fbdev *rfb
 	return 0;
 }
 
-static const struct drm_fb_helper_funcs radeon_fb_helper_funcs = {
+static struct drm_fb_helper_funcs radeon_fb_helper_funcs = {
 	.gamma_set = radeon_crtc_fb_gamma_set,
 	.gamma_get = radeon_crtc_fb_gamma_get,
 	.fb_probe = radeonfb_create,
@@ -383,34 +353,23 @@ int radeon_fbdev_init(struct radeon_device *rdev)
 
 	rfbdev->rdev = rdev;
 	rdev->mode_info.rfbdev = rfbdev;
-
-	drm_fb_helper_prepare(rdev->ddev, &rfbdev->helper,
-			      &radeon_fb_helper_funcs);
+	rfbdev->helper.funcs = &radeon_fb_helper_funcs;
 
 	ret = drm_fb_helper_init(rdev->ddev, &rfbdev->helper,
 				 rdev->num_crtc,
 				 RADEONFB_CONN_LIMIT);
-	if (ret)
-		goto free;
+	if (ret) {
+		kfree(rfbdev);
+		return ret;
+	}
 
-	ret = drm_fb_helper_single_add_all_connectors(&rfbdev->helper);
-	if (ret)
-		goto fini;
+	drm_fb_helper_single_add_all_connectors(&rfbdev->helper);
 
 	/* disable all the possible outputs/crtcs before entering KMS mode */
 	drm_helper_disable_unused_functions(rdev->ddev);
 
-	ret = drm_fb_helper_initial_config(&rfbdev->helper, bpp_sel);
-	if (ret)
-		goto fini;
-
+	drm_fb_helper_initial_config(&rfbdev->helper, bpp_sel);
 	return 0;
-
-fini:
-	drm_fb_helper_fini(&rfbdev->helper);
-free:
-	kfree(rfbdev);
-	return ret;
 }
 
 void radeon_fbdev_fini(struct radeon_device *rdev)
@@ -428,19 +387,19 @@ void radeon_fbdev_set_suspend(struct radeon_device *rdev, int state)
 	fb_set_suspend(rdev->mode_info.rfbdev->helper.fbdev, state);
 }
 
+int radeon_fbdev_total_size(struct radeon_device *rdev)
+{
+	struct radeon_bo *robj;
+	int size = 0;
+
+	robj = gem_to_radeon_bo(rdev->mode_info.rfbdev->rfb.obj);
+	size += radeon_bo_size(robj);
+	return size;
+}
+
 bool radeon_fbdev_robj_is_fb(struct radeon_device *rdev, struct radeon_bo *robj)
 {
 	if (robj == gem_to_radeon_bo(rdev->mode_info.rfbdev->rfb.obj))
 		return true;
 	return false;
-}
-
-void radeon_fb_add_connector(struct radeon_device *rdev, struct drm_connector *connector)
-{
-	drm_fb_helper_add_one_connector(&rdev->mode_info.rfbdev->helper, connector);
-}
-
-void radeon_fb_remove_connector(struct radeon_device *rdev, struct drm_connector *connector)
-{
-	drm_fb_helper_remove_one_connector(&rdev->mode_info.rfbdev->helper, connector);
 }

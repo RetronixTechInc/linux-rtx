@@ -94,7 +94,7 @@ struct isp1301 {
 
 #if defined(CONFIG_MACH_OMAP_H2) || defined(CONFIG_MACH_OMAP_H3)
 
-#if	defined(CONFIG_TPS65010) || (defined(CONFIG_TPS65010_MODULE) && defined(MODULE))
+#if	defined(CONFIG_TPS65010) || defined(CONFIG_TPS65010_MODULE)
 
 #include <linux/i2c/tps65010.h>
 
@@ -878,6 +878,7 @@ static struct platform_driver omap_otg_driver = {
 	.probe		= otg_probe,
 	.remove		= otg_remove,
 	.driver		= {
+		.owner	= THIS_MODULE,
 		.name	= "omap_otg",
 	},
 };
@@ -1010,7 +1011,7 @@ static void isp_update_otg(struct isp1301 *isp, u8 stat)
 				break;
 			case OTG_STATE_A_WAIT_VFALL:
 				state = OTG_STATE_A_IDLE;
-				/* hub_wq may take a while to notice and
+				/* khubd may take a while to notice and
 				 * handle this disconnect, so don't go
 				 * to B_IDLE quite yet.
 				 */

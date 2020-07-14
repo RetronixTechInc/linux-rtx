@@ -27,7 +27,6 @@
 #include <linux/perf_event.h>
 
 #include <asm/opcodes.h>
-#include <asm/system_info.h>
 #include <asm/traps.h>
 #include <asm/uaccess.h>
 
@@ -42,7 +41,7 @@
 	"	cmp		%0, #0\n"			\
 	"	movne		%0, %4\n"			\
 	"2:\n"							\
-	"	.section	 .text.fixup,\"ax\"\n"		\
+	"	.section	 .fixup,\"ax\"\n"		\
 	"	.align		2\n"				\
 	"3:	mov		%0, %5\n"			\
 	"	b		2b\n"				\
@@ -142,6 +141,14 @@ static int emulate_swpX(unsigned int address, unsigned int *data,
 	while (1) {
 		unsigned long temp;
 
+		/*
+		 * Barrier required between accessing protected resource and
+		 * releasing a lock for it. Legacy code might not have done
+		 * this, and we cannot determine that this is not the case
+		 * being emulated, so insert always.
+		 */
+		smp_mb();
+
 		if (type == TYPE_SWPB)
 			__user_swpb_asm(*data, address, res, temp);
 		else
@@ -154,6 +161,13 @@ static int emulate_swpX(unsigned int address, unsigned int *data,
 	}
 
 	if (res == 0) {
+		/*
+		 * Barrier also required between acquiring a lock for a
+		 * protected resource and accessing the resource. Inserted for
+		 * same reason as above.
+		 */
+		smp_mb();
+
 		if (type == TYPE_SWPB)
 			swpbcounter++;
 		else
@@ -252,15 +266,12 @@ static struct undef_hook swp_hook = {
  */
 static int __init swp_emulation_init(void)
 {
-	if (cpu_architecture() < CPU_ARCH_ARMv7)
-		return 0;
-
 #ifdef CONFIG_PROC_FS
 	if (!proc_create("cpu/swp_emulation", S_IRUGO, NULL, &proc_status_fops))
 		return -ENOMEM;
 #endif /* CONFIG_PROC_FS */
 
-	pr_notice("Registering SWP/SWPB emulation handler\n");
+	printk(KERN_NOTICE "Registering SWP/SWPB emulation handler\n");
 	register_undef_hook(&swp_hook);
 
 	return 0;

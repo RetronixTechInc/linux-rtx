@@ -48,31 +48,118 @@ enum xscale_counters {
 };
 
 static const unsigned xscale_perf_map[PERF_COUNT_HW_MAX] = {
-	PERF_MAP_ALL_UNSUPPORTED,
 	[PERF_COUNT_HW_CPU_CYCLES]		= XSCALE_PERFCTR_CCNT,
 	[PERF_COUNT_HW_INSTRUCTIONS]		= XSCALE_PERFCTR_INSTRUCTION,
+	[PERF_COUNT_HW_CACHE_REFERENCES]	= HW_OP_UNSUPPORTED,
+	[PERF_COUNT_HW_CACHE_MISSES]		= HW_OP_UNSUPPORTED,
 	[PERF_COUNT_HW_BRANCH_INSTRUCTIONS]	= XSCALE_PERFCTR_BRANCH,
 	[PERF_COUNT_HW_BRANCH_MISSES]		= XSCALE_PERFCTR_BRANCH_MISS,
+	[PERF_COUNT_HW_BUS_CYCLES]		= HW_OP_UNSUPPORTED,
 	[PERF_COUNT_HW_STALLED_CYCLES_FRONTEND]	= XSCALE_PERFCTR_ICACHE_NO_DELIVER,
+	[PERF_COUNT_HW_STALLED_CYCLES_BACKEND]	= HW_OP_UNSUPPORTED,
 };
 
 static const unsigned xscale_perf_cache_map[PERF_COUNT_HW_CACHE_MAX]
 					   [PERF_COUNT_HW_CACHE_OP_MAX]
 					   [PERF_COUNT_HW_CACHE_RESULT_MAX] = {
-	PERF_CACHE_MAP_ALL_UNSUPPORTED,
-
-	[C(L1D)][C(OP_READ)][C(RESULT_ACCESS)]	= XSCALE_PERFCTR_DCACHE_ACCESS,
-	[C(L1D)][C(OP_READ)][C(RESULT_MISS)]	= XSCALE_PERFCTR_DCACHE_MISS,
-	[C(L1D)][C(OP_WRITE)][C(RESULT_ACCESS)]	= XSCALE_PERFCTR_DCACHE_ACCESS,
-	[C(L1D)][C(OP_WRITE)][C(RESULT_MISS)]	= XSCALE_PERFCTR_DCACHE_MISS,
-
-	[C(L1I)][C(OP_READ)][C(RESULT_MISS)]	= XSCALE_PERFCTR_ICACHE_MISS,
-
-	[C(DTLB)][C(OP_READ)][C(RESULT_MISS)]	= XSCALE_PERFCTR_DTLB_MISS,
-	[C(DTLB)][C(OP_WRITE)][C(RESULT_MISS)]	= XSCALE_PERFCTR_DTLB_MISS,
-
-	[C(ITLB)][C(OP_READ)][C(RESULT_MISS)]	= XSCALE_PERFCTR_ITLB_MISS,
-	[C(ITLB)][C(OP_WRITE)][C(RESULT_MISS)]	= XSCALE_PERFCTR_ITLB_MISS,
+	[C(L1D)] = {
+		[C(OP_READ)] = {
+			[C(RESULT_ACCESS)]	= XSCALE_PERFCTR_DCACHE_ACCESS,
+			[C(RESULT_MISS)]	= XSCALE_PERFCTR_DCACHE_MISS,
+		},
+		[C(OP_WRITE)] = {
+			[C(RESULT_ACCESS)]	= XSCALE_PERFCTR_DCACHE_ACCESS,
+			[C(RESULT_MISS)]	= XSCALE_PERFCTR_DCACHE_MISS,
+		},
+		[C(OP_PREFETCH)] = {
+			[C(RESULT_ACCESS)]	= CACHE_OP_UNSUPPORTED,
+			[C(RESULT_MISS)]	= CACHE_OP_UNSUPPORTED,
+		},
+	},
+	[C(L1I)] = {
+		[C(OP_READ)] = {
+			[C(RESULT_ACCESS)]	= CACHE_OP_UNSUPPORTED,
+			[C(RESULT_MISS)]	= XSCALE_PERFCTR_ICACHE_MISS,
+		},
+		[C(OP_WRITE)] = {
+			[C(RESULT_ACCESS)]	= CACHE_OP_UNSUPPORTED,
+			[C(RESULT_MISS)]	= CACHE_OP_UNSUPPORTED,
+		},
+		[C(OP_PREFETCH)] = {
+			[C(RESULT_ACCESS)]	= CACHE_OP_UNSUPPORTED,
+			[C(RESULT_MISS)]	= CACHE_OP_UNSUPPORTED,
+		},
+	},
+	[C(LL)] = {
+		[C(OP_READ)] = {
+			[C(RESULT_ACCESS)]	= CACHE_OP_UNSUPPORTED,
+			[C(RESULT_MISS)]	= CACHE_OP_UNSUPPORTED,
+		},
+		[C(OP_WRITE)] = {
+			[C(RESULT_ACCESS)]	= CACHE_OP_UNSUPPORTED,
+			[C(RESULT_MISS)]	= CACHE_OP_UNSUPPORTED,
+		},
+		[C(OP_PREFETCH)] = {
+			[C(RESULT_ACCESS)]	= CACHE_OP_UNSUPPORTED,
+			[C(RESULT_MISS)]	= CACHE_OP_UNSUPPORTED,
+		},
+	},
+	[C(DTLB)] = {
+		[C(OP_READ)] = {
+			[C(RESULT_ACCESS)]	= CACHE_OP_UNSUPPORTED,
+			[C(RESULT_MISS)]	= XSCALE_PERFCTR_DTLB_MISS,
+		},
+		[C(OP_WRITE)] = {
+			[C(RESULT_ACCESS)]	= CACHE_OP_UNSUPPORTED,
+			[C(RESULT_MISS)]	= XSCALE_PERFCTR_DTLB_MISS,
+		},
+		[C(OP_PREFETCH)] = {
+			[C(RESULT_ACCESS)]	= CACHE_OP_UNSUPPORTED,
+			[C(RESULT_MISS)]	= CACHE_OP_UNSUPPORTED,
+		},
+	},
+	[C(ITLB)] = {
+		[C(OP_READ)] = {
+			[C(RESULT_ACCESS)]	= CACHE_OP_UNSUPPORTED,
+			[C(RESULT_MISS)]	= XSCALE_PERFCTR_ITLB_MISS,
+		},
+		[C(OP_WRITE)] = {
+			[C(RESULT_ACCESS)]	= CACHE_OP_UNSUPPORTED,
+			[C(RESULT_MISS)]	= XSCALE_PERFCTR_ITLB_MISS,
+		},
+		[C(OP_PREFETCH)] = {
+			[C(RESULT_ACCESS)]	= CACHE_OP_UNSUPPORTED,
+			[C(RESULT_MISS)]	= CACHE_OP_UNSUPPORTED,
+		},
+	},
+	[C(BPU)] = {
+		[C(OP_READ)] = {
+			[C(RESULT_ACCESS)]	= CACHE_OP_UNSUPPORTED,
+			[C(RESULT_MISS)]	= CACHE_OP_UNSUPPORTED,
+		},
+		[C(OP_WRITE)] = {
+			[C(RESULT_ACCESS)]	= CACHE_OP_UNSUPPORTED,
+			[C(RESULT_MISS)]	= CACHE_OP_UNSUPPORTED,
+		},
+		[C(OP_PREFETCH)] = {
+			[C(RESULT_ACCESS)]	= CACHE_OP_UNSUPPORTED,
+			[C(RESULT_MISS)]	= CACHE_OP_UNSUPPORTED,
+		},
+	},
+	[C(NODE)] = {
+		[C(OP_READ)] = {
+			[C(RESULT_ACCESS)]	= CACHE_OP_UNSUPPORTED,
+			[C(RESULT_MISS)]	= CACHE_OP_UNSUPPORTED,
+		},
+		[C(OP_WRITE)] = {
+			[C(RESULT_ACCESS)]	= CACHE_OP_UNSUPPORTED,
+			[C(RESULT_MISS)]	= CACHE_OP_UNSUPPORTED,
+		},
+		[C(OP_PREFETCH)] = {
+			[C(RESULT_ACCESS)]	= CACHE_OP_UNSUPPORTED,
+			[C(RESULT_MISS)]	= CACHE_OP_UNSUPPORTED,
+		},
+	},
 };
 
 #define	XSCALE_PMU_ENABLE	0x001
@@ -138,7 +225,7 @@ xscale1pmu_handle_irq(int irq_num, void *dev)
 	unsigned long pmnc;
 	struct perf_sample_data data;
 	struct arm_pmu *cpu_pmu = (struct arm_pmu *)dev;
-	struct pmu_hw_events *cpuc = this_cpu_ptr(cpu_pmu->hw_events);
+	struct pmu_hw_events *cpuc = cpu_pmu->get_hw_events();
 	struct pt_regs *regs;
 	int idx;
 
@@ -198,7 +285,7 @@ static void xscale1pmu_enable_event(struct perf_event *event)
 	unsigned long val, mask, evt, flags;
 	struct arm_pmu *cpu_pmu = to_arm_pmu(event->pmu);
 	struct hw_perf_event *hwc = &event->hw;
-	struct pmu_hw_events *events = this_cpu_ptr(cpu_pmu->hw_events);
+	struct pmu_hw_events *events = cpu_pmu->get_hw_events();
 	int idx = hwc->idx;
 
 	switch (idx) {
@@ -234,7 +321,7 @@ static void xscale1pmu_disable_event(struct perf_event *event)
 	unsigned long val, mask, evt, flags;
 	struct arm_pmu *cpu_pmu = to_arm_pmu(event->pmu);
 	struct hw_perf_event *hwc = &event->hw;
-	struct pmu_hw_events *events = this_cpu_ptr(cpu_pmu->hw_events);
+	struct pmu_hw_events *events = cpu_pmu->get_hw_events();
 	int idx = hwc->idx;
 
 	switch (idx) {
@@ -287,7 +374,7 @@ xscale1pmu_get_event_idx(struct pmu_hw_events *cpuc,
 static void xscale1pmu_start(struct arm_pmu *cpu_pmu)
 {
 	unsigned long flags, val;
-	struct pmu_hw_events *events = this_cpu_ptr(cpu_pmu->hw_events);
+	struct pmu_hw_events *events = cpu_pmu->get_hw_events();
 
 	raw_spin_lock_irqsave(&events->pmu_lock, flags);
 	val = xscale1pmu_read_pmnc();
@@ -299,7 +386,7 @@ static void xscale1pmu_start(struct arm_pmu *cpu_pmu)
 static void xscale1pmu_stop(struct arm_pmu *cpu_pmu)
 {
 	unsigned long flags, val;
-	struct pmu_hw_events *events = this_cpu_ptr(cpu_pmu->hw_events);
+	struct pmu_hw_events *events = cpu_pmu->get_hw_events();
 
 	raw_spin_lock_irqsave(&events->pmu_lock, flags);
 	val = xscale1pmu_read_pmnc();
@@ -355,7 +442,7 @@ static int xscale_map_event(struct perf_event *event)
 
 static int xscale1pmu_init(struct arm_pmu *cpu_pmu)
 {
-	cpu_pmu->name		= "armv5_xscale1";
+	cpu_pmu->name		= "xscale1";
 	cpu_pmu->handle_irq	= xscale1pmu_handle_irq;
 	cpu_pmu->enable		= xscale1pmu_enable_event;
 	cpu_pmu->disable	= xscale1pmu_disable_event;
@@ -485,7 +572,7 @@ xscale2pmu_handle_irq(int irq_num, void *dev)
 	unsigned long pmnc, of_flags;
 	struct perf_sample_data data;
 	struct arm_pmu *cpu_pmu = (struct arm_pmu *)dev;
-	struct pmu_hw_events *cpuc = this_cpu_ptr(cpu_pmu->hw_events);
+	struct pmu_hw_events *cpuc = cpu_pmu->get_hw_events();
 	struct pt_regs *regs;
 	int idx;
 
@@ -539,7 +626,7 @@ static void xscale2pmu_enable_event(struct perf_event *event)
 	unsigned long flags, ien, evtsel;
 	struct arm_pmu *cpu_pmu = to_arm_pmu(event->pmu);
 	struct hw_perf_event *hwc = &event->hw;
-	struct pmu_hw_events *events = this_cpu_ptr(cpu_pmu->hw_events);
+	struct pmu_hw_events *events = cpu_pmu->get_hw_events();
 	int idx = hwc->idx;
 
 	ien = xscale2pmu_read_int_enable();
@@ -585,7 +672,7 @@ static void xscale2pmu_disable_event(struct perf_event *event)
 	unsigned long flags, ien, evtsel, of_flags;
 	struct arm_pmu *cpu_pmu = to_arm_pmu(event->pmu);
 	struct hw_perf_event *hwc = &event->hw;
-	struct pmu_hw_events *events = this_cpu_ptr(cpu_pmu->hw_events);
+	struct pmu_hw_events *events = cpu_pmu->get_hw_events();
 	int idx = hwc->idx;
 
 	ien = xscale2pmu_read_int_enable();
@@ -651,7 +738,7 @@ out:
 static void xscale2pmu_start(struct arm_pmu *cpu_pmu)
 {
 	unsigned long flags, val;
-	struct pmu_hw_events *events = this_cpu_ptr(cpu_pmu->hw_events);
+	struct pmu_hw_events *events = cpu_pmu->get_hw_events();
 
 	raw_spin_lock_irqsave(&events->pmu_lock, flags);
 	val = xscale2pmu_read_pmnc() & ~XSCALE_PMU_CNT64;
@@ -663,7 +750,7 @@ static void xscale2pmu_start(struct arm_pmu *cpu_pmu)
 static void xscale2pmu_stop(struct arm_pmu *cpu_pmu)
 {
 	unsigned long flags, val;
-	struct pmu_hw_events *events = this_cpu_ptr(cpu_pmu->hw_events);
+	struct pmu_hw_events *events = cpu_pmu->get_hw_events();
 
 	raw_spin_lock_irqsave(&events->pmu_lock, flags);
 	val = xscale2pmu_read_pmnc();
@@ -725,7 +812,7 @@ static inline void xscale2pmu_write_counter(struct perf_event *event, u32 val)
 
 static int xscale2pmu_init(struct arm_pmu *cpu_pmu)
 {
-	cpu_pmu->name		= "armv5_xscale2";
+	cpu_pmu->name		= "xscale2";
 	cpu_pmu->handle_irq	= xscale2pmu_handle_irq;
 	cpu_pmu->enable		= xscale2pmu_enable_event;
 	cpu_pmu->disable	= xscale2pmu_disable_event;

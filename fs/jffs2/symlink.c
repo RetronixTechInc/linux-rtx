@@ -31,7 +31,7 @@ const struct inode_operations jffs2_symlink_inode_operations =
 
 static void *jffs2_follow_link(struct dentry *dentry, struct nameidata *nd)
 {
-	struct jffs2_inode_info *f = JFFS2_INODE_INFO(d_inode(dentry));
+	struct jffs2_inode_info *f = JFFS2_INODE_INFO(dentry->d_inode);
 	char *p = (char *)f->target;
 
 	/*

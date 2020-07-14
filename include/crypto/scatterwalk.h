@@ -25,6 +25,12 @@
 #include <linux/scatterlist.h>
 #include <linux/sched.h>
 
+static inline void crypto_yield(u32 flags)
+{
+	if (flags & CRYPTO_TFM_REQ_MAY_SLEEP)
+		cond_resched();
+}
+
 static inline void scatterwalk_sg_chain(struct scatterlist *sg1, int num,
 					struct scatterlist *sg2)
 {
@@ -33,13 +39,21 @@ static inline void scatterwalk_sg_chain(struct scatterlist *sg1, int num,
 	sg1[num - 1].page_link |= 0x01;
 }
 
+static inline struct scatterlist *scatterwalk_sg_next(struct scatterlist *sg)
+{
+	if (sg_is_last(sg))
+		return NULL;
+
+	return (++sg)->length ? sg : sg_chain_ptr(sg);
+}
+
 static inline void scatterwalk_crypto_chain(struct scatterlist *head,
 					    struct scatterlist *sg,
 					    int chain, int num)
 {
 	if (chain) {
 		head->length += sg->length;
-		sg = sg_next(sg);
+		sg = scatterwalk_sg_next(sg);
 	}
 
 	if (sg)

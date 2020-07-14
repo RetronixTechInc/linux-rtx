@@ -1001,7 +1001,7 @@ no_mem:
 
 /* Helper to create ABORT with a SCTP_ERROR_USER_ABORT error.  */
 struct sctp_chunk *sctp_make_abort_user(const struct sctp_association *asoc,
-					struct msghdr *msg,
+					const struct msghdr *msg,
 					size_t paylen)
 {
 	struct sctp_chunk *retval;
@@ -1018,7 +1018,7 @@ struct sctp_chunk *sctp_make_abort_user(const struct sctp_association *asoc,
 		if (!payload)
 			goto err_payload;
 
-		err = memcpy_from_msg(payload, msg, paylen);
+		err = memcpy_fromiovec(payload, msg->msg_iov, paylen);
 		if (err < 0)
 			goto err_copy;
 	}
@@ -1491,26 +1491,26 @@ static void *sctp_addto_chunk_fixed(struct sctp_chunk *chunk,
  * chunk is not big enough.
  * Returns a kernel err value.
  */
-int sctp_user_addto_chunk(struct sctp_chunk *chunk, int len,
-			  struct iov_iter *from)
+int sctp_user_addto_chunk(struct sctp_chunk *chunk, int off, int len,
+			  struct iovec *data)
 {
-	void *target;
-	ssize_t copied;
+	__u8 *target;
+	int err = 0;
 
 	/* Make room in chunk for data.  */
 	target = skb_put(chunk->skb, len);
 
 	/* Copy data (whole iovec) into chunk */
-	copied = copy_from_iter(target, len, from);
-	if (copied != len)
-		return -EFAULT;
+	if ((err = memcpy_fromiovecend(target, data, off, len)))
+		goto out;
 
 	/* Adjust the chunk length field.  */
 	chunk->chunk_hdr->length =
 		htons(ntohs(chunk->chunk_hdr->length) + len);
 	chunk->chunk_end = skb_tail_pointer(chunk->skb);
 
-	return 0;
+out:
+	return err;
 }
 
 /* Helper function to assign a TSN if needed.  This assumes that both
@@ -1782,7 +1782,7 @@ no_hmac:
 	else
 		kt = ktime_get();
 
-	if (!asoc && ktime_before(bear_cookie->expiration, kt)) {
+	if (!asoc && ktime_compare(bear_cookie->expiration, kt) < 0) {
 		/*
 		 * Section 3.3.10.3 Stale Cookie Error (3)
 		 *

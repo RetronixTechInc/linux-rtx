@@ -21,6 +21,7 @@
  * Copyright 2008-2009 Embedded Alley Solutions, Inc All Rights Reserved.
  */
 
+#include <linux/busfreq-imx.h>
 #include <linux/clk.h>
 #include <linux/dma-mapping.h>
 #include <linux/dmaengine.h>
@@ -1069,13 +1070,18 @@ static int pxp_config(struct pxps *pxp, struct pxp_channel *pxp_chan)
 	pxp_set_s0crop(pxp);
 	pxp_set_scaling(pxp);
 	ol_nr = pxp_conf_data->layer_nr - 2;
-	while (ol_nr > 0) {
-		i = pxp_conf_data->layer_nr - 2 - ol_nr;
-		pxp_set_oln(i, pxp);
-		pxp_set_olparam(i, pxp);
-		/* only the color key in higher overlay will take effect. */
-		pxp_set_olcolorkey(i, pxp);
-		ol_nr--;
+	if (ol_nr > 0) {
+		while (ol_nr > 0) {
+			i = pxp_conf_data->layer_nr - 2 - ol_nr;
+			pxp_set_oln(i, pxp);
+			pxp_set_olparam(i, pxp);
+			/* only the color key in higher overlay will take effect. */
+			pxp_set_olcolorkey(i, pxp);
+			ol_nr--;
+		}
+	} else {
+		__raw_writel(0xffffffff, pxp->base + HW_PXP_OUT_AS_ULC);
+		__raw_writel(0x0, pxp->base + HW_PXP_OUT_AS_LRC);
 	}
 	pxp_set_s0colorkey(pxp);
 	pxp_set_csc(pxp);
@@ -1096,6 +1102,8 @@ static void pxp_clk_enable(struct pxps *pxp)
 		mutex_unlock(&pxp->clk_mutex);
 		return;
 	}
+
+	request_bus_freq(BUS_FREQ_HIGH);
 
 	pm_runtime_get_sync(pxp->dev);
 
@@ -1125,11 +1133,14 @@ static void pxp_clk_disable(struct pxps *pxp)
 		if (pxp->clk_disp_axi)
 			clk_disable_unprepare(pxp->clk_disp_axi);
 		pxp->clk_stat = CLK_STAT_OFF;
-		pm_runtime_put_sync_suspend(pxp->dev);
 	} else
 		spin_unlock_irqrestore(&pxp->lock, flags);
 
+	pm_runtime_put_sync_suspend(pxp->dev);
+
 	mutex_unlock(&pxp->clk_mutex);
+
+	release_bus_freq(BUS_FREQ_HIGH);
 }
 
 static inline void clkoff_callback(struct work_struct *w)
@@ -1164,10 +1175,10 @@ static void __pxpdma_dostart(struct pxp_channel *pxp_chan)
 	struct pxp_tx_desc *child;
 	int i = 0;
 
-	memset(&pxp->pxp_conf_state.s0_param, 0,  sizeof(struct pxp_layer_param));
+//	memset(&pxp->pxp_conf_state.s0_param, 0,  sizeof(struct pxp_layer_param));
 	memset(&pxp->pxp_conf_state.out_param, 0,  sizeof(struct pxp_layer_param));
 	memset(pxp->pxp_conf_state.ol_param, 0,  sizeof(struct pxp_layer_param) * 8);
-	memset(&pxp->pxp_conf_state.proc_data, 0,  sizeof(struct pxp_proc_data));
+//	memset(&pxp->pxp_conf_state.proc_data, 0,  sizeof(struct pxp_proc_data));
 	/* S0 */
 	desc = list_first_entry(&head, struct pxp_tx_desc, list);
 	memcpy(&pxp->pxp_conf_state.s0_param,
@@ -1313,6 +1324,7 @@ static irqreturn_t pxp_irq(int irq, void *dev_id)
 
 	if (list_empty(&head)) {
 		pxp->pxp_ongoing = 0;
+		pxp->lut_state = 0;
 		spin_unlock_irqrestore(&pxp->lock, flags);
 		return IRQ_NONE;
 	}
@@ -1343,6 +1355,7 @@ static irqreturn_t pxp_irq(int irq, void *dev_id)
 
 	complete(&pxp->complete);
 	pxp->pxp_ongoing = 0;
+	pxp->lut_state = 0;
 	mod_timer(&pxp->clk_timer, jiffies + msecs_to_jiffies(timeout_in_ms));
 
 	spin_unlock_irqrestore(&pxp->lock, flags);
@@ -1383,7 +1396,6 @@ static struct dma_async_tx_descriptor *pxp_prep_slave_sg(struct dma_chan *chan,
 	struct pxp_channel *pxp_chan = to_pxp_channel(chan);
 	struct pxp_dma *pxp_dma = to_pxp_dma(chan->device);
 	struct pxps *pxp = to_pxp(pxp_dma);
-	struct pxp_tx_desc *pos = NULL, *next = NULL;
 	struct pxp_tx_desc *desc = NULL;
 	struct pxp_tx_desc *first = NULL, *prev = NULL;
 	struct scatterlist *sg;
@@ -1403,16 +1415,6 @@ static struct dma_async_tx_descriptor *pxp_prep_slave_sg(struct dma_chan *chan,
 		desc = pxpdma_desc_alloc(pxp_chan);
 		if (!desc) {
 			dev_err(chan->device->dev, "no enough memory to allocate tx descriptor\n");
-
-			if (first) {
-				list_for_each_entry_safe(pos, next, &first->tx_list, list) {
-					list_del_init(&pos->list);
-					kmem_cache_free(tx_desc_cache, (void*)pos);
-				}
-				list_del_init(&first->list);
-				kmem_cache_free(tx_desc_cache, (void*)first);
-			}
-
 			return NULL;
 		}
 
@@ -1474,9 +1476,14 @@ static void __pxp_terminate_all(struct dma_chan *chan)
 	pxp_chan->status = PXP_CHANNEL_INITIALIZED;
 }
 
-static int pxp_device_terminate_all(struct dma_chan *chan)
+static int pxp_control(struct dma_chan *chan, enum dma_ctrl_cmd cmd,
+			unsigned long arg)
 {
 	struct pxp_channel *pxp_chan = to_pxp_channel(chan);
+
+	/* Only supports DMA_TERMINATE_ALL */
+	if (cmd != DMA_TERMINATE_ALL)
+		return -ENXIO;
 
 	spin_lock(&pxp_chan->lock);
 	__pxp_terminate_all(chan);
@@ -1562,7 +1569,7 @@ static int pxp_dma_init(struct pxps *pxp)
 
 	/* Compulsory for DMA_SLAVE fields */
 	dma->device_prep_slave_sg = pxp_prep_slave_sg;
-	dma->device_terminate_all = pxp_device_terminate_all;
+	dma->device_control = pxp_control;
 
 	/* Initialize PxP Channels */
 	INIT_LIST_HEAD(&dma->channels);
@@ -1715,7 +1722,7 @@ static int pxp_probe(struct platform_device *pdev)
 	spin_lock_init(&pxp->lock);
 	mutex_init(&pxp->clk_mutex);
 
-	pxp->base = devm_ioremap_resource(&pdev->dev, res);
+	pxp->base = devm_request_and_ioremap(&pdev->dev, res);
 	if (pxp->base == NULL) {
 		dev_err(&pdev->dev, "Couldn't ioremap regs\n");
 		err = -ENODEV;
@@ -1828,7 +1835,7 @@ static int pxp_resume(struct device *dev)
 #define	pxp_resume	NULL
 #endif
 
-#ifdef CONFIG_PM
+#ifdef CONFIG_PM_RUNTIME
 static int pxp_runtime_suspend(struct device *dev)
 {
 	dev_dbg(dev, "pxp busfreq high release.\n");

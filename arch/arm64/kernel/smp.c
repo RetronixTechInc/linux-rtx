@@ -37,10 +37,8 @@
 #include <linux/of.h>
 #include <linux/irq_work.h>
 
-#include <asm/alternative.h>
 #include <asm/atomic.h>
 #include <asm/cacheflush.h>
-#include <asm/cpu.h>
 #include <asm/cputype.h>
 #include <asm/cpu_ops.h>
 #include <asm/mmu_context.h>
@@ -52,9 +50,6 @@
 #include <asm/tlbflush.h>
 #include <asm/ptrace.h>
 
-#define CREATE_TRACE_POINTS
-#include <trace/events/ipi.h>
-
 /*
  * as from 2.5, kernels no longer have an init_tasks structure
  * so we need some other way of telling a new secondary core
@@ -65,6 +60,7 @@ struct secondary_data secondary_data;
 enum ipi_msg_type {
 	IPI_RESCHEDULE,
 	IPI_CALL_FUNC,
+	IPI_CALL_FUNC_SINGLE,
 	IPI_CPU_STOP,
 	IPI_TIMER,
 	IPI_IRQ_WORK,
@@ -151,7 +147,6 @@ asmlinkage void secondary_start_kernel(void)
 	 */
 	cpu_set_reserved_ttbr0();
 	flush_tlb_all();
-	cpu_set_default_tcr_t0sz();
 
 	preempt_disable();
 	trace_hardirqs_off();
@@ -179,7 +174,6 @@ asmlinkage void secondary_start_kernel(void)
 	set_cpu_online(cpu, true);
 	complete(&cpu_running);
 
-	local_dbg_enable();
 	local_irq_enable();
 	local_async_enable();
 
@@ -240,19 +234,6 @@ int __cpu_disable(void)
 	return 0;
 }
 
-static int op_cpu_kill(unsigned int cpu)
-{
-	/*
-	 * If we have no means of synchronising with the dying CPU, then assume
-	 * that it is really dead. We can only wait for an arbitrary length of
-	 * time and hope that it's dead, so let's skip the wait and just hope.
-	 */
-	if (!cpu_ops[cpu]->cpu_kill)
-		return 1;
-
-	return cpu_ops[cpu]->cpu_kill(cpu);
-}
-
 static DECLARE_COMPLETION(cpu_died);
 
 /*
@@ -266,15 +247,6 @@ void __cpu_die(unsigned int cpu)
 		return;
 	}
 	pr_notice("CPU%u: shutdown\n", cpu);
-
-	/*
-	 * Now that the dying CPU is beyond the point of no return w.r.t.
-	 * in-kernel synchronisation, try to get the firwmare to help us to
-	 * verify that it has really left the kernel before we consider
-	 * clobbering anything it might still be using.
-	 */
-	if (!op_cpu_kill(cpu))
-		pr_warn("CPU%d may not have shut down cleanly\n", cpu);
 }
 
 /*
@@ -310,7 +282,6 @@ void cpu_die(void)
 void __init smp_cpus_done(unsigned int max_cpus)
 {
 	pr_info("SMP: Total of %d processors activated.\n", num_online_cpus());
-	do_post_cpus_up_work();
 }
 
 void __init smp_prepare_boot_cpu(void)
@@ -318,12 +289,14 @@ void __init smp_prepare_boot_cpu(void)
 	set_my_cpu_offset(per_cpu_offset(smp_processor_id()));
 }
 
+static void (*smp_cross_call)(const struct cpumask *, unsigned int);
+
 /*
  * Enumerate the possible CPU set from the device tree and build the
  * cpu logical map array containing MPIDR values related to logical
  * cpus. Assumes that cpu_logical_map(0) has already been initialized.
  */
-void __init of_smp_init_cpus(void)
+void __init smp_init_cpus(void)
 {
 	struct device_node *dn = NULL;
 	unsigned int i, cpu = 1;
@@ -472,34 +445,46 @@ void __init smp_prepare_cpus(unsigned int max_cpus)
 	}
 }
 
-void (*__smp_cross_call)(const struct cpumask *, unsigned int);
 
 void __init set_smp_cross_call(void (*fn)(const struct cpumask *, unsigned int))
 {
-	__smp_cross_call = fn;
+	smp_cross_call = fn;
 }
 
-static const char *ipi_types[NR_IPI] __tracepoint_string = {
-#define S(x,s)	[x] = s
+void arch_send_call_function_ipi_mask(const struct cpumask *mask)
+{
+	smp_cross_call(mask, IPI_CALL_FUNC);
+}
+
+void arch_send_call_function_single_ipi(int cpu)
+{
+	smp_cross_call(cpumask_of(cpu), IPI_CALL_FUNC_SINGLE);
+}
+
+#ifdef CONFIG_IRQ_WORK
+void arch_irq_work_raise(void)
+{
+	if (smp_cross_call)
+		smp_cross_call(cpumask_of(smp_processor_id()), IPI_IRQ_WORK);
+}
+#endif
+
+static const char *ipi_types[NR_IPI] = {
+#define S(x,s)	[x - IPI_RESCHEDULE] = s
 	S(IPI_RESCHEDULE, "Rescheduling interrupts"),
 	S(IPI_CALL_FUNC, "Function call interrupts"),
+	S(IPI_CALL_FUNC_SINGLE, "Single function call interrupts"),
 	S(IPI_CPU_STOP, "CPU stop interrupts"),
 	S(IPI_TIMER, "Timer broadcast interrupts"),
 	S(IPI_IRQ_WORK, "IRQ work interrupts"),
 };
-
-static void smp_cross_call(const struct cpumask *target, unsigned int ipinr)
-{
-	trace_ipi_raise(target, ipi_types[ipinr]);
-	__smp_cross_call(target, ipinr);
-}
 
 void show_ipi_list(struct seq_file *p, int prec)
 {
 	unsigned int cpu, i;
 
 	for (i = 0; i < NR_IPI; i++) {
-		seq_printf(p, "%*s%u:%s", prec - 1, "IPI", i,
+		seq_printf(p, "%*s%u:%s", prec - 1, "IPI", i + IPI_RESCHEDULE,
 			   prec >= 4 ? " " : "");
 		for_each_online_cpu(cpu)
 			seq_printf(p, "%10u ",
@@ -518,24 +503,6 @@ u64 smp_irq_stat_cpu(unsigned int cpu)
 
 	return sum;
 }
-
-void arch_send_call_function_ipi_mask(const struct cpumask *mask)
-{
-	smp_cross_call(mask, IPI_CALL_FUNC);
-}
-
-void arch_send_call_function_single_ipi(int cpu)
-{
-	smp_cross_call(cpumask_of(cpu), IPI_CALL_FUNC);
-}
-
-#ifdef CONFIG_IRQ_WORK
-void arch_irq_work_raise(void)
-{
-	if (__smp_cross_call)
-		smp_cross_call(cpumask_of(smp_processor_id()), IPI_IRQ_WORK);
-}
-#endif
 
 static DEFINE_RAW_SPINLOCK(stop_lock);
 
@@ -568,10 +535,8 @@ void handle_IPI(int ipinr, struct pt_regs *regs)
 	unsigned int cpu = smp_processor_id();
 	struct pt_regs *old_regs = set_irq_regs(regs);
 
-	if ((unsigned)ipinr < NR_IPI) {
-		trace_ipi_entry_rcuidle(ipi_types[ipinr]);
-		__inc_irq_stat(cpu, ipi_irqs[ipinr]);
-	}
+	if (ipinr >= IPI_RESCHEDULE && ipinr < IPI_RESCHEDULE + NR_IPI)
+		__inc_irq_stat(cpu, ipi_irqs[ipinr - IPI_RESCHEDULE]);
 
 	switch (ipinr) {
 	case IPI_RESCHEDULE:
@@ -581,6 +546,12 @@ void handle_IPI(int ipinr, struct pt_regs *regs)
 	case IPI_CALL_FUNC:
 		irq_enter();
 		generic_smp_call_function_interrupt();
+		irq_exit();
+		break;
+
+	case IPI_CALL_FUNC_SINGLE:
+		irq_enter();
+		generic_smp_call_function_single_interrupt();
 		irq_exit();
 		break;
 
@@ -610,9 +581,6 @@ void handle_IPI(int ipinr, struct pt_regs *regs)
 		pr_crit("CPU%u: Unknown IPI message 0x%x\n", cpu, ipinr);
 		break;
 	}
-
-	if ((unsigned)ipinr < NR_IPI)
-		trace_ipi_exit_rcuidle(ipi_types[ipinr]);
 	set_irq_regs(old_regs);
 }
 
@@ -636,7 +604,7 @@ void smp_send_stop(void)
 		cpumask_t mask;
 
 		cpumask_copy(&mask, cpu_online_mask);
-		cpumask_clear_cpu(smp_processor_id(), &mask);
+		cpu_clear(smp_processor_id(), mask);
 
 		smp_cross_call(&mask, IPI_CPU_STOP);
 	}

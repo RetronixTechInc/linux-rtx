@@ -313,6 +313,7 @@ static struct platform_driver ie6xx_wdt_driver = {
 	.remove		= ie6xx_wdt_remove,
 	.driver		= {
 		.name	= DRIVER_NAME,
+		.owner	= THIS_MODULE,
 	},
 };
 

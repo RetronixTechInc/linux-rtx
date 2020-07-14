@@ -161,6 +161,7 @@ typedef struct compat_siginfo {
 	int si_code;
 
 	union {
+		/* The padding is the same size as AArch64. */
 		int _pad[128/sizeof(int) - 3];
 
 		/* kill() */
@@ -204,13 +205,6 @@ typedef struct compat_siginfo {
 			compat_long_t _band;	/* POLL_IN, POLL_OUT, POLL_MSG */
 			int _fd;
 		} _sigpoll;
-
-		/* SIGSYS */
-		struct {
-			compat_uptr_t _call_addr; /* calling user insn */
-			int _syscall;	/* triggering system call number */
-			compat_uint_t _arch;	/* AUDIT_ARCH_* of syscall */
-		} _sigsys;
 	} _sifields;
 } compat_siginfo_t;
 

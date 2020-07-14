@@ -285,8 +285,7 @@ static int wm8994_gpio_remove(struct platform_device *pdev)
 {
 	struct wm8994_gpio *wm8994_gpio = platform_get_drvdata(pdev);
 
-	gpiochip_remove(&wm8994_gpio->gpio_chip);
-	return 0;
+	return gpiochip_remove(&wm8994_gpio->gpio_chip);
 }
 
 static struct platform_driver wm8994_gpio_driver = {

@@ -19,6 +19,7 @@
 #include <linux/err.h>
 #include <linux/i2c.h>
 #include <linux/irq.h>
+#include <linux/init.h>
 #include <linux/slab.h>
 #include <linux/mutex.h>
 #include <linux/module.h>
@@ -222,7 +223,7 @@ static struct regmap_bus retu_bus = {
 	.val_format_endian_default = REGMAP_ENDIAN_NATIVE,
 };
 
-static const struct regmap_config retu_config = {
+static struct regmap_config retu_config = {
 	.reg_bits = 8,
 	.val_bits = 16,
 };

@@ -297,7 +297,7 @@ struct inittab {
 	u8 val;
 };
 
-static struct inittab m88rs2000_setup[] = {
+struct inittab m88rs2000_setup[] = {
 	{DEMOD_WRITE, 0x9a, 0x30},
 	{DEMOD_WRITE, 0x00, 0x01},
 	{WRITE_DELAY, 0x19, 0x00},
@@ -315,7 +315,7 @@ static struct inittab m88rs2000_setup[] = {
 	{0xff, 0xaa, 0xff}
 };
 
-static struct inittab m88rs2000_shutdown[] = {
+struct inittab m88rs2000_shutdown[] = {
 	{DEMOD_WRITE, 0x9a, 0x30},
 	{DEMOD_WRITE, 0xb0, 0x00},
 	{DEMOD_WRITE, 0xf1, 0x89},
@@ -325,7 +325,7 @@ static struct inittab m88rs2000_shutdown[] = {
 	{0xff, 0xaa, 0xff}
 };
 
-static struct inittab fe_reset[] = {
+struct inittab fe_reset[] = {
 	{DEMOD_WRITE, 0x00, 0x01},
 	{DEMOD_WRITE, 0x20, 0x81},
 	{DEMOD_WRITE, 0x21, 0x80},
@@ -363,7 +363,7 @@ static struct inittab fe_reset[] = {
 	{0xff, 0xaa, 0xff}
 };
 
-static struct inittab fe_trigger[] = {
+struct inittab fe_trigger[] = {
 	{DEMOD_WRITE, 0x97, 0x04},
 	{DEMOD_WRITE, 0x99, 0x77},
 	{DEMOD_WRITE, 0x9b, 0x64},

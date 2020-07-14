@@ -17,13 +17,16 @@ static int ia64_set_msi_irq_affinity(struct irq_data *idata,
 {
 	struct msi_msg msg;
 	u32 addr, data;
-	int cpu = cpumask_first_and(cpu_mask, cpu_online_mask);
+	int cpu = first_cpu(*cpu_mask);
 	unsigned int irq = idata->irq;
+
+	if (!cpu_online(cpu))
+		return -1;
 
 	if (irq_prepare_move(irq, cpu))
 		return -1;
 
-	__get_cached_msi_msg(idata->msi_desc, &msg);
+	get_cached_msi_msg(irq, &msg);
 
 	addr = msg.address_lo;
 	addr &= MSI_ADDR_DEST_ID_MASK;
@@ -35,7 +38,7 @@ static int ia64_set_msi_irq_affinity(struct irq_data *idata,
 	data |= MSI_DATA_VECTOR(irq_to_vector(irq));
 	msg.data = data;
 
-	pci_write_msi_msg(irq, &msg);
+	write_msi_msg(irq, &msg);
 	cpumask_copy(idata->affinity, cpumask_of(cpu));
 
 	return 0;
@@ -47,14 +50,15 @@ int ia64_setup_msi_irq(struct pci_dev *pdev, struct msi_desc *desc)
 	struct msi_msg	msg;
 	unsigned long	dest_phys_id;
 	int	irq, vector;
+	cpumask_t mask;
 
 	irq = create_irq();
 	if (irq < 0)
 		return irq;
 
 	irq_set_msi_desc(irq, desc);
-	dest_phys_id = cpu_physical_id(cpumask_any_and(&(irq_to_domain(irq)),
-						       cpu_online_mask));
+	cpumask_and(&mask, &(irq_to_domain(irq)), cpu_online_mask);
+	dest_phys_id = cpu_physical_id(first_cpu(mask));
 	vector = irq_to_vector(irq);
 
 	msg.address_hi = 0;
@@ -70,7 +74,7 @@ int ia64_setup_msi_irq(struct pci_dev *pdev, struct msi_desc *desc)
 		MSI_DATA_DELIVERY_FIXED |
 		MSI_DATA_VECTOR(vector);
 
-	pci_write_msi_msg(irq, &msg);
+	write_msi_msg(irq, &msg);
 	irq_set_chip_and_handler(irq, &ia64_msi_chip, handle_edge_irq);
 
 	return 0;
@@ -101,8 +105,8 @@ static int ia64_msi_retrigger_irq(struct irq_data *data)
  */
 static struct irq_chip ia64_msi_chip = {
 	.name			= "PCI-MSI",
-	.irq_mask		= pci_msi_mask_irq,
-	.irq_unmask		= pci_msi_unmask_irq,
+	.irq_mask		= mask_msi_irq,
+	.irq_unmask		= unmask_msi_irq,
 	.irq_ack		= ia64_ack_msi_irq,
 #ifdef CONFIG_SMP
 	.irq_set_affinity	= ia64_set_msi_irq_affinity,
@@ -135,7 +139,10 @@ static int dmar_msi_set_affinity(struct irq_data *data,
 	unsigned int irq = data->irq;
 	struct irq_cfg *cfg = irq_cfg + irq;
 	struct msi_msg msg;
-	int cpu = cpumask_first_and(mask, cpu_online_mask);
+	int cpu = cpumask_first(mask);
+
+	if (!cpu_online(cpu))
+		return -1;
 
 	if (irq_prepare_move(irq, cpu))
 		return -1;
@@ -170,9 +177,10 @@ msi_compose_msg(struct pci_dev *pdev, unsigned int irq, struct msi_msg *msg)
 {
 	struct irq_cfg *cfg = irq_cfg + irq;
 	unsigned dest;
+	cpumask_t mask;
 
-	dest = cpu_physical_id(cpumask_first_and(&(irq_to_domain(irq)),
-						 cpu_online_mask));
+	cpumask_and(&mask, &(irq_to_domain(irq)), cpu_online_mask);
+	dest = cpu_physical_id(first_cpu(mask));
 
 	msg->address_hi = 0;
 	msg->address_lo =

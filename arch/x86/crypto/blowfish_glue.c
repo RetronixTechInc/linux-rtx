@@ -223,6 +223,9 @@ static unsigned int __cbc_decrypt(struct blkcipher_desc *desc,
 			src -= 1;
 			dst -= 1;
 		} while (nbytes >= bsize * 4);
+
+		if (nbytes < bsize)
+			goto done;
 	}
 
 	/* Handle leftovers */

@@ -30,11 +30,10 @@
 #include <linux/mmc/sdio_ids.h>
 #include <linux/mmc/card.h>
 #include <linux/mmc/host.h>
-#include <linux/gpio.h>
+#include <linux/of_irq.h>
+#include <linux/wl12xx.h>
 #include <linux/pm_runtime.h>
 #include <linux/printk.h>
-#include <linux/of.h>
-#include <linux/of_irq.h>
 
 #include "wlcore.h"
 #include "wl12xx_80211.h"
@@ -215,74 +214,67 @@ static struct wl1271_if_operations sdio_ops = {
 	.set_block_size = wl1271_sdio_set_block_size,
 };
 
-#ifdef CONFIG_OF
-static const struct of_device_id wlcore_sdio_of_match_table[] = {
-	{ .compatible = "ti,wl1271" },
-	{ .compatible = "ti,wl1273" },
-	{ .compatible = "ti,wl1281" },
-	{ .compatible = "ti,wl1283" },
-	{ .compatible = "ti,wl1801" },
-	{ .compatible = "ti,wl1805" },
-	{ .compatible = "ti,wl1807" },
-	{ .compatible = "ti,wl1831" },
-	{ .compatible = "ti,wl1835" },
-	{ .compatible = "ti,wl1837" },
-	{ }
-};
-
-static int wlcore_probe_of(struct device *dev, int *irq,
-			   struct wlcore_platdev_data *pdev_data)
+static struct wl12xx_platform_data *wlcore_get_pdata_from_of(struct device *dev)
 {
+	struct wl12xx_platform_data *pdata;
 	struct device_node *np = dev->of_node;
 
-	if (!np || !of_match_node(wlcore_sdio_of_match_table, np))
-		return -ENODATA;
-
-	*irq = irq_of_parse_and_map(np, 0);
-	if (!*irq) {
-		dev_err(dev, "No irq in platform data\n");
-		kfree(pdev_data);
-		return -EINVAL;
+	if (!np) {
+		np = of_find_matching_node(NULL, dev->driver->of_match_table);
+		if (!np) {
+			dev_notice(dev, "device tree node not available\n");
+			pdata = ERR_PTR(-ENODEV);
+			goto out;
+		}
 	}
 
-	/* optional clock frequency params */
-	of_property_read_u32(np, "ref-clock-frequency",
-			     &pdev_data->ref_clock_freq);
-	of_property_read_u32(np, "tcxo-clock-frequency",
-			     &pdev_data->tcxo_clock_freq);
+	pdata = kzalloc(sizeof(*pdata), GFP_KERNEL);
+	if (!pdata) {
+		dev_err(dev, "can't allocate platform data\n");
+		pdata = ERR_PTR(-ENODEV);
+		goto out;
+	}
 
-	return 0;
+	pdata->irq = irq_of_parse_and_map(np, 0);
+	if (pdata->irq < 0) {
+		dev_err(dev, "can't get interrupt gpio from the device tree\n");
+		goto out_free;
+	}
+	pdata->board_ref_clock = WL12XX_REFCLOCK_38; /* 38.4 MHz */
+	goto out;
+
+out_free:
+	kfree(pdata);
+	pdata = ERR_PTR(-ENODEV);
+
+out:
+	return pdata;
 }
-#else
-static int wlcore_probe_of(struct device *dev, int *irq,
-			   struct wlcore_platdev_data *pdev_data)
-{
-	return -ENODATA;
-}
-#endif
 
 static int wl1271_probe(struct sdio_func *func,
 				  const struct sdio_device_id *id)
 {
-	struct wlcore_platdev_data pdev_data;
+	struct wlcore_platdev_data *pdev_data;
 	struct wl12xx_sdio_glue *glue;
 	struct resource res[1];
 	mmc_pm_flag_t mmcflags;
 	int ret = -ENOMEM;
-	int irq;
 	const char *chip_family;
 
 	/* We are only able to handle the wlan function */
 	if (func->num != 0x02)
 		return -ENODEV;
 
-	memset(&pdev_data, 0x00, sizeof(pdev_data));
-	pdev_data.if_ops = &sdio_ops;
+	pdev_data = kzalloc(sizeof(*pdev_data), GFP_KERNEL);
+	if (!pdev_data)
+		goto out;
+
+	pdev_data->if_ops = &sdio_ops;
 
 	glue = kzalloc(sizeof(*glue), GFP_KERNEL);
 	if (!glue) {
 		dev_err(&func->dev, "can't allocate glue\n");
-		goto out;
+		goto out_free_pdev_data;
 	}
 
 	glue->dev = &func->dev;
@@ -293,15 +285,31 @@ static int wl1271_probe(struct sdio_func *func,
 	/* Use block mode for transferring over one block size of data */
 	func->card->quirks |= MMC_QUIRK_BLKSZ_FOR_BYTE_MODE;
 
-	if (wlcore_probe_of(&func->dev, &irq, &pdev_data))
-		goto out_free_glue;
+	/* The pdata allocated here is freed when the device is freed,
+	 * so we don't need an additional out label to free it in case
+	 * of error further on.
+	 */
+
+	/* Try to get legacy platform data from the board file */
+	pdev_data->pdata = wl12xx_get_platform_data();
+	if (IS_ERR(pdev_data->pdata)) {
+		dev_info(&func->dev,
+			 "legacy platform data not found, trying device tree\n");
+
+		pdev_data->pdata = wlcore_get_pdata_from_of(&func->dev);
+		if (IS_ERR(pdev_data->pdata)) {
+			ret = PTR_ERR(pdev_data->pdata);
+			dev_err(&func->dev, "can't get platform data\n");
+			goto out_free_glue;
+		}
+	}
 
 	/* if sdio can keep power while host is suspended, enable wow */
 	mmcflags = sdio_get_host_pm_caps(func);
 	dev_dbg(glue->dev, "sdio PM caps = 0x%x\n", mmcflags);
 
 	if (mmcflags & MMC_PM_KEEP_POWER)
-		pdev_data.pwr_in_suspend = true;
+		pdev_data->pdata->pwr_in_suspend = true;
 
 	sdio_set_drvdata(func, glue);
 
@@ -330,9 +338,8 @@ static int wl1271_probe(struct sdio_func *func,
 
 	memset(res, 0x00, sizeof(res));
 
-	res[0].start = irq;
-	res[0].flags = IORESOURCE_IRQ |
-		       irqd_get_trigger_type(irq_get_irq_data(irq));
+	res[0].start = pdev_data->pdata->irq;
+	res[0].flags = IORESOURCE_IRQ;
 	res[0].name = "irq";
 
 	ret = platform_device_add_resources(glue->core, res, ARRAY_SIZE(res));
@@ -341,8 +348,8 @@ static int wl1271_probe(struct sdio_func *func,
 		goto out_dev_put;
 	}
 
-	ret = platform_device_add_data(glue->core, &pdev_data,
-				       sizeof(pdev_data));
+	ret = platform_device_add_data(glue->core, pdev_data,
+				       sizeof(*pdev_data));
 	if (ret) {
 		dev_err(glue->dev, "can't add platform data\n");
 		goto out_dev_put;
@@ -360,6 +367,9 @@ out_dev_put:
 
 out_free_glue:
 	kfree(glue);
+
+out_free_pdev_data:
+	kfree(pdev_data);
 
 out:
 	return ret;
@@ -386,6 +396,10 @@ static int wl1271_suspend(struct device *dev)
 	struct wl1271 *wl = platform_get_drvdata(glue->core);
 	mmc_pm_flag_t sdio_flags;
 	int ret = 0;
+
+	/* In case the driver hasn't been probed or if unregistered */
+	if (!wl)
+		return ret;
 
 	dev_dbg(dev, "wl1271 suspend. wow_enabled: %d\n",
 		wl->wow_enabled);
@@ -425,16 +439,25 @@ static const struct dev_pm_ops wl1271_sdio_pm_ops = {
 };
 #endif
 
+static const struct of_device_id wlcore_sdio_of_match_table[] = {
+	{ .compatible = "ti,wilink6" },
+	{ .compatible = "ti,wilink7" },
+	{ .compatible = "ti,wilink8" },
+	{ }
+};
+MODULE_DEVICE_TABLE(of, wlcore_sdio_of_match_table);
+
 static struct sdio_driver wl1271_sdio_driver = {
 	.name		= "wl1271_sdio",
 	.id_table	= wl1271_devices,
 	.probe		= wl1271_probe,
 	.remove		= wl1271_remove,
-#ifdef CONFIG_PM
 	.drv = {
+#ifdef CONFIG_PM
 		.pm = &wl1271_sdio_pm_ops,
-	},
 #endif
+		.of_match_table = of_match_ptr(wlcore_sdio_of_match_table),
+	},
 };
 
 static int __init wl1271_init(void)

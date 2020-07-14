@@ -2342,7 +2342,7 @@ void free_orinocodev(struct orinoco_private *priv)
 	list_for_each_entry_safe(sd, sdtemp, &priv->scan_list, list) {
 		list_del(&sd->list);
 
-		if (sd->len > 0)
+		if ((sd->len > 0) && sd->buf)
 			kfree(sd->buf);
 		kfree(sd);
 	}

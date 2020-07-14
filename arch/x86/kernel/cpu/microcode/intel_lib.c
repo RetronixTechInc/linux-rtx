@@ -38,6 +38,12 @@ update_match_cpu(unsigned int csig, unsigned int cpf,
 	return (!sigmatch(sig, csig, pf, cpf)) ? 0 : 1;
 }
 
+int
+update_match_revision(struct microcode_header_intel *mc_header, int rev)
+{
+	return (mc_header->rev <= rev) ? 0 : 1;
+}
+
 int microcode_sanity_check(void *mc, int print_err)
 {
 	unsigned long total_size, data_size, ext_table_size;
@@ -122,9 +128,10 @@ int microcode_sanity_check(void *mc, int print_err)
 EXPORT_SYMBOL_GPL(microcode_sanity_check);
 
 /*
- * Returns 1 if update has been found, 0 otherwise.
+ * return 0 - no update found
+ * return 1 - found update
  */
-int get_matching_sig(unsigned int csig, int cpf, int rev, void *mc)
+int get_matching_sig(unsigned int csig, int cpf, void *mc, int rev)
 {
 	struct microcode_header_intel *mc_header = mc;
 	struct extended_sigtable *ext_header;
@@ -152,15 +159,16 @@ int get_matching_sig(unsigned int csig, int cpf, int rev, void *mc)
 }
 
 /*
- * Returns 1 if update has been found, 0 otherwise.
+ * return 0 - no update found
+ * return 1 - found update
  */
-int get_matching_microcode(unsigned int csig, int cpf, int rev, void *mc)
+int get_matching_microcode(unsigned int csig, int cpf, void *mc, int rev)
 {
-	struct microcode_header_intel *mc_hdr = mc;
+	struct microcode_header_intel *mc_header = mc;
 
-	if (!revision_is_newer(mc_hdr, rev))
+	if (!update_match_revision(mc_header, rev))
 		return 0;
 
-	return get_matching_sig(csig, cpf, rev, mc);
+	return get_matching_sig(csig, cpf, mc, rev);
 }
 EXPORT_SYMBOL_GPL(get_matching_microcode);

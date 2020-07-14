@@ -202,18 +202,18 @@ struct ov6650 {
 	unsigned long		pclk_limit;	/* from host */
 	unsigned long		pclk_max;	/* from resolution and format */
 	struct v4l2_fract	tpf;		/* as requested with s_parm */
-	u32 code;
+	enum v4l2_mbus_pixelcode code;
 	enum v4l2_colorspace	colorspace;
 };
 
 
-static u32 ov6650_codes[] = {
-	MEDIA_BUS_FMT_YUYV8_2X8,
-	MEDIA_BUS_FMT_UYVY8_2X8,
-	MEDIA_BUS_FMT_YVYU8_2X8,
-	MEDIA_BUS_FMT_VYUY8_2X8,
-	MEDIA_BUS_FMT_SBGGR8_1X8,
-	MEDIA_BUS_FMT_Y8_1X8,
+static enum v4l2_mbus_pixelcode ov6650_codes[] = {
+	V4L2_MBUS_FMT_YUYV8_2X8,
+	V4L2_MBUS_FMT_UYVY8_2X8,
+	V4L2_MBUS_FMT_YVYU8_2X8,
+	V4L2_MBUS_FMT_VYUY8_2X8,
+	V4L2_MBUS_FMT_SBGGR8_1X8,
+	V4L2_MBUS_FMT_Y8_1X8,
 };
 
 /* read a register */
@@ -555,29 +555,29 @@ static int ov6650_s_fmt(struct v4l2_subdev *sd, struct v4l2_mbus_framefmt *mf)
 			.height	= mf->height << half_scale,
 		},
 	};
-	u32 code = mf->code;
+	enum v4l2_mbus_pixelcode code = mf->code;
 	unsigned long mclk, pclk;
 	u8 coma_set = 0, coma_mask = 0, coml_set, coml_mask, clkrc;
 	int ret;
 
 	/* select color matrix configuration for given color encoding */
 	switch (code) {
-	case MEDIA_BUS_FMT_Y8_1X8:
+	case V4L2_MBUS_FMT_Y8_1X8:
 		dev_dbg(&client->dev, "pixel format GREY8_1X8\n");
 		coma_mask |= COMA_RGB | COMA_WORD_SWAP | COMA_BYTE_SWAP;
 		coma_set |= COMA_BW;
 		break;
-	case MEDIA_BUS_FMT_YUYV8_2X8:
+	case V4L2_MBUS_FMT_YUYV8_2X8:
 		dev_dbg(&client->dev, "pixel format YUYV8_2X8_LE\n");
 		coma_mask |= COMA_RGB | COMA_BW | COMA_BYTE_SWAP;
 		coma_set |= COMA_WORD_SWAP;
 		break;
-	case MEDIA_BUS_FMT_YVYU8_2X8:
+	case V4L2_MBUS_FMT_YVYU8_2X8:
 		dev_dbg(&client->dev, "pixel format YVYU8_2X8_LE (untested)\n");
 		coma_mask |= COMA_RGB | COMA_BW | COMA_WORD_SWAP |
 				COMA_BYTE_SWAP;
 		break;
-	case MEDIA_BUS_FMT_UYVY8_2X8:
+	case V4L2_MBUS_FMT_UYVY8_2X8:
 		dev_dbg(&client->dev, "pixel format YUYV8_2X8_BE\n");
 		if (half_scale) {
 			coma_mask |= COMA_RGB | COMA_BW | COMA_WORD_SWAP;
@@ -587,7 +587,7 @@ static int ov6650_s_fmt(struct v4l2_subdev *sd, struct v4l2_mbus_framefmt *mf)
 			coma_set |= COMA_BYTE_SWAP | COMA_WORD_SWAP;
 		}
 		break;
-	case MEDIA_BUS_FMT_VYUY8_2X8:
+	case V4L2_MBUS_FMT_VYUY8_2X8:
 		dev_dbg(&client->dev, "pixel format YVYU8_2X8_BE (untested)\n");
 		if (half_scale) {
 			coma_mask |= COMA_RGB | COMA_BW;
@@ -597,7 +597,7 @@ static int ov6650_s_fmt(struct v4l2_subdev *sd, struct v4l2_mbus_framefmt *mf)
 			coma_set |= COMA_BYTE_SWAP;
 		}
 		break;
-	case MEDIA_BUS_FMT_SBGGR8_1X8:
+	case V4L2_MBUS_FMT_SBGGR8_1X8:
 		dev_dbg(&client->dev, "pixel format SBGGR8_1X8 (untested)\n");
 		coma_mask |= COMA_BW | COMA_BYTE_SWAP | COMA_WORD_SWAP;
 		coma_set |= COMA_RAW_RGB | COMA_RGB;
@@ -608,8 +608,8 @@ static int ov6650_s_fmt(struct v4l2_subdev *sd, struct v4l2_mbus_framefmt *mf)
 	}
 	priv->code = code;
 
-	if (code == MEDIA_BUS_FMT_Y8_1X8 ||
-			code == MEDIA_BUS_FMT_SBGGR8_1X8) {
+	if (code == V4L2_MBUS_FMT_Y8_1X8 ||
+			code == V4L2_MBUS_FMT_SBGGR8_1X8) {
 		coml_mask = COML_ONE_CHANNEL;
 		coml_set = 0;
 		priv->pclk_max = 4000000;
@@ -619,7 +619,7 @@ static int ov6650_s_fmt(struct v4l2_subdev *sd, struct v4l2_mbus_framefmt *mf)
 		priv->pclk_max = 8000000;
 	}
 
-	if (code == MEDIA_BUS_FMT_SBGGR8_1X8)
+	if (code == V4L2_MBUS_FMT_SBGGR8_1X8)
 		priv->colorspace = V4L2_COLORSPACE_SRGB;
 	else if (code != 0)
 		priv->colorspace = V4L2_COLORSPACE_JPEG;
@@ -697,18 +697,18 @@ static int ov6650_try_fmt(struct v4l2_subdev *sd,
 	mf->field = V4L2_FIELD_NONE;
 
 	switch (mf->code) {
-	case MEDIA_BUS_FMT_Y10_1X10:
-		mf->code = MEDIA_BUS_FMT_Y8_1X8;
-	case MEDIA_BUS_FMT_Y8_1X8:
-	case MEDIA_BUS_FMT_YVYU8_2X8:
-	case MEDIA_BUS_FMT_YUYV8_2X8:
-	case MEDIA_BUS_FMT_VYUY8_2X8:
-	case MEDIA_BUS_FMT_UYVY8_2X8:
+	case V4L2_MBUS_FMT_Y10_1X10:
+		mf->code = V4L2_MBUS_FMT_Y8_1X8;
+	case V4L2_MBUS_FMT_Y8_1X8:
+	case V4L2_MBUS_FMT_YVYU8_2X8:
+	case V4L2_MBUS_FMT_YUYV8_2X8:
+	case V4L2_MBUS_FMT_VYUY8_2X8:
+	case V4L2_MBUS_FMT_UYVY8_2X8:
 		mf->colorspace = V4L2_COLORSPACE_JPEG;
 		break;
 	default:
-		mf->code = MEDIA_BUS_FMT_SBGGR8_1X8;
-	case MEDIA_BUS_FMT_SBGGR8_1X8:
+		mf->code = V4L2_MBUS_FMT_SBGGR8_1X8;
+	case V4L2_MBUS_FMT_SBGGR8_1X8:
 		mf->colorspace = V4L2_COLORSPACE_SRGB;
 		break;
 	}
@@ -717,7 +717,7 @@ static int ov6650_try_fmt(struct v4l2_subdev *sd,
 }
 
 static int ov6650_enum_fmt(struct v4l2_subdev *sd, unsigned int index,
-			   u32 *code)
+			   enum v4l2_mbus_pixelcode *code)
 {
 	if (index >= ARRAY_SIZE(ov6650_codes))
 		return -EINVAL;
@@ -1013,7 +1013,7 @@ static int ov6650_probe(struct i2c_client *client,
 	priv->rect.width  = W_CIF;
 	priv->rect.height = H_CIF;
 	priv->half_scale  = false;
-	priv->code	  = MEDIA_BUS_FMT_YUYV8_2X8;
+	priv->code	  = V4L2_MBUS_FMT_YUYV8_2X8;
 	priv->colorspace  = V4L2_COLORSPACE_JPEG;
 
 	priv->clk = v4l2_clk_get(&client->dev, "mclk");

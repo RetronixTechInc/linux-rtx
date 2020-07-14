@@ -42,11 +42,11 @@
 
 #define DEBUG_SUBSYSTEM S_LOG
 
-#include "../../include/linux/libcfs/libcfs.h"
+#include <linux/libcfs/libcfs.h>
 
-#include "../include/obd_class.h"
-#include "../include/lustre_log.h"
-#include "../include/lustre_net.h"
+#include <obd_class.h>
+#include <lustre_log.h>
+#include <lustre_net.h>
 #include <linux/list.h>
 
 #define LLOG_CLIENT_ENTRY(ctxt, imp) do {			     \
@@ -93,10 +93,8 @@ static int llog_client_open(const struct lu_env *env,
 	LASSERT(lgh);
 
 	req = ptlrpc_request_alloc(imp, &RQF_LLOG_ORIGIN_HANDLE_CREATE);
-	if (req == NULL) {
-		rc = -ENOMEM;
-		goto out;
-	}
+	if (req == NULL)
+		GOTO(out, rc = -ENOMEM);
 
 	if (name)
 		req_capsule_set_size(&req->rq_pill, &RMF_NAME, RCL_CLIENT,
@@ -107,7 +105,7 @@ static int llog_client_open(const struct lu_env *env,
 	if (rc) {
 		ptlrpc_request_free(req);
 		req = NULL;
-		goto out;
+		GOTO(out, rc);
 	}
 	ptlrpc_request_set_replen(req);
 
@@ -126,13 +124,11 @@ static int llog_client_open(const struct lu_env *env,
 
 	rc = ptlrpc_queue_wait(req);
 	if (rc)
-		goto out;
+		GOTO(out, rc);
 
 	body = req_capsule_server_get(&req->rq_pill, &RMF_LLOGD_BODY);
-	if (body == NULL) {
-		rc = -EFAULT;
-		goto out;
-	}
+	if (body == NULL)
+		GOTO(out, rc = -EFAULT);
 
 	lgh->lgh_id = body->lgd_logid;
 	lgh->lgh_ctxt = ctxt;
@@ -154,10 +150,8 @@ static int llog_client_destroy(const struct lu_env *env,
 	req = ptlrpc_request_alloc_pack(imp, &RQF_LLOG_ORIGIN_HANDLE_DESTROY,
 					LUSTRE_LOG_VERSION,
 					LLOG_ORIGIN_HANDLE_DESTROY);
-	if (req == NULL) {
-		rc = -ENOMEM;
-		goto err_exit;
-	}
+	if (req == NULL)
+		GOTO(err_exit, rc =-ENOMEM);
 
 	body = req_capsule_client_get(&req->rq_pill, &RMF_LLOGD_BODY);
 	body->lgd_logid = loghandle->lgh_id;
@@ -192,10 +186,8 @@ static int llog_client_next_block(const struct lu_env *env,
 	req = ptlrpc_request_alloc_pack(imp, &RQF_LLOG_ORIGIN_HANDLE_NEXT_BLOCK,
 					LUSTRE_LOG_VERSION,
 					LLOG_ORIGIN_HANDLE_NEXT_BLOCK);
-	if (req == NULL) {
-		rc = -ENOMEM;
-		goto err_exit;
-	}
+	if (req == NULL)
+		GOTO(err_exit, rc =-ENOMEM);
 
 	body = req_capsule_client_get(&req->rq_pill, &RMF_LLOGD_BODY);
 	body->lgd_logid = loghandle->lgh_id;
@@ -210,20 +202,16 @@ static int llog_client_next_block(const struct lu_env *env,
 	ptlrpc_request_set_replen(req);
 	rc = ptlrpc_queue_wait(req);
 	if (rc)
-		goto out;
+		GOTO(out, rc);
 
 	body = req_capsule_server_get(&req->rq_pill, &RMF_LLOGD_BODY);
-	if (body == NULL) {
-		rc = -EFAULT;
-		goto out;
-	}
+	if (body == NULL)
+		GOTO(out, rc =-EFAULT);
 
 	/* The log records are swabbed as they are processed */
 	ptr = req_capsule_server_get(&req->rq_pill, &RMF_EADATA);
-	if (ptr == NULL) {
-		rc = -EFAULT;
-		goto out;
-	}
+	if (ptr == NULL)
+		GOTO(out, rc =-EFAULT);
 
 	*cur_idx = body->lgd_saved_index;
 	*cur_offset = body->lgd_cur_offset;
@@ -250,10 +238,8 @@ static int llog_client_prev_block(const struct lu_env *env,
 	req = ptlrpc_request_alloc_pack(imp, &RQF_LLOG_ORIGIN_HANDLE_PREV_BLOCK,
 					LUSTRE_LOG_VERSION,
 					LLOG_ORIGIN_HANDLE_PREV_BLOCK);
-	if (req == NULL) {
-		rc = -ENOMEM;
-		goto err_exit;
-	}
+	if (req == NULL)
+		GOTO(err_exit, rc = -ENOMEM);
 
 	body = req_capsule_client_get(&req->rq_pill, &RMF_LLOGD_BODY);
 	body->lgd_logid = loghandle->lgh_id;
@@ -267,19 +253,15 @@ static int llog_client_prev_block(const struct lu_env *env,
 
 	rc = ptlrpc_queue_wait(req);
 	if (rc)
-		goto out;
+		GOTO(out, rc);
 
 	body = req_capsule_server_get(&req->rq_pill, &RMF_LLOGD_BODY);
-	if (body == NULL) {
-		rc = -EFAULT;
-		goto out;
-	}
+	if (body == NULL)
+		GOTO(out, rc =-EFAULT);
 
 	ptr = req_capsule_server_get(&req->rq_pill, &RMF_EADATA);
-	if (ptr == NULL) {
-		rc = -EFAULT;
-		goto out;
-	}
+	if (ptr == NULL)
+		GOTO(out, rc =-EFAULT);
 
 	memcpy(buf, ptr, len);
 out:
@@ -300,13 +282,11 @@ static int llog_client_read_header(const struct lu_env *env,
 	int		    rc;
 
 	LLOG_CLIENT_ENTRY(handle->lgh_ctxt, imp);
-	req = ptlrpc_request_alloc_pack(imp, &RQF_LLOG_ORIGIN_HANDLE_READ_HEADER,
+	req = ptlrpc_request_alloc_pack(imp,&RQF_LLOG_ORIGIN_HANDLE_READ_HEADER,
 					LUSTRE_LOG_VERSION,
 					LLOG_ORIGIN_HANDLE_READ_HEADER);
-	if (req == NULL) {
-		rc = -ENOMEM;
-		goto err_exit;
-	}
+	if (req == NULL)
+		GOTO(err_exit, rc = -ENOMEM);
 
 	body = req_capsule_client_get(&req->rq_pill, &RMF_LLOGD_BODY);
 	body->lgd_logid = handle->lgh_id;
@@ -316,13 +296,11 @@ static int llog_client_read_header(const struct lu_env *env,
 	ptlrpc_request_set_replen(req);
 	rc = ptlrpc_queue_wait(req);
 	if (rc)
-		goto out;
+		GOTO(out, rc);
 
 	hdr = req_capsule_server_get(&req->rq_pill, &RMF_LLOG_LOG_HDR);
-	if (hdr == NULL) {
-		rc = -EFAULT;
-		goto out;
-	}
+	if (hdr == NULL)
+		GOTO(out, rc =-EFAULT);
 
 	memcpy(handle->lgh_hdr, hdr, sizeof(*hdr));
 	handle->lgh_last_idx = handle->lgh_hdr->llh_tail.lrt_index;
@@ -334,7 +312,8 @@ static int llog_client_read_header(const struct lu_env *env,
 		       llh_hdr->lrh_type, LLOG_HDR_MAGIC);
 		rc = -EIO;
 	} else if (llh_hdr->lrh_len != LLOG_CHUNK_SIZE) {
-		CERROR("incorrectly sized log header: %#x (expecting %#x)\n",
+		CERROR("incorrectly sized log header: %#x "
+		       "(expecting %#x)\n",
 		       llh_hdr->lrh_len, LLOG_CHUNK_SIZE);
 		CERROR("you may need to re-run lconf --write_conf.\n");
 		rc = -EIO;
@@ -352,7 +331,7 @@ static int llog_client_close(const struct lu_env *env,
 	/* this doesn't call LLOG_ORIGIN_HANDLE_CLOSE because
 	   the servers all close the file at the end of every
 	   other LLOG_ RPC. */
-	return 0;
+	return(0);
 }
 
 struct llog_operations llog_client_ops = {

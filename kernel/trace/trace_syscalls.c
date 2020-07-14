@@ -114,7 +114,7 @@ print_syscall_enter(struct trace_iterator *iter, int flags,
 	struct trace_entry *ent = iter->ent;
 	struct syscall_trace_enter *trace;
 	struct syscall_metadata *entry;
-	int i, syscall;
+	int i, ret, syscall;
 
 	trace = (typeof(trace))ent;
 	syscall = trace->nr;
@@ -128,28 +128,35 @@ print_syscall_enter(struct trace_iterator *iter, int flags,
 		goto end;
 	}
 
-	trace_seq_printf(s, "%s(", entry->name);
+	ret = trace_seq_printf(s, "%s(", entry->name);
+	if (!ret)
+		return TRACE_TYPE_PARTIAL_LINE;
 
 	for (i = 0; i < entry->nb_args; i++) {
-
-		if (trace_seq_has_overflowed(s))
-			goto end;
-
 		/* parameter types */
-		if (trace_flags & TRACE_ITER_VERBOSE)
-			trace_seq_printf(s, "%s ", entry->types[i]);
-
+		if (trace_flags & TRACE_ITER_VERBOSE) {
+			ret = trace_seq_printf(s, "%s ", entry->types[i]);
+			if (!ret)
+				return TRACE_TYPE_PARTIAL_LINE;
+		}
 		/* parameter values */
-		trace_seq_printf(s, "%s: %lx%s", entry->args[i],
-				 trace->args[i],
-				 i == entry->nb_args - 1 ? "" : ", ");
+		ret = trace_seq_printf(s, "%s: %lx%s", entry->args[i],
+				       trace->args[i],
+				       i == entry->nb_args - 1 ? "" : ", ");
+		if (!ret)
+			return TRACE_TYPE_PARTIAL_LINE;
 	}
 
-	trace_seq_putc(s, ')');
-end:
-	trace_seq_putc(s, '\n');
+	ret = trace_seq_putc(s, ')');
+	if (!ret)
+		return TRACE_TYPE_PARTIAL_LINE;
 
-	return trace_handle_return(s);
+end:
+	ret =  trace_seq_putc(s, '\n');
+	if (!ret)
+		return TRACE_TYPE_PARTIAL_LINE;
+
+	return TRACE_TYPE_HANDLED;
 }
 
 static enum print_line_t
@@ -161,6 +168,7 @@ print_syscall_exit(struct trace_iterator *iter, int flags,
 	struct syscall_trace_exit *trace;
 	int syscall;
 	struct syscall_metadata *entry;
+	int ret;
 
 	trace = (typeof(trace))ent;
 	syscall = trace->nr;
@@ -168,7 +176,7 @@ print_syscall_exit(struct trace_iterator *iter, int flags,
 
 	if (!entry) {
 		trace_seq_putc(s, '\n');
-		goto out;
+		return TRACE_TYPE_HANDLED;
 	}
 
 	if (entry->exit_event->event.type != ent->type) {
@@ -176,11 +184,12 @@ print_syscall_exit(struct trace_iterator *iter, int flags,
 		return TRACE_TYPE_UNHANDLED;
 	}
 
-	trace_seq_printf(s, "%s -> 0x%lx\n", entry->name,
+	ret = trace_seq_printf(s, "%s -> 0x%lx\n", entry->name,
 				trace->ret);
+	if (!ret)
+		return TRACE_TYPE_PARTIAL_LINE;
 
- out:
-	return trace_handle_return(s);
+	return TRACE_TYPE_HANDLED;
 }
 
 extern char *__bad_type_size(void);
@@ -416,7 +425,7 @@ static void unreg_event_syscall_enter(struct ftrace_event_file *file,
 		return;
 	mutex_lock(&syscall_trace_lock);
 	tr->sys_refcount_enter--;
-	RCU_INIT_POINTER(tr->enter_syscall_files[num], NULL);
+	rcu_assign_pointer(tr->enter_syscall_files[num], NULL);
 	if (!tr->sys_refcount_enter)
 		unregister_trace_sys_enter(ftrace_syscall_enter, tr);
 	mutex_unlock(&syscall_trace_lock);
@@ -454,7 +463,7 @@ static void unreg_event_syscall_exit(struct ftrace_event_file *file,
 		return;
 	mutex_lock(&syscall_trace_lock);
 	tr->sys_refcount_exit--;
-	RCU_INIT_POINTER(tr->exit_syscall_files[num], NULL);
+	rcu_assign_pointer(tr->exit_syscall_files[num], NULL);
 	if (!tr->sys_refcount_exit)
 		unregister_trace_sys_exit(ftrace_syscall_exit, tr);
 	mutex_unlock(&syscall_trace_lock);
@@ -514,7 +523,7 @@ unsigned long __init __weak arch_syscall_addr(int nr)
 	return (unsigned long)sys_call_table[nr];
 }
 
-void __init init_ftrace_syscalls(void)
+static int __init init_ftrace_syscalls(void)
 {
 	struct syscall_metadata *meta;
 	unsigned long addr;
@@ -524,7 +533,7 @@ void __init init_ftrace_syscalls(void)
 				    GFP_KERNEL);
 	if (!syscalls_metadata) {
 		WARN_ON(1);
-		return;
+		return -ENOMEM;
 	}
 
 	for (i = 0; i < NR_syscalls; i++) {
@@ -536,7 +545,10 @@ void __init init_ftrace_syscalls(void)
 		meta->syscall_nr = i;
 		syscalls_metadata[i] = meta;
 	}
+
+	return 0;
 }
+early_initcall(init_ftrace_syscalls);
 
 #ifdef CONFIG_PERF_EVENTS
 
@@ -574,7 +586,7 @@ static void perf_syscall_enter(void *ignore, struct pt_regs *regs, long id)
 	size -= sizeof(u32);
 
 	rec = (struct syscall_trace_enter *)perf_trace_buf_prepare(size,
-				sys_data->enter_event->event.type, NULL, &rctx);
+				sys_data->enter_event->event.type, regs, &rctx);
 	if (!rec)
 		return;
 
@@ -647,7 +659,7 @@ static void perf_syscall_exit(void *ignore, struct pt_regs *regs, long ret)
 	size -= sizeof(u32);
 
 	rec = (struct syscall_trace_exit *)perf_trace_buf_prepare(size,
-				sys_data->exit_event->event.type, NULL, &rctx);
+				sys_data->exit_event->event.type, regs, &rctx);
 	if (!rec)
 		return;
 

@@ -481,8 +481,7 @@ static int mid_thermal_probe(struct platform_device *pdev)
 	int i;
 	struct platform_info *pinfo;
 
-	pinfo = devm_kzalloc(&pdev->dev, sizeof(struct platform_info),
-			     GFP_KERNEL);
+	pinfo = kzalloc(sizeof(struct platform_info), GFP_KERNEL);
 	if (!pinfo)
 		return -ENOMEM;
 
@@ -490,6 +489,7 @@ static int mid_thermal_probe(struct platform_device *pdev)
 	ret = mid_initialize_adc(&pdev->dev);
 	if (ret) {
 		dev_err(&pdev->dev, "ADC init failed");
+		kfree(pinfo);
 		return ret;
 	}
 
@@ -520,6 +520,7 @@ err:
 		thermal_zone_device_unregister(pinfo->tzd[i]);
 	}
 	configure_adc(0);
+	kfree(pinfo);
 	return ret;
 }
 
@@ -540,6 +541,8 @@ static int mid_thermal_remove(struct platform_device *pdev)
 		thermal_zone_device_unregister(pinfo->tzd[i]);
 	}
 
+	kfree(pinfo);
+
 	/* Stop the ADC */
 	return configure_adc(0);
 }
@@ -555,6 +558,7 @@ static const struct platform_device_id therm_id_table[] = {
 static struct platform_driver mid_thermal_driver = {
 	.driver = {
 		.name = DRIVER_NAME,
+		.owner = THIS_MODULE,
 		.pm = &mid_thermal_pm,
 	},
 	.probe = mid_thermal_probe,

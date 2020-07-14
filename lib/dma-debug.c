@@ -102,14 +102,6 @@ static DEFINE_SPINLOCK(free_entries_lock);
 /* Global disable flag - will be set in case of an error */
 static u32 global_disable __read_mostly;
 
-/* Early initialization disable flag, set at the end of dma_debug_init */
-static bool dma_debug_initialized __read_mostly;
-
-static inline bool dma_debug_disabled(void)
-{
-	return global_disable || !dma_debug_initialized;
-}
-
 /* Global error count */
 static u32 error_count;
 
@@ -361,7 +353,7 @@ static struct dma_debug_entry *bucket_find_contain(struct hash_bucket **bucket,
 	unsigned int range = 0;
 
 	while (range <= max_range) {
-		entry = __hash_bucket_find(*bucket, ref, containing_match);
+		entry = __hash_bucket_find(*bucket, &index, containing_match);
 
 		if (entry)
 			return entry;
@@ -573,9 +565,6 @@ void debug_dma_assert_idle(struct page *page)
 	unsigned int nents, i;
 	unsigned long flags;
 	phys_addr_t cln;
-
-	if (dma_debug_disabled())
-		return;
 
 	if (!page)
 		return;
@@ -956,7 +945,7 @@ static int dma_debug_device_change(struct notifier_block *nb, unsigned long acti
 	struct dma_debug_entry *uninitialized_var(entry);
 	int count;
 
-	if (dma_debug_disabled())
+	if (global_disable)
 		return 0;
 
 	switch (action) {
@@ -984,7 +973,7 @@ void dma_debug_add_bus(struct bus_type *bus)
 {
 	struct notifier_block *nb;
 
-	if (dma_debug_disabled())
+	if (global_disable)
 		return;
 
 	nb = kzalloc(sizeof(struct notifier_block), GFP_KERNEL);
@@ -1005,9 +994,6 @@ void dma_debug_init(u32 num_entries)
 {
 	int i;
 
-	/* Do not use dma_debug_initialized here, since we really want to be
-	 * called to set dma_debug_initialized
-	 */
 	if (global_disable)
 		return;
 
@@ -1034,8 +1020,6 @@ void dma_debug_init(u32 num_entries)
 	}
 
 	nr_total_entries = num_free_entries;
-
-	dma_debug_initialized = true;
 
 	pr_info("DMA-API: debugging enabled by kernel config\n");
 }
@@ -1165,7 +1149,7 @@ static void check_unmap(struct dma_debug_entry *ref)
 static void check_for_stack(struct device *dev, void *addr)
 {
 	if (object_is_on_stack(addr))
-		err_printk(dev, NULL, "DMA-API: device driver maps memory from "
+		err_printk(dev, NULL, "DMA-API: device driver maps memory from"
 				"stack [addr=%p]\n", addr);
 }
 
@@ -1259,7 +1243,7 @@ void debug_dma_map_page(struct device *dev, struct page *page, size_t offset,
 {
 	struct dma_debug_entry *entry;
 
-	if (unlikely(dma_debug_disabled()))
+	if (unlikely(global_disable))
 		return;
 
 	if (dma_mapping_error(dev, dma_addr))
@@ -1299,7 +1283,7 @@ void debug_dma_mapping_error(struct device *dev, dma_addr_t dma_addr)
 	struct hash_bucket *bucket;
 	unsigned long flags;
 
-	if (unlikely(dma_debug_disabled()))
+	if (unlikely(global_disable))
 		return;
 
 	ref.dev = dev;
@@ -1341,7 +1325,7 @@ void debug_dma_unmap_page(struct device *dev, dma_addr_t addr,
 		.direction      = direction,
 	};
 
-	if (unlikely(dma_debug_disabled()))
+	if (unlikely(global_disable))
 		return;
 
 	if (map_single)
@@ -1358,7 +1342,7 @@ void debug_dma_map_sg(struct device *dev, struct scatterlist *sg,
 	struct scatterlist *s;
 	int i;
 
-	if (unlikely(dma_debug_disabled()))
+	if (unlikely(global_disable))
 		return;
 
 	for_each_sg(sg, s, mapped_ents, i) {
@@ -1411,7 +1395,7 @@ void debug_dma_unmap_sg(struct device *dev, struct scatterlist *sglist,
 	struct scatterlist *s;
 	int mapped_ents = 0, i;
 
-	if (unlikely(dma_debug_disabled()))
+	if (unlikely(global_disable))
 		return;
 
 	for_each_sg(sglist, s, nelems, i) {
@@ -1443,7 +1427,7 @@ void debug_dma_alloc_coherent(struct device *dev, size_t size,
 {
 	struct dma_debug_entry *entry;
 
-	if (unlikely(dma_debug_disabled()))
+	if (unlikely(global_disable))
 		return;
 
 	if (unlikely(virt == NULL))
@@ -1478,7 +1462,7 @@ void debug_dma_free_coherent(struct device *dev, size_t size,
 		.direction      = DMA_BIDIRECTIONAL,
 	};
 
-	if (unlikely(dma_debug_disabled()))
+	if (unlikely(global_disable))
 		return;
 
 	check_unmap(&ref);
@@ -1490,7 +1474,7 @@ void debug_dma_sync_single_for_cpu(struct device *dev, dma_addr_t dma_handle,
 {
 	struct dma_debug_entry ref;
 
-	if (unlikely(dma_debug_disabled()))
+	if (unlikely(global_disable))
 		return;
 
 	ref.type         = dma_debug_single;
@@ -1510,7 +1494,7 @@ void debug_dma_sync_single_for_device(struct device *dev,
 {
 	struct dma_debug_entry ref;
 
-	if (unlikely(dma_debug_disabled()))
+	if (unlikely(global_disable))
 		return;
 
 	ref.type         = dma_debug_single;
@@ -1531,7 +1515,7 @@ void debug_dma_sync_single_range_for_cpu(struct device *dev,
 {
 	struct dma_debug_entry ref;
 
-	if (unlikely(dma_debug_disabled()))
+	if (unlikely(global_disable))
 		return;
 
 	ref.type         = dma_debug_single;
@@ -1552,7 +1536,7 @@ void debug_dma_sync_single_range_for_device(struct device *dev,
 {
 	struct dma_debug_entry ref;
 
-	if (unlikely(dma_debug_disabled()))
+	if (unlikely(global_disable))
 		return;
 
 	ref.type         = dma_debug_single;
@@ -1572,7 +1556,7 @@ void debug_dma_sync_sg_for_cpu(struct device *dev, struct scatterlist *sg,
 	struct scatterlist *s;
 	int mapped_ents = 0, i;
 
-	if (unlikely(dma_debug_disabled()))
+	if (unlikely(global_disable))
 		return;
 
 	for_each_sg(sg, s, nelems, i) {
@@ -1605,7 +1589,7 @@ void debug_dma_sync_sg_for_device(struct device *dev, struct scatterlist *sg,
 	struct scatterlist *s;
 	int mapped_ents = 0, i;
 
-	if (unlikely(dma_debug_disabled()))
+	if (unlikely(global_disable))
 		return;
 
 	for_each_sg(sg, s, nelems, i) {

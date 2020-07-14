@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2010-2011 Neil Brown
- * Copyright (C) 2010-2014 Red Hat, Inc. All rights reserved.
+ * Copyright (C) 2010-2011 Red Hat, Inc. All rights reserved.
  *
  * This file is released under the GPL.
  */
@@ -17,8 +17,6 @@
 #include <linux/device-mapper.h>
 
 #define DM_MSG_PREFIX "raid"
-
-static bool devices_handle_discard_safely = false;
 
 /*
  * The following flags are used by dm-raid.c to set up the array state.
@@ -327,7 +325,8 @@ static int validate_region_size(struct raid_set *rs, unsigned long region_size)
 		 */
 		if (min_region_size > (1 << 13)) {
 			/* If not a power of 2, make it the next power of 2 */
-			region_size = roundup_pow_of_two(min_region_size);
+			if (min_region_size & (min_region_size - 1))
+				region_size = 1 << fls(region_size);
 			DMINFO("Choosing default region size of %lu sectors",
 			       region_size);
 		} else {
@@ -476,8 +475,6 @@ too_many:
  *                                      will form the "stripe"
  *    [[no]sync]			Force or prevent recovery of the
  *                                      entire array
- *    [devices_handle_discard_safely]	Allow discards on RAID4/5/6; useful if RAID
- *					member device(s) properly support TRIM/UNMAP
  *    [rebuild <idx>]			Rebuild the drive indicated by the index
  *    [daemon_sleep <ms>]		Time between bitmap daemon work to
  *                                      clear bits
@@ -745,7 +742,13 @@ static int raid_is_congested(struct dm_target_callbacks *cb, int bits)
 {
 	struct raid_set *rs = container_of(cb, struct raid_set, callbacks);
 
-	return mddev_congested(&rs->md, bits);
+	if (rs->raid_type->level == 1)
+		return md_raid1_congested(&rs->md, bits);
+
+	if (rs->raid_type->level == 10)
+		return md_raid10_congested(&rs->md, bits);
+
+	return md_raid5_congested(&rs->md, bits);
 }
 
 /*
@@ -1150,53 +1153,6 @@ static int analyse_superblocks(struct dm_target *ti, struct raid_set *rs)
 }
 
 /*
- * Enable/disable discard support on RAID set depending on
- * RAID level and discard properties of underlying RAID members.
- */
-static void configure_discard_support(struct dm_target *ti, struct raid_set *rs)
-{
-	int i;
-	bool raid456;
-
-	/* Assume discards not supported until after checks below. */
-	ti->discards_supported = false;
-
-	/* RAID level 4,5,6 require discard_zeroes_data for data integrity! */
-	raid456 = (rs->md.level == 4 || rs->md.level == 5 || rs->md.level == 6);
-
-	for (i = 0; i < rs->md.raid_disks; i++) {
-		struct request_queue *q;
-
-		if (!rs->dev[i].rdev.bdev)
-			continue;
-
-		q = bdev_get_queue(rs->dev[i].rdev.bdev);
-		if (!q || !blk_queue_discard(q))
-			return;
-
-		if (raid456) {
-			if (!q->limits.discard_zeroes_data)
-				return;
-			if (!devices_handle_discard_safely) {
-				DMERR("raid456 discard support disabled due to discard_zeroes_data uncertainty.");
-				DMERR("Set dm-raid.devices_handle_discard_safely=Y to override.");
-				return;
-			}
-		}
-	}
-
-	/* All RAID members properly support discards */
-	ti->discards_supported = true;
-
-	/*
-	 * RAID1 and RAID10 personalities require bio splitting,
-	 * RAID0/4/5/6 don't and process large discard bios properly.
-	 */
-	ti->split_discard_bios = !!(rs->md.level == 1 || rs->md.level == 10);
-	ti->num_discard_bios = 1;
-}
-
-/*
  * Construct a RAID4/5/6 mapping:
  * Args:
  *	<raid_type> <#raid_params> <raid_params>		\
@@ -1236,7 +1192,7 @@ static int raid_ctr(struct dm_target *ti, unsigned argc, char **argv)
 	argv++;
 
 	/* Skip over RAID params for now and find out # of devices */
-	if (num_raid_params >= argc) {
+	if (num_raid_params + 1 > argc) {
 		ti->error = "Arguments do not agree with counts given";
 		return -EINVAL;
 	}
@@ -1244,12 +1200,6 @@ static int raid_ctr(struct dm_target *ti, unsigned argc, char **argv)
 	if ((kstrtoul(argv[num_raid_params], 10, &num_raid_devs) < 0) ||
 	    (num_raid_devs >= INT_MAX)) {
 		ti->error = "Cannot understand number of raid devices";
-		return -EINVAL;
-	}
-
-	argc -= num_raid_params + 1; /* +1: we already have num_raid_devs */
-	if (argc != (num_raid_devs * 2)) {
-		ti->error = "Supplied RAID devices does not match the count given";
 		return -EINVAL;
 	}
 
@@ -1261,7 +1211,15 @@ static int raid_ctr(struct dm_target *ti, unsigned argc, char **argv)
 	if (ret)
 		goto bad;
 
+	ret = -EINVAL;
+
+	argc -= num_raid_params + 1; /* +1: we already have num_raid_devs */
 	argv += num_raid_params + 1;
+
+	if (argc != (num_raid_devs * 2)) {
+		ti->error = "Supplied RAID devices does not match the count given";
+		goto bad;
+	}
 
 	ret = dev_parms(rs, argv);
 	if (ret)
@@ -1275,11 +1233,6 @@ static int raid_ctr(struct dm_target *ti, unsigned argc, char **argv)
 	INIT_WORK(&rs->md.event_work, do_table_event);
 	ti->private = rs;
 	ti->num_flush_bios = 1;
-
-	/*
-	 * Disable/enable discard support on RAID set.
-	 */
-	configure_discard_support(ti, rs);
 
 	mutex_lock(&rs->md.reconfig_mutex);
 	ret = md_run(&rs->md);
@@ -1702,7 +1655,7 @@ static void raid_resume(struct dm_target *ti)
 
 static struct target_type raid_target = {
 	.name = "raid",
-	.version = {1, 6, 0},
+	.version = {1, 5, 2},
 	.module = THIS_MODULE,
 	.ctr = raid_ctr,
 	.dtr = raid_dtr,
@@ -1732,10 +1685,6 @@ static void __exit dm_raid_exit(void)
 
 module_init(dm_raid_init);
 module_exit(dm_raid_exit);
-
-module_param(devices_handle_discard_safely, bool, 0644);
-MODULE_PARM_DESC(devices_handle_discard_safely,
-		 "Set to Y if all devices in each array reliably return zeroes on reads from discarded regions");
 
 MODULE_DESCRIPTION(DM_NAME " raid4/5/6 target");
 MODULE_ALIAS("dm-raid1");

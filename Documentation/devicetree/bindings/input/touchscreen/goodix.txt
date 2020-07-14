@@ -13,6 +13,16 @@ Required properties:
  - interrupt-parent	: Interrupt controller to which the chip is connected
  - interrupts		: Interrupt to which the chip is connected
 
+Optional properties:
+
+ - irq-gpios		: GPIO pin used for IRQ. The driver uses the
+			  interrupt gpio pin as output to reset the device.
+ - reset-gpios		: GPIO pin used for reset
+ - esd-recovery-timeout-ms : ESD poll time (in milli seconds) for the driver to
+                            check if ESD occurred and in that case reset the
+                            device. ESD is disabled if this property is not set
+                            or is set to 0.
+
 Example:
 
 	i2c@00000000 {
@@ -23,6 +33,9 @@ Example:
 			reg = <0x5d>;
 			interrupt-parent = <&gpio>;
 			interrupts = <0 0>;
+
+			irq-gpios = <&gpio1 0 0>;
+			reset-gpios = <&gpio1 1 0>;
 		};
 
 		/* ... */

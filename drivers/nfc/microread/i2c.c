@@ -286,7 +286,7 @@ static int microread_i2c_probe(struct i2c_client *client,
 	if (r < 0)
 		goto err_irq;
 
-	nfc_info(&client->dev, "Probed\n");
+	nfc_info(&client->dev, "Probed");
 
 	return 0;
 

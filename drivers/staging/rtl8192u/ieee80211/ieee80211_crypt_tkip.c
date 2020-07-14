@@ -9,6 +9,7 @@
  * more details.
  */
 
+//#include <linux/config.h>
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/slab.h>
@@ -17,7 +18,7 @@
 #include <linux/netdevice.h>
 #include <linux/if_ether.h>
 #include <linux/if_arp.h>
-#include <linux/string.h>
+#include <asm/string.h>
 
 #include "ieee80211.h"
 
@@ -772,6 +773,6 @@ void __exit ieee80211_crypto_tkip_exit(void)
 
 void ieee80211_tkip_null(void)
 {
-//    printk("============>%s()\n", __func__);
+//    printk("============>%s()\n", __FUNCTION__);
 	return;
 }

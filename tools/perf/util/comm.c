@@ -74,7 +74,7 @@ static struct comm_str *comm_str__findnew(const char *str, struct rb_root *root)
 	return new;
 }
 
-struct comm *comm__new(const char *str, u64 timestamp, bool exec)
+struct comm *comm__new(const char *str, u64 timestamp)
 {
 	struct comm *comm = zalloc(sizeof(*comm));
 
@@ -82,7 +82,6 @@ struct comm *comm__new(const char *str, u64 timestamp, bool exec)
 		return NULL;
 
 	comm->start = timestamp;
-	comm->exec = exec;
 
 	comm->comm_str = comm_str__findnew(str, &comm_str_root);
 	if (!comm->comm_str) {
@@ -95,7 +94,7 @@ struct comm *comm__new(const char *str, u64 timestamp, bool exec)
 	return comm;
 }
 
-int comm__override(struct comm *comm, const char *str, u64 timestamp, bool exec)
+int comm__override(struct comm *comm, const char *str, u64 timestamp)
 {
 	struct comm_str *new, *old = comm->comm_str;
 
@@ -107,8 +106,6 @@ int comm__override(struct comm *comm, const char *str, u64 timestamp, bool exec)
 	comm_str__put(old);
 	comm->comm_str = new;
 	comm->start = timestamp;
-	if (exec)
-		comm->exec = true;
 
 	return 0;
 }

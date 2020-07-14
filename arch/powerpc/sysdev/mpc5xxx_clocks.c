@@ -26,7 +26,8 @@ unsigned long mpc5xxx_get_bus_frequency(struct device_node *node)
 		of_node_put(node);
 		node = np;
 	}
-	of_node_put(node);
+	if (node)
+		of_node_put(node);
 
 	return p_bus_freq ? *p_bus_freq : 0;
 }

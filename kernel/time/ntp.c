@@ -17,6 +17,7 @@
 #include <linux/module.h>
 #include <linux/rtc.h>
 
+#include "tick-internal.h"
 #include "ntp_internal.h"
 
 /*
@@ -164,21 +165,21 @@ static inline void pps_set_freq(s64 freq)
 
 static inline int is_error_status(int status)
 {
-	return (status & (STA_UNSYNC|STA_CLOCKERR))
+	return (time_status & (STA_UNSYNC|STA_CLOCKERR))
 		/* PPS signal lost when either PPS time or
 		 * PPS frequency synchronization requested
 		 */
-		|| ((status & (STA_PPSFREQ|STA_PPSTIME))
-			&& !(status & STA_PPSSIGNAL))
+		|| ((time_status & (STA_PPSFREQ|STA_PPSTIME))
+			&& !(time_status & STA_PPSSIGNAL))
 		/* PPS jitter exceeded when
 		 * PPS time synchronization requested */
-		|| ((status & (STA_PPSTIME|STA_PPSJITTER))
+		|| ((time_status & (STA_PPSTIME|STA_PPSJITTER))
 			== (STA_PPSTIME|STA_PPSJITTER))
 		/* PPS wander exceeded or calibration error when
 		 * PPS frequency synchronization requested
 		 */
-		|| ((status & STA_PPSFREQ)
-			&& (status & (STA_PPSWANDER|STA_PPSERROR)));
+		|| ((time_status & STA_PPSFREQ)
+			&& (time_status & (STA_PPSWANDER|STA_PPSERROR)));
 }
 
 static inline void pps_fill_timex(struct timex *txc)
@@ -458,16 +459,6 @@ out:
 	return leap;
 }
 
-#ifdef CONFIG_GENERIC_CMOS_UPDATE
-int __weak update_persistent_clock64(struct timespec64 now64)
-{
-	struct timespec now;
-
-	now = timespec64_to_timespec(now64);
-	return update_persistent_clock(now);
-}
-#endif
-
 #if defined(CONFIG_GENERIC_CMOS_UPDATE) || defined(CONFIG_RTC_SYSTOHC)
 static void sync_cmos_clock(struct work_struct *work);
 
@@ -475,8 +466,7 @@ static DECLARE_DELAYED_WORK(sync_cmos_work, sync_cmos_clock);
 
 static void sync_cmos_clock(struct work_struct *work)
 {
-	struct timespec64 now;
-	struct timespec next;
+	struct timespec now, next;
 	int fail = 1;
 
 	/*
@@ -495,17 +485,16 @@ static void sync_cmos_clock(struct work_struct *work)
 		return;
 	}
 
-	getnstimeofday64(&now);
+	getnstimeofday(&now);
 	if (abs(now.tv_nsec - (NSEC_PER_SEC / 2)) <= tick_nsec * 5) {
-		struct timespec64 adjust = now;
+		struct timespec adjust = now;
 
 		fail = -ENODEV;
 		if (persistent_clock_is_local)
 			adjust.tv_sec -= (sys_tz.tz_minuteswest * 60);
 #ifdef CONFIG_GENERIC_CMOS_UPDATE
-		fail = update_persistent_clock64(adjust);
+		fail = update_persistent_clock(adjust);
 #endif
-
 #ifdef CONFIG_RTC_SYSTOHC
 		if (fail == -ENODEV)
 			fail = rtc_set_ntp_time(adjust);
@@ -525,13 +514,12 @@ static void sync_cmos_clock(struct work_struct *work)
 		next.tv_sec++;
 		next.tv_nsec -= NSEC_PER_SEC;
 	}
-	queue_delayed_work(system_power_efficient_wq,
-			   &sync_cmos_work, timespec_to_jiffies(&next));
+	schedule_delayed_work(&sync_cmos_work, timespec_to_jiffies(&next));
 }
 
 void ntp_notify_cmos_timer(void)
 {
-	queue_delayed_work(system_power_efficient_wq, &sync_cmos_work, 0);
+	schedule_delayed_work(&sync_cmos_work, 0);
 }
 
 #else
@@ -542,7 +530,7 @@ void ntp_notify_cmos_timer(void) { }
 /*
  * Propagate a new txc->status value into the NTP state:
  */
-static inline void process_adj_status(struct timex *txc, struct timespec64 *ts)
+static inline void process_adj_status(struct timex *txc, struct timespec *ts)
 {
 	if ((time_status & STA_PLL) && !(txc->status & STA_PLL)) {
 		time_state = TIME_OK;
@@ -565,7 +553,7 @@ static inline void process_adj_status(struct timex *txc, struct timespec64 *ts)
 
 
 static inline void process_adjtimex_modes(struct timex *txc,
-						struct timespec64 *ts,
+						struct timespec *ts,
 						s32 *time_tai)
 {
 	if (txc->modes & ADJ_STATUS)
@@ -662,7 +650,7 @@ int ntp_validate_timex(struct timex *txc)
  * adjtimex mainly allows reading (and writing, if superuser) of
  * kernel time-keeping variables. used by xntpd.
  */
-int __do_adjtimex(struct timex *txc, struct timespec64 *ts, s32 *time_tai)
+int __do_adjtimex(struct timex *txc, struct timespec *ts, s32 *time_tai)
 {
 	int result;
 
@@ -706,7 +694,7 @@ int __do_adjtimex(struct timex *txc, struct timespec64 *ts, s32 *time_tai)
 	/* fill PPS status fields */
 	pps_fill_timex(txc);
 
-	txc->time.tv_sec = (time_t)ts->tv_sec;
+	txc->time.tv_sec = ts->tv_sec;
 	txc->time.tv_usec = ts->tv_nsec;
 	if (!(time_status & STA_NANO))
 		txc->time.tv_usec /= NSEC_PER_USEC;
@@ -808,9 +796,8 @@ static long hardpps_update_freq(struct pps_normtime freq_norm)
 		time_status |= STA_PPSERROR;
 		pps_errcnt++;
 		pps_dec_freq_interval();
-		printk_deferred(KERN_ERR
-			"hardpps: PPSERROR: interval too long - %ld s\n",
-			freq_norm.sec);
+		pr_err("hardpps: PPSERROR: interval too long - %ld s\n",
+				freq_norm.sec);
 		return 0;
 	}
 
@@ -823,8 +810,7 @@ static long hardpps_update_freq(struct pps_normtime freq_norm)
 	delta = shift_right(ftemp - pps_freq, NTP_SCALE_SHIFT);
 	pps_freq = ftemp;
 	if (delta > PPS_MAXWANDER || delta < -PPS_MAXWANDER) {
-		printk_deferred(KERN_WARNING
-				"hardpps: PPSWANDER: change=%ld\n", delta);
+		pr_warning("hardpps: PPSWANDER: change=%ld\n", delta);
 		time_status |= STA_PPSWANDER;
 		pps_stbcnt++;
 		pps_dec_freq_interval();
@@ -868,9 +854,8 @@ static void hardpps_update_phase(long error)
 	 * the time offset is updated.
 	 */
 	if (jitter > (pps_jitter << PPS_POPCORN)) {
-		printk_deferred(KERN_WARNING
-				"hardpps: PPSJITTER: jitter=%ld, limit=%ld\n",
-				jitter, (pps_jitter << PPS_POPCORN));
+		pr_warning("hardpps: PPSJITTER: jitter=%ld, limit=%ld\n",
+		       jitter, (pps_jitter << PPS_POPCORN));
 		time_status |= STA_PPSJITTER;
 		pps_jitcnt++;
 	} else if (time_status & STA_PPSTIME) {
@@ -927,7 +912,7 @@ void __hardpps(const struct timespec *phase_ts, const struct timespec *raw_ts)
 		time_status |= STA_PPSJITTER;
 		/* restart the frequency calibration interval */
 		pps_fbase = *raw_ts;
-		printk_deferred(KERN_ERR "hardpps: PPSJITTER: bad pulse\n");
+		pr_err("hardpps: PPSJITTER: bad pulse\n");
 		return;
 	}
 
@@ -948,10 +933,7 @@ void __hardpps(const struct timespec *phase_ts, const struct timespec *raw_ts)
 
 static int __init ntp_tick_adj_setup(char *str)
 {
-	int rc = kstrtol(str, 0, (long *)&ntp_tick_adj);
-
-	if (rc)
-		return rc;
+	ntp_tick_adj = simple_strtol(str, NULL, 0);
 	ntp_tick_adj <<= NTP_SCALE_SHIFT;
 
 	return 1;

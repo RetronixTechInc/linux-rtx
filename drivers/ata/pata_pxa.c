@@ -385,6 +385,7 @@ static struct platform_driver pxa_ata_driver = {
 	.remove		= pxa_ata_remove,
 	.driver		= {
 		.name		= DRV_NAME,
+		.owner		= THIS_MODULE,
 	},
 };
 

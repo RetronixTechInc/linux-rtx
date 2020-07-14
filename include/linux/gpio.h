@@ -3,7 +3,7 @@
 
 #include <linux/errno.h>
 
-/* see Documentation/gpio/gpio-legacy.txt */
+/* see Documentation/gpio.txt */
 
 /* make these flag values available regardless of GPIO kconfig options */
 #define GPIOF_DIR_OUT	(0 << 0)
@@ -216,15 +216,14 @@ static inline int gpio_to_irq(unsigned gpio)
 	return -EINVAL;
 }
 
-static inline int gpiochip_lock_as_irq(struct gpio_chip *chip,
-				       unsigned int offset)
+static inline int gpio_lock_as_irq(struct gpio_chip *chip, unsigned int offset)
 {
 	WARN_ON(1);
 	return -EINVAL;
 }
 
-static inline void gpiochip_unlock_as_irq(struct gpio_chip *chip,
-					  unsigned int offset)
+static inline void gpio_unlock_as_irq(struct gpio_chip *chip,
+				      unsigned int offset)
 {
 	WARN_ON(1);
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright 2013-2016 Freescale Semiconductor, Inc.
+ * Copyright (C) 2013-2015 Freescale Semiconductor, Inc.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 as
@@ -40,7 +40,7 @@ static void __init imx6sl_fec_clk_init(void)
 static inline void imx6sl_fec_init(void)
 {
 	imx6sl_fec_clk_init();
-	imx6_enet_mac_init("fsl,imx6sl-fec", "fsl,imx6sl-ocotp");
+	imx6_enet_mac_init("fsl,imx6sl-fec");
 }
 
 static void __init imx6sl_init_late(void)
@@ -56,6 +56,8 @@ static void __init imx6sl_init_machine(void)
 {
 	struct device *parent;
 
+	mxc_arch_reset_init_dt();
+
 	parent = imx_soc_device_init();
 	if (parent == NULL)
 		pr_warn("failed to initialize soc device\n");
@@ -69,12 +71,17 @@ static void __init imx6sl_init_machine(void)
 
 static void __init imx6sl_init_irq(void)
 {
-	imx_gpc_check_dt();
 	imx_init_revision_from_anatop();
 	imx_init_l2cache();
 	imx_src_init();
+	imx_gpc_init();
 	irqchip_init();
 }
+
+static const char *imx6sl_dt_compat[] __initconst = {
+	"fsl,imx6sl",
+	NULL,
+};
 
 static void __init imx6sl_map_io(void)
 {
@@ -84,6 +91,7 @@ static void __init imx6sl_map_io(void)
 	imx_busfreq_map_io();
 #endif
 }
+
 extern unsigned long int ramoops_phys_addr;
 extern unsigned long int ramoops_mem_size;
 static void imx6sl_reserve(void)
@@ -94,7 +102,19 @@ static void imx6sl_reserve(void)
 	struct membank *bank;
 
 #ifdef CONFIG_PSTORE_RAM
-	max_phys = memblock_end_of_DRAM();
+	mi = &meminfo;
+	if (!mi) {
+		pr_err("no memory reserve for ramoops.\n");
+		return;
+	}
+
+	/* use memmory last bank for ram console store */
+	bank = &mi->bank[mi->nr_banks - 1];
+	if (!bank) {
+		pr_err("no memory reserve for ramoops.\n");
+		return;
+	}
+	max_phys = bank->start + bank->size;
 	/* reserve 64M for uboot avoid ram console data is cleaned by uboot */
 	phys = memblock_alloc_base(SZ_1M, SZ_4K, max_phys - SZ_64M);
 	if (phys) {
@@ -111,17 +131,12 @@ static void imx6sl_reserve(void)
 	return;
 }
 
-
-static const char * const imx6sl_dt_compat[] __initconst = {
-	"fsl,imx6sl",
-	NULL,
-};
-
 DT_MACHINE_START(IMX6SL, "Freescale i.MX6 SoloLite (Device Tree)")
 	.map_io		= imx6sl_map_io,
 	.init_irq	= imx6sl_init_irq,
 	.init_machine	= imx6sl_init_machine,
 	.init_late      = imx6sl_init_late,
 	.dt_compat	= imx6sl_dt_compat,
-	.reserve        = imx6sl_reserve,
+	.reserve     = imx6sl_reserve,
+	.restart	= mxc_restart,
 MACHINE_END

@@ -392,8 +392,8 @@ static const struct ov9740_reg ov9740_defaults[] = {
 	{ OV9740_ISP_CTRL19,		0x02 },
 };
 
-static u32 ov9740_codes[] = {
-	MEDIA_BUS_FMT_YUYV8_2X8,
+static enum v4l2_mbus_pixelcode ov9740_codes[] = {
+	V4L2_MBUS_FMT_YUYV8_2X8,
 };
 
 /* read a register */
@@ -564,13 +564,13 @@ static int ov9740_set_res(struct i2c_client *client, u32 width, u32 height)
 	u32 y_start;
 	u32 x_end;
 	u32 y_end;
-	bool scaling = false;
+	bool scaling = 0;
 	u32 scale_input_x;
 	u32 scale_input_y;
 	int ret;
 
 	if ((width != OV9740_MAX_WIDTH) || (height != OV9740_MAX_HEIGHT))
-		scaling = true;
+		scaling = 1;
 
 	/*
 	 * Try to use as much of the sensor area as possible when supporting
@@ -674,13 +674,13 @@ static int ov9740_s_fmt(struct v4l2_subdev *sd,
 	struct i2c_client *client = v4l2_get_subdevdata(sd);
 	struct ov9740_priv *priv = to_ov9740(sd);
 	enum v4l2_colorspace cspace;
-	u32 code = mf->code;
+	enum v4l2_mbus_pixelcode code = mf->code;
 	int ret;
 
 	ov9740_res_roundup(&mf->width, &mf->height);
 
 	switch (code) {
-	case MEDIA_BUS_FMT_YUYV8_2X8:
+	case V4L2_MBUS_FMT_YUYV8_2X8:
 		cspace = V4L2_COLORSPACE_SRGB;
 		break;
 	default:
@@ -710,14 +710,14 @@ static int ov9740_try_fmt(struct v4l2_subdev *sd,
 	ov9740_res_roundup(&mf->width, &mf->height);
 
 	mf->field = V4L2_FIELD_NONE;
-	mf->code = MEDIA_BUS_FMT_YUYV8_2X8;
+	mf->code = V4L2_MBUS_FMT_YUYV8_2X8;
 	mf->colorspace = V4L2_COLORSPACE_SRGB;
 
 	return 0;
 }
 
 static int ov9740_enum_fmt(struct v4l2_subdev *sd, unsigned int index,
-			   u32 *code)
+			   enum v4l2_mbus_pixelcode *code)
 {
 	if (index >= ARRAY_SIZE(ov9740_codes))
 		return -EINVAL;

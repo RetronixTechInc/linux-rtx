@@ -45,18 +45,22 @@ static ssize_t power_supply_show_property(struct device *dev,
 					  char *buf) {
 	static char *type_text[] = {
 		"Unknown", "Battery", "UPS", "Mains", "USB",
-		"USB_DCP", "USB_CDP", "USB_ACA"
+		"USB_DCP", "USB_CDP", "USB_ACA",
+		"BMS", "MISC", "Wireless", "CARDOCK", "UARTOFF", "OTG",
+		"LAN_HUB", "MHL_500", "MHL_900", "MHL_1500", "MHL_2000",
+		"MHL_USB", "MHL_USB_100", "SMART_OTG", "SMART_NOTG", "POWER_SHARING",
+		"HV_Prepare_Mains", "HV_Err", "HV_Unknown", "HV_Mains"
 	};
 	static char *status_text[] = {
 		"Unknown", "Charging", "Discharging", "Not charging", "Full"
 	};
 	static char *charge_type[] = {
-		"Unknown", "N/A", "Trickle", "Fast"
+		"Unknown", "N/A", "Trickle", "Fast", "Slow"
 	};
 	static char *health_text[] = {
-		"Unknown", "Good", "Overheat", "Dead", "Over voltage",
-		"Unspecified failure", "Cold", "Watchdog timer expire",
-		"Safety timer expire"
+		"Unknown", "Good", "Overheat", "Warm", "Dead", "Over voltage",
+		"Unspecified failure", "Cold", "Cool", "Watchdog timer expire",
+		"Safety timer expire", "Under voltage"
 	};
 	static char *technology_text[] = {
 		"Unknown", "NiMH", "Li-ion", "Li-poly", "LiFe", "NiCd",
@@ -73,20 +77,19 @@ static ssize_t power_supply_show_property(struct device *dev,
 	const ptrdiff_t off = attr - power_supply_attrs;
 	union power_supply_propval value;
 
-	if (off == POWER_SUPPLY_PROP_TYPE) {
-		value.intval = psy->desc->type;
-	} else {
-		ret = power_supply_get_property(psy, off, &value);
+	if (off == POWER_SUPPLY_PROP_TYPE)
+		value.intval = psy->type;
+	else
+		ret = psy->get_property(psy, off, &value);
 
-		if (ret < 0) {
-			if (ret == -ENODATA)
-				dev_dbg(dev, "driver has no data for `%s' property\n",
-					attr->attr.name);
-			else if (ret != -ENODEV)
-				dev_err(dev, "driver failed to report `%s' property: %zd\n",
-					attr->attr.name, ret);
-			return ret;
-		}
+	if (ret < 0) {
+		if (ret == -ENODATA)
+			dev_dbg(dev, "driver has no data for `%s' property\n",
+				attr->attr.name);
+		else if (ret != -ENODEV)
+			dev_err(dev, "driver failed to report `%s' property: %zd\n",
+				attr->attr.name, ret);
+		return ret;
 	}
 
 	if (off == POWER_SUPPLY_PROP_STATUS)
@@ -106,10 +109,7 @@ static ssize_t power_supply_show_property(struct device *dev,
 	else if (off >= POWER_SUPPLY_PROP_MODEL_NAME)
 		return sprintf(buf, "%s\n", value.strval);
 
-	if (off == POWER_SUPPLY_PROP_CHARGE_COUNTER_EXT)
-		return sprintf(buf, "%lld\n", value.int64val);
-	else
-		return sprintf(buf, "%d\n", value.intval);
+	return sprintf(buf, "%d\n", value.intval);
 }
 
 static ssize_t power_supply_store_property(struct device *dev,
@@ -128,7 +128,7 @@ static ssize_t power_supply_store_property(struct device *dev,
 
 	value.intval = long_val;
 
-	ret = psy->desc->set_property(psy, off, &value);
+	ret = psy->set_property(psy, off, &value);
 	if (ret < 0)
 		return ret;
 
@@ -144,6 +144,7 @@ static struct device_attribute power_supply_attrs[] = {
 	POWER_SUPPLY_ATTR(present),
 	POWER_SUPPLY_ATTR(online),
 	POWER_SUPPLY_ATTR(authentic),
+	POWER_SUPPLY_ATTR(charging_enabled),
 	POWER_SUPPLY_ATTR(technology),
 	POWER_SUPPLY_ATTR(cycle_count),
 	POWER_SUPPLY_ATTR(voltage_max),
@@ -153,11 +154,13 @@ static struct device_attribute power_supply_attrs[] = {
 	POWER_SUPPLY_ATTR(voltage_now),
 	POWER_SUPPLY_ATTR(voltage_avg),
 	POWER_SUPPLY_ATTR(voltage_ocv),
-	POWER_SUPPLY_ATTR(voltage_boot),
+	POWER_SUPPLY_ATTR(input_voltage_regulation),
 	POWER_SUPPLY_ATTR(current_max),
+	POWER_SUPPLY_ATTR(input_current_max),
+	POWER_SUPPLY_ATTR(input_current_trim),
+	POWER_SUPPLY_ATTR(input_current_settled),
 	POWER_SUPPLY_ATTR(current_now),
 	POWER_SUPPLY_ATTR(current_avg),
-	POWER_SUPPLY_ATTR(current_boot),
 	POWER_SUPPLY_ATTR(power_now),
 	POWER_SUPPLY_ATTR(power_avg),
 	POWER_SUPPLY_ATTR(charge_full_design),
@@ -167,13 +170,13 @@ static struct device_attribute power_supply_attrs[] = {
 	POWER_SUPPLY_ATTR(charge_now),
 	POWER_SUPPLY_ATTR(charge_avg),
 	POWER_SUPPLY_ATTR(charge_counter),
+	POWER_SUPPLY_ATTR(charge_counter_shadow),
 	POWER_SUPPLY_ATTR(constant_charge_current),
 	POWER_SUPPLY_ATTR(constant_charge_current_max),
 	POWER_SUPPLY_ATTR(constant_charge_voltage),
 	POWER_SUPPLY_ATTR(constant_charge_voltage_max),
 	POWER_SUPPLY_ATTR(charge_control_limit),
 	POWER_SUPPLY_ATTR(charge_control_limit_max),
-	POWER_SUPPLY_ATTR(input_current_limit),
 	POWER_SUPPLY_ATTR(energy_full_design),
 	POWER_SUPPLY_ATTR(energy_empty_design),
 	POWER_SUPPLY_ATTR(energy_full),
@@ -185,10 +188,10 @@ static struct device_attribute power_supply_attrs[] = {
 	POWER_SUPPLY_ATTR(capacity_alert_max),
 	POWER_SUPPLY_ATTR(capacity_level),
 	POWER_SUPPLY_ATTR(temp),
-	POWER_SUPPLY_ATTR(temp_max),
-	POWER_SUPPLY_ATTR(temp_min),
 	POWER_SUPPLY_ATTR(temp_alert_min),
 	POWER_SUPPLY_ATTR(temp_alert_max),
+	POWER_SUPPLY_ATTR(temp_cool),
+	POWER_SUPPLY_ATTR(temp_warm),
 	POWER_SUPPLY_ATTR(temp_ambient),
 	POWER_SUPPLY_ATTR(temp_ambient_alert_min),
 	POWER_SUPPLY_ATTR(temp_ambient_alert_max),
@@ -198,18 +201,18 @@ static struct device_attribute power_supply_attrs[] = {
 	POWER_SUPPLY_ATTR(time_to_full_avg),
 	POWER_SUPPLY_ATTR(type),
 	POWER_SUPPLY_ATTR(scope),
-	POWER_SUPPLY_ATTR(charge_term_current),
-	POWER_SUPPLY_ATTR(calibrate),
+	POWER_SUPPLY_ATTR(system_temp_level),
+	POWER_SUPPLY_ATTR(resistance),
+	POWER_SUPPLY_ATTR(resistance_capacitive),
 	/* Local extensions */
 	POWER_SUPPLY_ATTR(usb_hc),
 	POWER_SUPPLY_ATTR(usb_otg),
 	POWER_SUPPLY_ATTR(charge_enabled),
-	/* Local extensions of type int64_t */
-	POWER_SUPPLY_ATTR(charge_counter_ext),
 	/* Properties of type `const char *' */
 	POWER_SUPPLY_ATTR(model_name),
 	POWER_SUPPLY_ATTR(manufacturer),
 	POWER_SUPPLY_ATTR(serial_number),
+	POWER_SUPPLY_ATTR(battery_type),
 };
 
 static struct attribute *
@@ -227,12 +230,12 @@ static umode_t power_supply_attr_is_visible(struct kobject *kobj,
 	if (attrno == POWER_SUPPLY_PROP_TYPE)
 		return mode;
 
-	for (i = 0; i < psy->desc->num_properties; i++) {
-		int property = psy->desc->properties[i];
+	for (i = 0; i < psy->num_properties; i++) {
+		int property = psy->properties[i];
 
 		if (property == attrno) {
-			if (psy->desc->property_is_writeable &&
-			    power_supply_property_is_writeable(psy, property) > 0)
+			if (psy->property_is_writeable &&
+			    psy->property_is_writeable(psy, property) > 0)
 				mode |= S_IWUSR;
 
 			return mode;
@@ -288,14 +291,14 @@ int power_supply_uevent(struct device *dev, struct kobj_uevent_env *env)
 
 	dev_dbg(dev, "uevent\n");
 
-	if (!psy || !psy->desc) {
+	if (!psy || !psy->dev) {
 		dev_dbg(dev, "No power supply yet\n");
 		return ret;
 	}
 
-	dev_dbg(dev, "POWER_SUPPLY_NAME=%s\n", psy->desc->name);
+	dev_dbg(dev, "POWER_SUPPLY_NAME=%s\n", psy->name);
 
-	ret = add_uevent_var(env, "POWER_SUPPLY_NAME=%s", psy->desc->name);
+	ret = add_uevent_var(env, "POWER_SUPPLY_NAME=%s", psy->name);
 	if (ret)
 		return ret;
 
@@ -303,11 +306,11 @@ int power_supply_uevent(struct device *dev, struct kobj_uevent_env *env)
 	if (!prop_buf)
 		return -ENOMEM;
 
-	for (j = 0; j < psy->desc->num_properties; j++) {
+	for (j = 0; j < psy->num_properties; j++) {
 		struct device_attribute *attr;
 		char *line;
 
-		attr = &power_supply_attrs[psy->desc->properties[j]];
+		attr = &power_supply_attrs[psy->properties[j]];
 
 		ret = power_supply_show_property(dev, attr, prop_buf);
 		if (ret == -ENODEV || ret == -ENODATA) {

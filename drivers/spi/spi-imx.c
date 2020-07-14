@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-2007, 2016 Freescale Semiconductor, Inc. All Rights Reserved.
+ * Copyright 2004-2007, 2015 Freescale Semiconductor, Inc. All Rights Reserved.
  * Copyright (C) 2008 Juergen Beisert
  *
  * This program is free software; you can redistribute it and/or
@@ -94,6 +94,7 @@ struct spi_imx_data {
 
 	struct completion xfer_done;
 	void __iomem *base;
+	int irq;
 	struct clk *clk_per;
 	struct clk *clk_ipg;
 	unsigned long spi_clk;
@@ -961,10 +962,10 @@ static int spi_imx_dma_transfer(struct spi_imx_data *spi_imx,
 
 	if (tx) {
 		desc_tx = dmaengine_prep_slave_sg(master->dma_tx,
-					tx->sgl, tx->nents, DMA_MEM_TO_DEV,
+					tx->sgl, tx->nents, DMA_TO_DEVICE,
 					DMA_PREP_INTERRUPT | DMA_CTRL_ACK);
 		if (!desc_tx)
-			goto tx_nodma;
+			goto no_dma;
 
 		desc_tx->callback = spi_imx_dma_tx_callback;
 		desc_tx->callback_param = (void *)spi_imx;
@@ -985,10 +986,10 @@ static int spi_imx_dma_transfer(struct spi_imx_data *spi_imx,
 			sgl_last->length = orig_length & wml_mask;
 
 		desc_rx = dmaengine_prep_slave_sg(master->dma_rx,
-					rx->sgl, rx->nents, DMA_DEV_TO_MEM,
+					rx->sgl, rx->nents, DMA_FROM_DEVICE,
 					DMA_PREP_INTERRUPT | DMA_CTRL_ACK);
 		if (!desc_rx)
-			goto rx_nodma;
+			goto no_dma;
 
 		desc_rx->callback = spi_imx_dma_rx_callback;
 		desc_rx->callback_param = (void *)spi_imx;
@@ -1054,9 +1055,7 @@ static int spi_imx_dma_transfer(struct spi_imx_data *spi_imx,
 
 	return ret;
 
-rx_nodma:
-	dmaengine_terminate_all(master->dma_tx);
-tx_nodma:
+no_dma:
 	pr_warn_once("%s %s: DMA not available, falling back to PIO\n",
 		     dev_driver_string(&master->dev),
 		     dev_name(&master->dev));
@@ -1162,7 +1161,7 @@ static int spi_imx_probe(struct platform_device *pdev)
 	struct spi_master *master;
 	struct spi_imx_data *spi_imx;
 	struct resource *res;
-	int i, ret, num_cs, irq;
+	int i, ret, num_cs;
 
 	if (!np && !mxc_platform_info) {
 		dev_err(&pdev->dev, "can't get the platform data\n");
@@ -1229,16 +1228,16 @@ static int spi_imx_probe(struct platform_device *pdev)
 		goto out_master_put;
 	}
 
-	irq = platform_get_irq(pdev, 0);
-	if (irq < 0) {
-		ret = irq;
+	spi_imx->irq = platform_get_irq(pdev, 0);
+	if (spi_imx->irq < 0) {
+		ret = spi_imx->irq;
 		goto out_master_put;
 	}
 
-	ret = devm_request_irq(&pdev->dev, irq, spi_imx_isr, 0,
+	ret = devm_request_irq(&pdev->dev, spi_imx->irq, spi_imx_isr, 0,
 			       dev_name(&pdev->dev), spi_imx);
 	if (ret) {
-		dev_err(&pdev->dev, "can't get irq%d: %d\n", irq, ret);
+		dev_err(&pdev->dev, "can't get irq%d: %d\n", spi_imx->irq, ret);
 		goto out_master_put;
 	}
 
@@ -1337,6 +1336,7 @@ static SIMPLE_DEV_PM_OPS(imx_spi_pm, spi_imx_suspend, spi_imx_resume);
 static struct platform_driver spi_imx_driver = {
 	.driver = {
 		   .name = DRIVER_NAME,
+		   .owner = THIS_MODULE,
 		   .of_match_table = spi_imx_dt_ids,
 		   .pm = IMX_SPI_PM,
 	},

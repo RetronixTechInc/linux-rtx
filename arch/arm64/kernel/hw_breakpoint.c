@@ -527,7 +527,7 @@ int arch_validate_hwbkpt_settings(struct perf_event *bp)
 	 * Disallow per-task kernel breakpoints since these would
 	 * complicate the stepping code.
 	 */
-	if (info->ctrl.privilege == AARCH64_BREAKPOINT_EL1 && bp->hw.target)
+	if (info->ctrl.privilege == AARCH64_BREAKPOINT_EL1 && bp->hw.bp_target)
 		return -EINVAL;
 
 	return 0;
@@ -894,7 +894,7 @@ static struct notifier_block hw_breakpoint_reset_nb = {
 	.notifier_call = hw_breakpoint_reset_notify,
 };
 
-#ifdef CONFIG_CPU_PM
+#ifdef CONFIG_ARM64_CPU_SUSPEND
 extern void cpu_suspend_set_dbg_restorer(void (*hw_bp_restore)(void *));
 #else
 static inline void cpu_suspend_set_dbg_restorer(void (*hw_bp_restore)(void *))
@@ -913,8 +913,6 @@ static int __init arch_hw_breakpoint_init(void)
 	pr_info("found %d breakpoint and %d watchpoint registers.\n",
 		core_num_brps, core_num_wrps);
 
-	cpu_notifier_register_begin();
-
 	/*
 	 * Reset the breakpoint resources. We assume that a halting
 	 * debugger will leave the world in a nice state for us.
@@ -929,10 +927,7 @@ static int __init arch_hw_breakpoint_init(void)
 			      TRAP_HWBKPT, "hw-watchpoint handler");
 
 	/* Register hotplug notifier. */
-	__register_cpu_notifier(&hw_breakpoint_reset_nb);
-
-	cpu_notifier_register_done();
-
+	register_cpu_notifier(&hw_breakpoint_reset_nb);
 	/* Register cpu_suspend hw breakpoint restore hook */
 	cpu_suspend_set_dbg_restorer(hw_breakpoint_reset);
 

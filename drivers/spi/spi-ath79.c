@@ -16,6 +16,7 @@
 #include <linux/module.h>
 #include <linux/delay.h>
 #include <linux/spinlock.h>
+#include <linux/workqueue.h>
 #include <linux/platform_device.h>
 #include <linux/io.h>
 #include <linux/spi/spi.h>
@@ -307,6 +308,7 @@ static struct platform_driver ath79_spi_driver = {
 	.shutdown	= ath79_spi_shutdown,
 	.driver		= {
 		.name	= DRV_NAME,
+		.owner	= THIS_MODULE,
 	},
 };
 module_platform_driver(ath79_spi_driver);

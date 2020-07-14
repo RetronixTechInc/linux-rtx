@@ -32,20 +32,12 @@ struct omap_connector {
 	struct drm_connector base;
 	struct omap_dss_device *dssdev;
 	struct drm_encoder *encoder;
-	bool hdmi_mode;
 };
-
-bool omap_connector_get_hdmi_mode(struct drm_connector *connector)
-{
-	struct omap_connector *omap_connector = to_omap_connector(connector);
-
-	return omap_connector->hdmi_mode;
-}
 
 void copy_timings_omap_to_drm(struct drm_display_mode *mode,
 		struct omap_video_timings *timings)
 {
-	mode->clock = timings->pixelclock / 1000;
+	mode->clock = timings->pixel_clock;
 
 	mode->hdisplay = timings->x_res;
 	mode->hsync_start = mode->hdisplay + timings->hfp;
@@ -76,7 +68,7 @@ void copy_timings_omap_to_drm(struct drm_display_mode *mode,
 void copy_timings_drm_to_omap(struct omap_video_timings *timings,
 		struct drm_display_mode *mode)
 {
-	timings->pixelclock = mode->clock * 1000;
+	timings->pixel_clock = mode->clock;
 
 	timings->x_res = mode->hdisplay;
 	timings->hfp = mode->hsync_start - mode->hdisplay;
@@ -102,7 +94,7 @@ void copy_timings_drm_to_omap(struct omap_video_timings *timings,
 
 	timings->data_pclk_edge = OMAPDSS_DRIVE_SIG_RISING_EDGE;
 	timings->de_level = OMAPDSS_SIG_ACTIVE_HIGH;
-	timings->sync_pclk_edge = OMAPDSS_DRIVE_SIG_FALLING_EDGE;
+	timings->sync_pclk_edge = OMAPDSS_DRIVE_SIG_OPPOSITE_EDGES;
 }
 
 static enum drm_connector_status omap_connector_detect(
@@ -138,7 +130,7 @@ static void omap_connector_destroy(struct drm_connector *connector)
 	struct omap_dss_device *dssdev = omap_connector->dssdev;
 
 	DBG("%s", omap_connector->dssdev->name);
-	drm_connector_unregister(connector);
+	drm_sysfs_connector_remove(connector);
 	drm_connector_cleanup(connector);
 	kfree(omap_connector);
 
@@ -170,14 +162,10 @@ static int omap_connector_get_modes(struct drm_connector *connector)
 			drm_mode_connector_update_edid_property(
 					connector, edid);
 			n = drm_add_edid_modes(connector, edid);
-
-			omap_connector->hdmi_mode =
-				drm_detect_hdmi_monitor(edid);
 		} else {
 			drm_mode_connector_update_edid_property(
 					connector, NULL);
 		}
-
 		kfree(edid);
 	} else {
 		struct drm_display_mode *mode = drm_mode_create(dev);
@@ -232,7 +220,7 @@ static int omap_connector_mode_valid(struct drm_connector *connector,
 	if (!r) {
 		/* check if vrefresh is still valid */
 		new_mode = drm_mode_duplicate(dev, mode);
-		new_mode->clock = timings.pixelclock / 1000;
+		new_mode->clock = timings.pixel_clock;
 		new_mode->vrefresh = 0;
 		if (mode->vrefresh == drm_mode_vrefresh(new_mode))
 			ret = MODE_OK;
@@ -271,6 +259,18 @@ static const struct drm_connector_helper_funcs omap_connector_helper_funcs = {
 	.best_encoder = omap_connector_attached_encoder,
 };
 
+/* flush an area of the framebuffer (in case of manual update display that
+ * is not automatically flushed)
+ */
+void omap_connector_flush(struct drm_connector *connector,
+		int x, int y, int w, int h)
+{
+	struct omap_connector *omap_connector = to_omap_connector(connector);
+
+	/* TODO: enable when supported in dss */
+	VERB("%s: %d,%d, %dx%d", omap_connector->dssdev->name, x, y, w, h);
+}
+
 /* initialize connector */
 struct drm_connector *omap_connector_init(struct drm_device *dev,
 		int connector_type, struct omap_dss_device *dssdev,
@@ -307,7 +307,7 @@ struct drm_connector *omap_connector_init(struct drm_device *dev,
 	connector->interlace_allowed = 1;
 	connector->doublescan_allowed = 0;
 
-	drm_connector_register(connector);
+	drm_sysfs_connector_add(connector);
 
 	return connector;
 

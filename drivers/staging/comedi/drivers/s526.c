@@ -40,10 +40,13 @@ comedi_config /dev/comedi0 s526 0x2C0,0x3
 #include "../comedidev.h"
 #include <asm/byteorder.h>
 
+#define S526_SIZE 64
+
 #define S526_START_AI_CONV	0
 #define S526_AI_READ		0
 
 /* Ports */
+#define S526_IOSIZE 0x40
 #define S526_NUM_PORTS 27
 
 /* registers */
@@ -111,6 +114,7 @@ union cmReg {
 };
 
 struct s526_private {
+	unsigned int ao_readback[2];
 	unsigned int gpct_config[4];
 	unsigned short ai_config;
 };
@@ -341,6 +345,7 @@ static int s526_gpct_insn_config(struct comedi_device *dev,
 
 	default:
 		return -EINVAL;
+		break;
 	}
 
 	return insn->n;
@@ -415,28 +420,15 @@ static int s526_ai_insn_config(struct comedi_device *dev,
 	return result;
 }
 
-static int s526_ai_eoc(struct comedi_device *dev,
-		       struct comedi_subdevice *s,
-		       struct comedi_insn *insn,
-		       unsigned long context)
-{
-	unsigned int status;
-
-	status = inw(dev->iobase + REG_ISR);
-	if (status & ISR_ADC_DONE)
-		return 0;
-	return -EBUSY;
-}
-
 static int s526_ai_rinsn(struct comedi_device *dev, struct comedi_subdevice *s,
 			 struct comedi_insn *insn, unsigned int *data)
 {
 	struct s526_private *devpriv = dev->private;
 	unsigned int chan = CR_CHAN(insn->chanspec);
-	int n;
+	int n, i;
 	unsigned short value;
 	unsigned int d;
-	int ret;
+	unsigned int status;
 
 	/* Set configured delay, enable channel for this channel only,
 	 * select "ADC read" channel, set "ADC start" bit. */
@@ -448,12 +440,17 @@ static int s526_ai_rinsn(struct comedi_device *dev, struct comedi_subdevice *s,
 		/* trigger conversion */
 		outw(value, dev->iobase + REG_ADC);
 
+#define TIMEOUT 100
 		/* wait for conversion to end */
-		ret = comedi_timeout(dev, s, insn, s526_ai_eoc, 0);
-		if (ret)
-			return ret;
-
-		outw(ISR_ADC_DONE, dev->iobase + REG_ISR);
+		for (i = 0; i < TIMEOUT; i++) {
+			status = inw(dev->iobase + REG_ISR);
+			if (status & ISR_ADC_DONE) {
+				outw(ISR_ADC_DONE, dev->iobase + REG_ISR);
+				break;
+			}
+		}
+		if (i == TIMEOUT)
+			return -ETIMEDOUT;
 
 		/* read data */
 		d = inw(dev->iobase + REG_ADD);
@@ -466,26 +463,38 @@ static int s526_ai_rinsn(struct comedi_device *dev, struct comedi_subdevice *s,
 	return n;
 }
 
-static int s526_ao_insn_write(struct comedi_device *dev,
-			      struct comedi_subdevice *s,
-			      struct comedi_insn *insn,
-			      unsigned int *data)
+static int s526_ao_winsn(struct comedi_device *dev, struct comedi_subdevice *s,
+			 struct comedi_insn *insn, unsigned int *data)
 {
+	struct s526_private *devpriv = dev->private;
 	unsigned int chan = CR_CHAN(insn->chanspec);
-	unsigned int val = s->readback[chan];
+	unsigned short val;
 	int i;
 
-	outw(chan << 1, dev->iobase + REG_DAC);
+	val = chan << 1;
+	outw(val, dev->iobase + REG_DAC);
 
 	for (i = 0; i < insn->n; i++) {
-		val = data[i];
-		outw(val, dev->iobase + REG_ADD);
+		outw(data[i], dev->iobase + REG_ADD);
+		devpriv->ao_readback[chan] = data[i];
 		/* starts the D/A conversion */
-		outw((chan << 1) | 1, dev->iobase + REG_DAC);
+		outw(val + 1, dev->iobase + REG_DAC);
 	}
-	s->readback[chan] = val;
 
-	return insn->n;
+	return i;
+}
+
+static int s526_ao_rinsn(struct comedi_device *dev, struct comedi_subdevice *s,
+			 struct comedi_insn *insn, unsigned int *data)
+{
+	struct s526_private *devpriv = dev->private;
+	unsigned int chan = CR_CHAN(insn->chanspec);
+	int i;
+
+	for (i = 0; i < insn->n; i++)
+		data[i] = devpriv->ao_readback[chan];
+
+	return i;
 }
 
 static int s526_dio_insn_bits(struct comedi_device *dev,
@@ -540,7 +549,7 @@ static int s526_attach(struct comedi_device *dev, struct comedi_devconfig *it)
 	struct comedi_subdevice *s;
 	int ret;
 
-	ret = comedi_request_region(dev, it->options[0], 0x40);
+	ret = comedi_request_region(dev, it->options[0], S526_IOSIZE);
 	if (ret)
 		return ret;
 
@@ -582,11 +591,8 @@ static int s526_attach(struct comedi_device *dev, struct comedi_devconfig *it)
 	s->n_chan = 4;
 	s->maxdata = 0xffff;
 	s->range_table = &range_bipolar10;
-	s->insn_write = s526_ao_insn_write;
-
-	ret = comedi_alloc_subdev_readback(s);
-	if (ret)
-		return ret;
+	s->insn_write = s526_ao_winsn;
+	s->insn_read = s526_ao_rinsn;
 
 	s = &dev->subdevices[3];
 	/* digital i/o subdevice */
@@ -598,7 +604,7 @@ static int s526_attach(struct comedi_device *dev, struct comedi_devconfig *it)
 	s->insn_bits = s526_dio_insn_bits;
 	s->insn_config = s526_dio_insn_config;
 
-	return 0;
+	return 1;
 }
 
 static struct comedi_driver s526_driver = {

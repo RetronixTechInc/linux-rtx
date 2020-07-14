@@ -101,7 +101,6 @@ struct ti_qspi {
 #define QSPI_FLEN(n)			((n - 1) << 0)
 
 /* STATUS REGISTER */
-#define BUSY				0x01
 #define WC				0x02
 
 /* INTERRUPT REGISTER */
@@ -200,24 +199,9 @@ static void ti_qspi_restore_ctx(struct ti_qspi *qspi)
 	ti_qspi_write(qspi, ctx_reg->clkctrl, QSPI_SPI_CLOCK_CNTRL_REG);
 }
 
-static inline u32 qspi_is_busy(struct ti_qspi *qspi)
-{
-	u32 stat;
-	unsigned long timeout = jiffies + QSPI_COMPLETION_TIMEOUT;
-
-	stat = ti_qspi_read(qspi, QSPI_SPI_STATUS_REG);
-	while ((stat & BUSY) && time_after(timeout, jiffies)) {
-		cpu_relax();
-		stat = ti_qspi_read(qspi, QSPI_SPI_STATUS_REG);
-	}
-
-	WARN(stat & BUSY, "qspi busy\n");
-	return stat & BUSY;
-}
-
 static int qspi_write_msg(struct ti_qspi *qspi, struct spi_transfer *t)
 {
-	int wlen, count;
+	int wlen, count, ret;
 	unsigned int cmd;
 	const u8 *txbuf;
 
@@ -227,9 +211,6 @@ static int qspi_write_msg(struct ti_qspi *qspi, struct spi_transfer *t)
 	wlen = t->bits_per_word >> 3;	/* in bytes */
 
 	while (count) {
-		if (qspi_is_busy(qspi))
-			return -EBUSY;
-
 		switch (wlen) {
 		case 1:
 			dev_dbg(qspi->dev, "tx cmd %08x dc %08x data %02x\n",
@@ -249,8 +230,9 @@ static int qspi_write_msg(struct ti_qspi *qspi, struct spi_transfer *t)
 		}
 
 		ti_qspi_write(qspi, cmd, QSPI_SPI_CMD_REG);
-		if (!wait_for_completion_timeout(&qspi->transfer_complete,
-						 QSPI_COMPLETION_TIMEOUT)) {
+		ret = wait_for_completion_timeout(&qspi->transfer_complete,
+						  QSPI_COMPLETION_TIMEOUT);
+		if (ret == 0) {
 			dev_err(qspi->dev, "write timed out\n");
 			return -ETIMEDOUT;
 		}
@@ -263,7 +245,7 @@ static int qspi_write_msg(struct ti_qspi *qspi, struct spi_transfer *t)
 
 static int qspi_read_msg(struct ti_qspi *qspi, struct spi_transfer *t)
 {
-	int wlen, count;
+	int wlen, count, ret;
 	unsigned int cmd;
 	u8 *rxbuf;
 
@@ -285,12 +267,10 @@ static int qspi_read_msg(struct ti_qspi *qspi, struct spi_transfer *t)
 
 	while (count) {
 		dev_dbg(qspi->dev, "rx cmd %08x dc %08x\n", cmd, qspi->dc);
-		if (qspi_is_busy(qspi))
-			return -EBUSY;
-
 		ti_qspi_write(qspi, cmd, QSPI_SPI_CMD_REG);
-		if (!wait_for_completion_timeout(&qspi->transfer_complete,
-						 QSPI_COMPLETION_TIMEOUT)) {
+		ret = wait_for_completion_timeout(&qspi->transfer_complete,
+				QSPI_COMPLETION_TIMEOUT);
+		if (ret == 0) {
 			dev_err(qspi->dev, "read timed out\n");
 			return -ETIMEDOUT;
 		}
@@ -449,13 +429,13 @@ static int ti_qspi_probe(struct platform_device *pdev)
 
 	master->mode_bits = SPI_CPOL | SPI_CPHA | SPI_RX_DUAL | SPI_RX_QUAD;
 
+	master->bus_num = -1;
 	master->flags = SPI_MASTER_HALF_DUPLEX;
 	master->setup = ti_qspi_setup;
 	master->auto_runtime_pm = true;
 	master->transfer_one_message = ti_qspi_start_transfer_one;
 	master->dev.of_node = pdev->dev.of_node;
-	master->bits_per_word_mask = SPI_BPW_MASK(32) | SPI_BPW_MASK(16) |
-				     SPI_BPW_MASK(8);
+	master->bits_per_word_mask = BIT(32 - 1) | BIT(16 - 1) | BIT(8 - 1);
 
 	if (!of_property_read_u32(np, "num-cs", &num_cs))
 		master->num_chipselect = num_cs;
@@ -481,6 +461,7 @@ static int ti_qspi_probe(struct platform_device *pdev)
 		if (res_mmap == NULL) {
 			dev_err(&pdev->dev,
 				"memory mapped resource not required\n");
+			return -ENODEV;
 		}
 	}
 
@@ -587,6 +568,7 @@ static struct platform_driver ti_qspi_driver = {
 	.remove = ti_qspi_remove,
 	.driver = {
 		.name	= "ti-qspi",
+		.owner	= THIS_MODULE,
 		.pm =   &ti_qspi_pm_ops,
 		.of_match_table = ti_qspi_match,
 	}

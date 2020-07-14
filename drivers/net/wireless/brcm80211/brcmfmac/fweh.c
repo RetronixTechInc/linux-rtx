@@ -18,8 +18,8 @@
 #include "brcmu_wifi.h"
 #include "brcmu_utils.h"
 
-#include "core.h"
-#include "debug.h"
+#include "dhd.h"
+#include "dhd_dbg.h"
 #include "tracepoint.h"
 #include "fwsignal.h"
 #include "fweh.h"
@@ -221,8 +221,10 @@ static void brcmf_fweh_handle_if_event(struct brcmf_pub *drvr,
 
 	err = brcmf_fweh_call_event_handler(ifp, emsg->event_code, emsg, data);
 
-	if (ifp && ifevent->action == BRCMF_E_IF_DEL)
-		brcmf_remove_interface(drvr, ifevent->bssidx);
+	if (ifp && ifevent->action == BRCMF_E_IF_DEL) {
+		brcmf_fws_del_interface(ifp);
+		brcmf_del_if(drvr, ifevent->bssidx);
+	}
 }
 
 /**
@@ -297,11 +299,7 @@ static void brcmf_fweh_event_worker(struct work_struct *work)
 			goto event_free;
 		}
 
-		if ((event->code == BRCMF_E_TDLS_PEER_EVENT) &&
-		    (emsg.bsscfgidx == 1))
-			ifp = drvr->iflist[0];
-		else
-			ifp = drvr->iflist[emsg.bsscfgidx];
+		ifp = drvr->iflist[emsg.bsscfgidx];
 		err = brcmf_fweh_call_event_handler(ifp, event->code, &emsg,
 						    event->data);
 		if (err) {

@@ -1,5 +1,5 @@
 /*
- * Linux network driver for QLogic BR-series Converged Network Adapter.
+ * Linux network driver for Brocade Converged Network Adapter.
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License (GPL) Version 2 as
@@ -11,10 +11,9 @@
  * General Public License for more details.
  */
 /*
- * Copyright (c) 2005-2014 Brocade Communications Systems, Inc.
- * Copyright (c) 2014-2015 QLogic Corporation
+ * Copyright (c) 2005-2010 Brocade Communications Systems, Inc.
  * All rights reserved
- * www.qlogic.com
+ * www.brocade.com
  */
 
 #include "bfa_ioc.h"
@@ -699,7 +698,7 @@ bfa_ioc_ct2_sclk_init(void __iomem *rb)
 
 	/*
 	 * Ignore mode and program for the max clock (which is FC16)
-	 * Firmware/NFC will do the PLL init appropriately
+	 * Firmware/NFC will do the PLL init appropiately
 	 */
 	r32 = readl((rb + CT2_APP_PLL_SCLK_CTL_REG));
 	r32 &= ~(__APP_PLL_SCLK_REFCLK_SEL | __APP_PLL_SCLK_CLK_DIV2);

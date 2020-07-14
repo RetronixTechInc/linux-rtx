@@ -61,6 +61,7 @@
 
 struct rt3883_pci_controller {
 	void __iomem *base;
+	spinlock_t lock;
 
 	struct device_node *intc_of_node;
 	struct irq_domain *irq_domain;
@@ -110,8 +111,10 @@ static u32 rt3883_pci_read_cfg32(struct rt3883_pci_controller *rpc,
 
 	address = rt3883_pci_get_cfgaddr(bus, slot, func, reg);
 
+	spin_lock_irqsave(&rpc->lock, flags);
 	rt3883_pci_w32(rpc, address, RT3883_PCI_REG_CFGADDR);
 	ret = rt3883_pci_r32(rpc, RT3883_PCI_REG_CFGDATA);
+	spin_unlock_irqrestore(&rpc->lock, flags);
 
 	return ret;
 }
@@ -125,8 +128,10 @@ static void rt3883_pci_write_cfg32(struct rt3883_pci_controller *rpc,
 
 	address = rt3883_pci_get_cfgaddr(bus, slot, func, reg);
 
+	spin_lock_irqsave(&rpc->lock, flags);
 	rt3883_pci_w32(rpc, address, RT3883_PCI_REG_CFGADDR);
 	rt3883_pci_w32(rpc, val, RT3883_PCI_REG_CFGDATA);
+	spin_unlock_irqrestore(&rpc->lock, flags);
 }
 
 static void rt3883_pci_irq_handler(unsigned int irq, struct irq_desc *desc)
@@ -247,8 +252,10 @@ static int rt3883_pci_config_read(struct pci_bus *bus, unsigned int devfn,
 	address = rt3883_pci_get_cfgaddr(bus->number, PCI_SLOT(devfn),
 					 PCI_FUNC(devfn), where);
 
+	spin_lock_irqsave(&rpc->lock, flags);
 	rt3883_pci_w32(rpc, address, RT3883_PCI_REG_CFGADDR);
 	data = rt3883_pci_r32(rpc, RT3883_PCI_REG_CFGDATA);
+	spin_unlock_irqrestore(&rpc->lock, flags);
 
 	switch (size) {
 	case 1:
@@ -281,6 +288,7 @@ static int rt3883_pci_config_write(struct pci_bus *bus, unsigned int devfn,
 	address = rt3883_pci_get_cfgaddr(bus->number, PCI_SLOT(devfn),
 					 PCI_FUNC(devfn), where);
 
+	spin_lock_irqsave(&rpc->lock, flags);
 	rt3883_pci_w32(rpc, address, RT3883_PCI_REG_CFGADDR);
 	data = rt3883_pci_r32(rpc, RT3883_PCI_REG_CFGDATA);
 
@@ -299,6 +307,7 @@ static int rt3883_pci_config_write(struct pci_bus *bus, unsigned int devfn,
 	}
 
 	rt3883_pci_w32(rpc, data, RT3883_PCI_REG_CFGDATA);
+	spin_unlock_irqrestore(&rpc->lock, flags);
 
 	return PCIBIOS_SUCCESSFUL;
 }
@@ -589,6 +598,7 @@ static struct platform_driver rt3883_pci_driver = {
 	.probe = rt3883_pci_probe,
 	.driver = {
 		.name = "rt3883-pci",
+		.owner = THIS_MODULE,
 		.of_match_table = of_match_ptr(rt3883_pci_ids),
 	},
 };

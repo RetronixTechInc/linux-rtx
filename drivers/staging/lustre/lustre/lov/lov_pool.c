@@ -44,9 +44,9 @@
 
 #define DEBUG_SUBSYSTEM S_LOV
 
-#include "../../include/linux/libcfs/libcfs.h"
+#include <linux/libcfs/libcfs.h>
 
-#include "../include/obd.h"
+#include <obd.h>
 #include "lov_internal.h"
 
 #define pool_tgt(_p, _i) \
@@ -71,7 +71,7 @@ void lov_pool_putref(struct pool_desc *pool)
 	}
 }
 
-static void lov_pool_putref_locked(struct pool_desc *pool)
+void lov_pool_putref_locked(struct pool_desc *pool)
 {
 	CDEBUG(D_INFO, "pool %p\n", pool);
 	LASSERT(atomic_read(&pool->pool_refcount) > 1);
@@ -107,7 +107,7 @@ static void *pool_key(struct hlist_node *hnode)
 	struct pool_desc *pool;
 
 	pool = hlist_entry(hnode, struct pool_desc, pool_hash);
-	return pool->pool_name;
+	return (pool->pool_name);
 }
 
 static int pool_hashkey_keycmp(const void *key, struct hlist_node *compared_hnode)
@@ -152,7 +152,7 @@ cfs_hash_ops_t pool_hash_operations = {
 
 };
 
-#if defined (CONFIG_PROC_FS)
+#ifdef LPROCFS
 /* ifdef needed for liblustre support */
 /*
  * pool /proc seq_file methods
@@ -294,7 +294,7 @@ static struct file_operations pool_proc_operations = {
 	.llseek	 = seq_lseek,
 	.release	= seq_release,
 };
-#endif /* CONFIG_PROC_FS */
+#endif /* LPROCFS */
 
 void lov_dump_pool(int level, struct pool_desc *pool)
 {
@@ -367,14 +367,12 @@ int lov_ost_pool_add(struct ost_pool *op, __u32 idx, unsigned int min_count)
 
 	rc = lov_ost_pool_extend(op, min_count);
 	if (rc)
-		goto out;
+		GOTO(out, rc);
 
 	/* search ost in pool array */
 	for (i = 0; i < op->op_count; i++) {
-		if (op->op_array[i] == idx) {
-			rc = -EEXIST;
-			goto out;
-		}
+		if (op->op_array[i] == idx)
+			GOTO(out, rc = -EEXIST);
 	}
 	/* ost not found we add it */
 	op->op_array[op->op_count] = idx;
@@ -445,16 +443,16 @@ int lov_pool_new(struct obd_device *obd, char *poolname)
 	atomic_set(&new_pool->pool_refcount, 1);
 	rc = lov_ost_pool_init(&new_pool->pool_obds, 0);
 	if (rc)
-		goto out_err;
+	       GOTO(out_err, rc);
 
 	memset(&(new_pool->pool_rr), 0, sizeof(struct lov_qos_rr));
 	rc = lov_ost_pool_init(&new_pool->pool_rr.lqr_pool, 0);
 	if (rc)
-		goto out_free_pool_obds;
+		GOTO(out_free_pool_obds, rc);
 
 	INIT_HLIST_NODE(&new_pool->pool_hash);
 
-#if defined (CONFIG_PROC_FS)
+#ifdef LPROCFS
 	/* we need this assert seq_file is not implemented for liblustre */
 	/* get ref for /proc file */
 	lov_pool_getref(new_pool);
@@ -477,10 +475,8 @@ int lov_pool_new(struct obd_device *obd, char *poolname)
 	/* add to find only when it fully ready  */
 	rc = cfs_hash_add_unique(lov->lov_pools_hash_body, poolname,
 				 &new_pool->pool_hash);
-	if (rc) {
-		rc = -EEXIST;
-		goto out_err;
-	}
+	if (rc)
+		GOTO(out_err, rc = -EEXIST);
 
 	CDEBUG(D_CONFIG, LOV_POOLNAMEF" is pool #%d\n",
 	       poolname, lov->lov_pool_count);
@@ -559,14 +555,12 @@ int lov_pool_add(struct obd_device *obd, char *poolname, char *ostname)
 			break;
 	}
 	/* test if ost found in lov */
-	if (lov_idx == lov->desc.ld_tgt_count) {
-		rc = -EINVAL;
-		goto out;
-	}
+	if (lov_idx == lov->desc.ld_tgt_count)
+		GOTO(out, rc = -EINVAL);
 
 	rc = lov_ost_pool_add(&pool->pool_obds, lov_idx, lov->lov_tgt_size);
 	if (rc)
-		goto out;
+		GOTO(out, rc);
 
 	pool->pool_rr.lqr_dirty = 1;
 
@@ -607,10 +601,8 @@ int lov_pool_remove(struct obd_device *obd, char *poolname, char *ostname)
 	}
 
 	/* test if ost found in lov */
-	if (lov_idx == lov->desc.ld_tgt_count) {
-		rc = -EINVAL;
-		goto out;
-	}
+	if (lov_idx == lov->desc.ld_tgt_count)
+		GOTO(out, rc = -EINVAL);
 
 	lov_ost_pool_remove(&pool->pool_obds, lov_idx);
 
@@ -638,10 +630,8 @@ int lov_check_index_in_pool(__u32 idx, struct pool_desc *pool)
 	down_read(&pool_tgt_rw_sem(pool));
 
 	for (i = 0; i < pool_tgt_count(pool); i++) {
-		if (pool_tgt_array(pool)[i] == idx) {
-			rc = 0;
-			goto out;
-		}
+		if (pool_tgt_array(pool)[i] == idx)
+			GOTO(out, rc = 0);
 	}
 	rc = -ENOENT;
 out:

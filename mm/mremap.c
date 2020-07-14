@@ -21,8 +21,8 @@
 #include <linux/syscalls.h>
 #include <linux/mmu_notifier.h>
 #include <linux/sched/sysctl.h>
-#include <linux/uaccess.h>
 
+#include <asm/uaccess.h>
 #include <asm/cacheflush.h>
 #include <asm/tlbflush.h>
 
@@ -81,6 +81,8 @@ static pte_t move_soft_dirty_pte(pte_t pte)
 		pte = pte_mksoft_dirty(pte);
 	else if (is_swap_pte(pte))
 		pte = pte_swp_mksoft_dirty(pte);
+	else if (pte_file(pte))
+		pte = pte_file_mksoft_dirty(pte);
 #endif
 	return pte;
 }
@@ -97,7 +99,7 @@ static void move_ptes(struct vm_area_struct *vma, pmd_t *old_pmd,
 	spinlock_t *old_ptl, *new_ptl;
 
 	/*
-	 * When need_rmap_locks is true, we take the i_mmap_rwsem and anon_vma
+	 * When need_rmap_locks is true, we take the i_mmap_mutex and anon_vma
 	 * locks to ensure that rmap will always observe either the old or the
 	 * new ptes. This is the easiest way to avoid races with
 	 * truncate_pagecache(), page migration, etc...
@@ -117,7 +119,7 @@ static void move_ptes(struct vm_area_struct *vma, pmd_t *old_pmd,
 	if (need_rmap_locks) {
 		if (vma->vm_file) {
 			mapping = vma->vm_file->f_mapping;
-			i_mmap_lock_write(mapping);
+			mutex_lock(&mapping->i_mmap_mutex);
 		}
 		if (vma->anon_vma) {
 			anon_vma = vma->anon_vma;
@@ -154,7 +156,7 @@ static void move_ptes(struct vm_area_struct *vma, pmd_t *old_pmd,
 	if (anon_vma)
 		anon_vma_unlock_write(anon_vma);
 	if (mapping)
-		i_mmap_unlock_write(mapping);
+		mutex_unlock(&mapping->i_mmap_mutex);
 }
 
 #define LATENCY_LIMIT	(64 * PAGE_SIZE)
@@ -193,8 +195,7 @@ unsigned long move_page_tables(struct vm_area_struct *vma,
 		if (pmd_trans_huge(*old_pmd)) {
 			int err = 0;
 			if (extent == HPAGE_PMD_SIZE) {
-				VM_BUG_ON_VMA(vma->vm_file || !vma->anon_vma,
-					      vma);
+				VM_BUG_ON(vma->vm_file || !vma->anon_vma);
 				/* See comment in move_ptes() */
 				if (need_rmap_locks)
 					anon_vma_lock_write(vma->anon_vma);
@@ -286,13 +287,6 @@ static unsigned long move_vma(struct vm_area_struct *vma,
 		old_len = new_len;
 		old_addr = new_addr;
 		new_addr = -ENOMEM;
-	} else if (vma->vm_file && vma->vm_file->f_op->mremap) {
-		err = vma->vm_file->f_op->mremap(vma->vm_file, new_vma);
-		if (err < 0) {
-			move_page_tables(new_vma, new_addr, vma, old_addr,
-					 moved_len, true);
-			return err;
-		}
 	}
 
 	/* Conceal VM_ACCOUNT so old reservation is not undone */
@@ -345,25 +339,25 @@ static struct vm_area_struct *vma_to_resize(unsigned long addr,
 	struct vm_area_struct *vma = find_vma(mm, addr);
 
 	if (!vma || vma->vm_start > addr)
-		return ERR_PTR(-EFAULT);
+		goto Efault;
 
 	if (is_vm_hugetlb_page(vma))
-		return ERR_PTR(-EINVAL);
+		goto Einval;
 
 	/* We can't remap across vm area boundaries */
 	if (old_len > vma->vm_end - addr)
-		return ERR_PTR(-EFAULT);
+		goto Efault;
 
 	/* Need to be careful about a growing mapping */
 	if (new_len > old_len) {
 		unsigned long pgoff;
 
 		if (vma->vm_flags & (VM_DONTEXPAND | VM_PFNMAP))
-			return ERR_PTR(-EFAULT);
+			goto Efault;
 		pgoff = (addr - vma->vm_start) >> PAGE_SHIFT;
 		pgoff += vma->vm_pgoff;
 		if (pgoff + (new_len >> PAGE_SHIFT) < pgoff)
-			return ERR_PTR(-EINVAL);
+			goto Einval;
 	}
 
 	if (vma->vm_flags & VM_LOCKED) {
@@ -372,20 +366,29 @@ static struct vm_area_struct *vma_to_resize(unsigned long addr,
 		lock_limit = rlimit(RLIMIT_MEMLOCK);
 		locked += new_len - old_len;
 		if (locked > lock_limit && !capable(CAP_IPC_LOCK))
-			return ERR_PTR(-EAGAIN);
+			goto Eagain;
 	}
 
 	if (!may_expand_vm(mm, (new_len - old_len) >> PAGE_SHIFT))
-		return ERR_PTR(-ENOMEM);
+		goto Enomem;
 
 	if (vma->vm_flags & VM_ACCOUNT) {
 		unsigned long charged = (new_len - old_len) >> PAGE_SHIFT;
 		if (security_vm_enough_memory_mm(mm, charged))
-			return ERR_PTR(-ENOMEM);
+			goto Efault;
 		*p = charged;
 	}
 
 	return vma;
+
+Efault:	/* very odd choice for most of the cases, but... */
+	return ERR_PTR(-EFAULT);
+Einval:
+	return ERR_PTR(-EINVAL);
+Enomem:
+	return ERR_PTR(-ENOMEM);
+Eagain:
+	return ERR_PTR(-EAGAIN);
 }
 
 static unsigned long mremap_to(unsigned long addr, unsigned long old_len,

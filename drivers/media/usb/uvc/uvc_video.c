@@ -1021,7 +1021,6 @@ static int uvc_video_decode_start(struct uvc_streaming *stream,
 
 		uvc_video_get_ts(&ts);
 
-		buf->buf.v4l2_buf.field = V4L2_FIELD_NONE;
 		buf->buf.v4l2_buf.sequence = stream->sequence;
 		buf->buf.v4l2_buf.timestamp.tv_sec = ts.tv_sec;
 		buf->buf.v4l2_buf.timestamp.tv_usec =
@@ -1139,17 +1138,6 @@ static int uvc_video_encode_data(struct uvc_streaming *stream,
  */
 
 /*
- * Set error flag for incomplete buffer.
- */
-static void uvc_video_validate_buffer(const struct uvc_streaming *stream,
-				      struct uvc_buffer *buf)
-{
-	if (stream->ctrl.dwMaxVideoFrameSize != buf->bytesused &&
-	    !(stream->cur_format->flags & UVC_FMT_FLAG_COMPRESSED))
-		buf->error = 1;
-}
-
-/*
  * Completion handler for video URBs.
  */
 static void uvc_video_decode_isoc(struct urb *urb, struct uvc_streaming *stream,
@@ -1173,11 +1161,9 @@ static void uvc_video_decode_isoc(struct urb *urb, struct uvc_streaming *stream,
 		do {
 			ret = uvc_video_decode_start(stream, buf, mem,
 				urb->iso_frame_desc[i].actual_length);
-			if (ret == -EAGAIN) {
-				uvc_video_validate_buffer(stream, buf);
+			if (ret == -EAGAIN)
 				buf = uvc_queue_next_buffer(&stream->queue,
 							    buf);
-			}
 		} while (ret == -EAGAIN);
 
 		if (ret < 0)
@@ -1192,7 +1178,11 @@ static void uvc_video_decode_isoc(struct urb *urb, struct uvc_streaming *stream,
 			urb->iso_frame_desc[i].actual_length);
 
 		if (buf->state == UVC_BUF_STATE_READY) {
-			uvc_video_validate_buffer(stream, buf);
+			if (buf->length != buf->bytesused &&
+			    !(stream->cur_format->flags &
+			      UVC_FMT_FLAG_COMPRESSED))
+				buf->error = 1;
+
 			buf = uvc_queue_next_buffer(&stream->queue, buf);
 		}
 	}
@@ -1464,13 +1454,10 @@ static unsigned int uvc_endpoint_max_bpi(struct usb_device *dev,
 
 	switch (dev->speed) {
 	case USB_SPEED_SUPER:
-		return le16_to_cpu(ep->ss_ep_comp.wBytesPerInterval);
+		return ep->ss_ep_comp.wBytesPerInterval;
 	case USB_SPEED_HIGH:
 		psize = usb_endpoint_maxp(&ep->desc);
 		return (psize & 0x07ff) * (1 + ((psize >> 11) & 3));
-	case USB_SPEED_WIRELESS:
-		psize = usb_endpoint_maxp(&ep->desc);
-		return psize;
 	default:
 		psize = usb_endpoint_maxp(&ep->desc);
 		return psize & 0x07ff;
@@ -1679,12 +1666,6 @@ static int uvc_init_video(struct uvc_streaming *stream, gfp_t gfp_flags)
 		}
 	}
 
-	/* The Logitech C920 temporarily forgets that it should not be adjusting
-	 * Exposure Absolute during init so restore controls to stored values.
-	 */
-	if (stream->dev->quirks & UVC_QUIRK_RESTORE_CTRLS_ON_INIT)
-		uvc_ctrl_restore_values(stream->dev);
-
 	return 0;
 }
 
@@ -1734,14 +1715,20 @@ int uvc_video_resume(struct uvc_streaming *stream, int reset)
 
 	uvc_video_clock_reset(stream);
 
+	ret = uvc_commit_video(stream, &stream->ctrl);
+	if (ret < 0) {
+		uvc_queue_enable(&stream->queue, 0);
+		return ret;
+	}
+
 	if (!uvc_queue_streaming(&stream->queue))
 		return 0;
 
-	ret = uvc_commit_video(stream, &stream->ctrl);
+	ret = uvc_init_video(stream, GFP_NOIO);
 	if (ret < 0)
-		return ret;
+		uvc_queue_enable(&stream->queue, 0);
 
-	return uvc_init_video(stream, GFP_NOIO);
+	return ret;
 }
 
 /* ------------------------------------------------------------------------
@@ -1772,6 +1759,11 @@ int uvc_video_init(struct uvc_streaming *stream)
 	}
 
 	atomic_set(&stream->active, 0);
+
+	/* Initialize the video buffers queue. */
+	ret = uvc_queue_init(&stream->queue, stream->type, !uvc_no_drop_param);
+	if (ret)
+		return ret;
 
 	/* Alternate setting 0 should be the default, yet the XBox Live Vision
 	 * Cam (and possibly other devices) crash or otherwise misbehave if
@@ -1879,6 +1871,7 @@ int uvc_video_enable(struct uvc_streaming *stream, int enable)
 			usb_clear_halt(stream->dev->udev, pipe);
 		}
 
+		uvc_queue_enable(&stream->queue, 0);
 		uvc_video_clock_cleanup(stream);
 		return 0;
 	}
@@ -1886,6 +1879,10 @@ int uvc_video_enable(struct uvc_streaming *stream, int enable)
 	ret = uvc_video_clock_init(stream);
 	if (ret < 0)
 		return ret;
+
+	ret = uvc_queue_enable(&stream->queue, 1);
+	if (ret < 0)
+		goto error_queue;
 
 	/* Commit the streaming parameters. */
 	ret = uvc_commit_video(stream, &stream->ctrl);
@@ -1901,6 +1898,8 @@ int uvc_video_enable(struct uvc_streaming *stream, int enable)
 error_video:
 	usb_set_interface(stream->dev->udev, stream->intfnum, 0);
 error_commit:
+	uvc_queue_enable(&stream->queue, 0);
+error_queue:
 	uvc_video_clock_cleanup(stream);
 
 	return ret;

@@ -660,14 +660,13 @@ static int vidioc_querycap(struct file *file, void  *priv,
 		sizeof(cap->card));
 	sprintf(cap->bus_info, "PCI:%s", pci_name(dev->pci));
 
-	cap->device_caps =
+	cap->capabilities =
 		V4L2_CAP_VBI_CAPTURE |
-		V4L2_CAP_READWRITE |
-		V4L2_CAP_TUNER;
+		V4L2_CAP_READWRITE     |
+		0;
 
-	cap->capabilities = cap->device_caps |
-		V4L2_CAP_VIDEO_CAPTURE |
-		V4L2_CAP_DEVICE_CAPS;
+	cap->capabilities |= V4L2_CAP_TUNER;
+	cap->version = 0;
 
 	return 0;
 }

@@ -34,14 +34,17 @@
 #define cpu_has_dsp		0
 #define cpu_has_dsp2		0
 #define cpu_has_ejtag		0
+#define cpu_has_fpu		1
 #define cpu_has_ic_fills_f_dc	0
 #define cpu_has_inclusive_pcaches	1
 #define cpu_has_llsc		1
 #define cpu_has_mcheck		0
 #define cpu_has_mdmx		0
 #define cpu_has_mips16		0
+#define cpu_has_mips32r1	0
 #define cpu_has_mips32r2	0
 #define cpu_has_mips3d		0
+#define cpu_has_mips64r1	0
 #define cpu_has_mips64r2	0
 #define cpu_has_mipsmt		0
 #define cpu_has_prefetch	0
@@ -55,7 +58,5 @@
 #define cpu_has_vtag_icache	0
 #define cpu_has_watch		1
 #define cpu_has_local_ebase	0
-
-#define cpu_has_wsbh		IS_ENABLED(CONFIG_CPU_LOONGSON3)
 
 #endif /* __ASM_MACH_LOONGSON_CPU_FEATURE_OVERRIDES_H */

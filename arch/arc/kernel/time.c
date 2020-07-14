@@ -144,17 +144,33 @@ static struct clocksource arc_counter = {
 /********** Clock Event Device *********/
 
 /*
- * Arm the timer to interrupt after @cycles
+ * Arm the timer to interrupt after @limit cycles
  * The distinction for oneshot/periodic is done in arc_event_timer_ack() below
  */
-static void arc_timer_event_setup(unsigned int cycles)
+static void arc_timer_event_setup(unsigned int limit)
 {
-	write_aux_reg(ARC_REG_TIMER0_LIMIT, cycles);
+	write_aux_reg(ARC_REG_TIMER0_LIMIT, limit);
 	write_aux_reg(ARC_REG_TIMER0_CNT, 0);	/* start from 0 */
 
 	write_aux_reg(ARC_REG_TIMER0_CTRL, TIMER_CTRL_IE | TIMER_CTRL_NH);
 }
 
+/*
+ * Acknowledge the interrupt (oneshot) and optionally re-arm it (periodic)
+ * -Any write to CTRL Reg will ack the intr (NH bit: Count when not halted)
+ * -Rearming is done by setting the IE bit
+ *
+ * Small optimisation: Normal code would have been
+ *   if (irq_reenable)
+ *     CTRL_REG = (IE | NH);
+ *   else
+ *     CTRL_REG = NH;
+ * However since IE is BIT0 we can fold the branch
+ */
+static void arc_timer_event_ack(unsigned int irq_reenable)
+{
+	write_aux_reg(ARC_REG_TIMER0_CTRL, irq_reenable | TIMER_CTRL_NH);
+}
 
 static int arc_clkevent_set_next_event(unsigned long delta,
 				       struct clock_event_device *dev)
@@ -168,10 +184,6 @@ static void arc_clkevent_set_mode(enum clock_event_mode mode,
 {
 	switch (mode) {
 	case CLOCK_EVT_MODE_PERIODIC:
-                /*
-                 * At X Hz, 1 sec = 1000ms -> X cycles;
-                 *                    10ms -> X / 100 cycles
-                 */
 		arc_timer_event_setup(arc_get_core_freq() / HZ);
 		break;
 	case CLOCK_EVT_MODE_ONESHOT:
@@ -195,40 +207,40 @@ static DEFINE_PER_CPU(struct clock_event_device, arc_clockevent_device) = {
 
 static irqreturn_t timer_irq_handler(int irq, void *dev_id)
 {
-	/*
-	 * Note that generic IRQ core could have passed @evt for @dev_id if
-	 * irq_set_chip_and_handler() asked for handle_percpu_devid_irq()
-	 */
-	struct clock_event_device *evt = this_cpu_ptr(&arc_clockevent_device);
-	int irq_reenable = evt->mode == CLOCK_EVT_MODE_PERIODIC;
+	struct clock_event_device *clk = this_cpu_ptr(&arc_clockevent_device);
 
-	/*
-	 * Any write to CTRL reg ACks the interrupt, we rewrite the
-	 * Count when [N]ot [H]alted bit.
-	 * And re-arm it if perioid by [I]nterrupt [E]nable bit
-	 */
-	write_aux_reg(ARC_REG_TIMER0_CTRL, irq_reenable | TIMER_CTRL_NH);
-
-	evt->event_handler(evt);
-
+	arc_timer_event_ack(clk->mode == CLOCK_EVT_MODE_PERIODIC);
+	clk->event_handler(clk);
 	return IRQ_HANDLED;
 }
 
+static struct irqaction arc_timer_irq = {
+	.name    = "Timer0 (clock-evt-dev)",
+	.flags   = IRQF_TIMER | IRQF_PERCPU,
+	.handler = timer_irq_handler,
+};
+
 /*
  * Setup the local event timer for @cpu
+ * N.B. weak so that some exotic ARC SoCs can completely override it
  */
-void arc_local_timer_setup()
+void __weak arc_local_timer_setup(unsigned int cpu)
 {
-	struct clock_event_device *evt = this_cpu_ptr(&arc_clockevent_device);
-	int cpu = smp_processor_id();
+	struct clock_event_device *clk = &per_cpu(arc_clockevent_device, cpu);
 
-	evt->cpumask = cpumask_of(cpu);
-	clockevents_config_and_register(evt, arc_get_core_freq(),
+	clk->cpumask = cpumask_of(cpu);
+	clockevents_config_and_register(clk, arc_get_core_freq(),
 					0, ARC_TIMER_MAX);
 
-	/* setup the per-cpu timer IRQ handler - for all cpus */
-	arc_request_percpu_irq(TIMER0_IRQ, cpu, timer_irq_handler,
-			       "Timer0 (per-cpu-tick)", evt);
+	/*
+	 * setup the per-cpu timer IRQ handler - for all cpus
+	 * For non boot CPU explicitly unmask at intc
+	 * setup_irq() -> .. -> irq_startup() already does this on boot-cpu
+	 */
+	if (!cpu)
+		setup_irq(TIMER0_IRQ, &arc_timer_irq);
+	else
+		arch_unmask_irq(TIMER0_IRQ);
 }
 
 /*
@@ -254,7 +266,7 @@ void __init time_init(void)
 		clocksource_register_hz(&arc_counter, arc_get_core_freq());
 
 	/* sets up the periodic event timer */
-	arc_local_timer_setup();
+	arc_local_timer_setup(smp_processor_id());
 
 	if (machine_desc->init_time)
 		machine_desc->init_time();

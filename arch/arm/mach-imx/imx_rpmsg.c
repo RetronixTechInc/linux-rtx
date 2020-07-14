@@ -11,6 +11,7 @@
  * http://www.gnu.org/copyleft/gpl.html
  */
 
+#include <linux/delay.h>
 #include <linux/err.h>
 #include <linux/init.h>
 #include <linux/interrupt.h>
@@ -68,16 +69,15 @@ struct imx_rpmsg_vq_info {
 	struct imx_rpmsg_vproc *rpdev;
 };
 
-static u64 imx_rpmsg_get_features(struct virtio_device *vdev)
+static u32 imx_rpmsg_get_features(struct virtio_device *vdev)
 {
 	return 1 << VIRTIO_RPMSG_F_NS;
 }
 
-static int imx_rpmsg_finalize_features(struct virtio_device *vdev)
+static void imx_rpmsg_finalize_features(struct virtio_device *vdev)
 {
 	/* Give virtio_ring a chance to accept features */
 	vring_transport_features(vdev);
-	return 0;
 }
 
 /* kick the remote processor, and let it know which virtqueue to poke at */

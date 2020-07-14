@@ -50,7 +50,6 @@ static int dw_mci_k3_probe(struct platform_device *pdev)
 	return dw_mci_pltfm_register(pdev, drv_data);
 }
 
-#ifdef CONFIG_PM_SLEEP
 static int dw_mci_k3_suspend(struct device *dev)
 {
 	struct dw_mci *host = dev_get_drvdata(dev);
@@ -76,7 +75,6 @@ static int dw_mci_k3_resume(struct device *dev)
 
 	return dw_mci_resume(host);
 }
-#endif /* CONFIG_PM_SLEEP */
 
 static SIMPLE_DEV_PM_OPS(dw_mci_k3_pmops, dw_mci_k3_suspend, dw_mci_k3_resume);
 

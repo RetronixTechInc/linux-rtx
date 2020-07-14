@@ -20,18 +20,22 @@
 
 static unsigned int nft_do_chain_ipv4(const struct nf_hook_ops *ops,
 				      struct sk_buff *skb,
-				      const struct nf_hook_state *state)
+				      const struct net_device *in,
+				      const struct net_device *out,
+				      int (*okfn)(struct sk_buff *))
 {
 	struct nft_pktinfo pkt;
 
-	nft_set_pktinfo_ipv4(&pkt, ops, skb, state);
+	nft_set_pktinfo_ipv4(&pkt, ops, skb, in, out);
 
 	return nft_do_chain(&pkt, ops);
 }
 
 static unsigned int nft_ipv4_output(const struct nf_hook_ops *ops,
 				    struct sk_buff *skb,
-				    const struct nf_hook_state *state)
+				    const struct net_device *in,
+				    const struct net_device *out,
+				    int (*okfn)(struct sk_buff *))
 {
 	if (unlikely(skb->len < sizeof(struct iphdr) ||
 		     ip_hdr(skb)->ihl < sizeof(struct iphdr) / 4)) {
@@ -41,7 +45,7 @@ static unsigned int nft_ipv4_output(const struct nf_hook_ops *ops,
 		return NF_ACCEPT;
 	}
 
-	return nft_do_chain_ipv4(ops, skb, state);
+	return nft_do_chain_ipv4(ops, skb, in, out, okfn);
 }
 
 struct nft_af_info nft_af_ipv4 __read_mostly = {

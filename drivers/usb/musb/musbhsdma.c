@@ -195,7 +195,6 @@ static int dma_channel_abort(struct dma_channel *channel)
 {
 	struct musb_dma_channel *musb_channel = channel->private_data;
 	void __iomem *mbase = musb_channel->controller->base;
-	struct musb *musb = musb_channel->controller->private_data;
 
 	u8 bchannel = musb_channel->idx;
 	int offset;
@@ -203,7 +202,7 @@ static int dma_channel_abort(struct dma_channel *channel)
 
 	if (channel->status == MUSB_DMA_STATUS_BUSY) {
 		if (musb_channel->transmit) {
-			offset = musb->io.ep_offset(musb_channel->epnum,
+			offset = MUSB_EP_OFFSET(musb_channel->epnum,
 						MUSB_TXCSR);
 
 			/*
@@ -216,7 +215,7 @@ static int dma_channel_abort(struct dma_channel *channel)
 			csr &= ~MUSB_TXCSR_DMAMODE;
 			musb_writew(mbase, offset, csr);
 		} else {
-			offset = musb->io.ep_offset(musb_channel->epnum,
+			offset = MUSB_EP_OFFSET(musb_channel->epnum,
 						MUSB_RXCSR);
 
 			csr = musb_readw(mbase, offset);
@@ -327,7 +326,7 @@ static irqreturn_t dma_controller_irq(int irq, void *private_data)
 					    (musb_channel->max_packet_sz - 1)))
 				    ) {
 					u8  epnum  = musb_channel->epnum;
-					int offset = musb->io.ep_offset(epnum,
+					int offset = MUSB_EP_OFFSET(epnum,
 								    MUSB_TXCSR);
 					u16 txcsr;
 

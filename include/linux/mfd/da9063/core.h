@@ -33,12 +33,6 @@ enum da9063_models {
 	PMIC_DA9063 = 0x61,
 };
 
-enum da9063_variant_codes {
-	PMIC_DA9063_AD = 0x3,
-	PMIC_DA9063_BB = 0x5,
-	PMIC_DA9063_CA = 0x6,
-};
-
 /* Interrupts */
 enum da9063_irqs {
 	DA9063_IRQ_ONKEY = 0,
@@ -78,7 +72,7 @@ struct da9063 {
 	/* Device */
 	struct device	*dev;
 	unsigned short	model;
-	unsigned char	variant_code;
+	unsigned short	revision;
 	unsigned int	flags;
 
 	/* Control interface */

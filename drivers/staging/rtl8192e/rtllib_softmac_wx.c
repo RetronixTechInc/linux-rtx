@@ -120,7 +120,7 @@ int rtllib_wx_get_wap(struct rtllib_device *ieee,
 		ieee->state != RTLLIB_LINKED_SCANNING &&
 		ieee->wap_set == 0)
 
-		eth_zero_addr(wrqu->ap_addr.sa_data);
+		memset(wrqu->ap_addr.sa_data, 0, ETH_ALEN);
 	else
 		memcpy(wrqu->ap_addr.sa_data,
 		       ieee->current_network.bssid, ETH_ALEN);
@@ -244,7 +244,6 @@ int rtllib_wx_get_rate(struct rtllib_device *ieee,
 			     union iwreq_data *wrqu, char *extra)
 {
 	u32 tmp_rate = 0;
-
 	tmp_rate = TxCountToDataRate(ieee,
 				     ieee->softmac_stats.CurrentShowTxate);
 	wrqu->bitrate.value = tmp_rate * 500000;
@@ -335,6 +334,7 @@ void rtllib_wx_sync_scan_wq(void *data)
 	enum ht_extchnl_offset chan_offset = 0;
 	enum ht_channel_width bandwidth = 0;
 	int b40M = 0;
+	static int count;
 
 	if (!(ieee->softmac_features & IEEE_SOFTMAC_SCAN)) {
 		rtllib_start_scan_syncro(ieee, 0);
@@ -411,6 +411,7 @@ void rtllib_wx_sync_scan_wq(void *data)
 
 	rtllib_wake_all_queues(ieee);
 
+	count = 0;
 out:
 	up(&ieee->wx_sem);
 
@@ -527,8 +528,8 @@ int rtllib_wx_set_rawtx(struct rtllib_device *ieee,
 	else
 		ieee->raw_tx = 0;
 
-	netdev_info(ieee->dev, "raw TX is %s\n",
-		    ieee->raw_tx ? "enabled" : "disabled");
+	printk(KERN_INFO"raw TX is %s\n",
+	      ieee->raw_tx ? "enabled" : "disabled");
 
 	if (ieee->iw_mode == IW_MODE_MONITOR) {
 		if (prev == 0 && ieee->raw_tx) {
@@ -575,9 +576,8 @@ int rtllib_wx_set_power(struct rtllib_device *ieee,
 	if ((!ieee->sta_wake_up) ||
 	    (!ieee->enter_sleep_state) ||
 	    (!ieee->ps_is_queue_empty)) {
-		RTLLIB_DEBUG(RTLLIB_DL_ERR,
-			     "%s(): PS mode is tried to be use but driver missed a callback\n\n",
-			     __func__);
+		RTLLIB_DEBUG(RTLLIB_DL_ERR, "%s(): PS mode is tried to be use "
+			     "but driver missed a callback\n\n", __func__);
 		return -1;
 	}
 
@@ -628,6 +628,8 @@ int rtllib_wx_get_power(struct rtllib_device *ieee,
 				 struct iw_request_info *info,
 				 union iwreq_data *wrqu, char *extra)
 {
+	int ret = 0;
+
 	down(&ieee->wx_sem);
 
 	if (ieee->ps == RTLLIB_PS_DISABLED) {
@@ -655,7 +657,7 @@ int rtllib_wx_get_power(struct rtllib_device *ieee,
 
 exit:
 	up(&ieee->wx_sem);
-	return 0;
+	return ret;
 
 }
 EXPORT_SYMBOL(rtllib_wx_get_power);

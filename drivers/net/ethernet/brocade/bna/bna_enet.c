@@ -1,5 +1,5 @@
 /*
- * Linux network driver for QLogic BR-series Converged Network Adapter.
+ * Linux network driver for Brocade Converged Network Adapter.
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License (GPL) Version 2 as
@@ -11,10 +11,9 @@
  * General Public License for more details.
  */
 /*
- * Copyright (c) 2005-2014 Brocade Communications Systems, Inc.
- * Copyright (c) 2014-2015 QLogic Corporation
+ * Copyright (c) 2005-2011 Brocade Communications Systems, Inc.
  * All rights reserved
- * www.qlogic.com
+ * www.brocade.com
  */
 #include "bna.h"
 
@@ -108,8 +107,7 @@ bna_bfi_ethport_admin_rsp(struct bna_ethport *ethport,
 {
 	struct bfi_enet_enable_req *admin_req =
 		&ethport->bfi_enet_cmd.admin_req;
-	struct bfi_enet_rsp *rsp =
-		container_of(msghdr, struct bfi_enet_rsp, mh);
+	struct bfi_enet_rsp *rsp = (struct bfi_enet_rsp *)msghdr;
 
 	switch (admin_req->enable) {
 	case BNA_STATUS_T_ENABLED:
@@ -135,8 +133,7 @@ bna_bfi_ethport_lpbk_rsp(struct bna_ethport *ethport,
 {
 	struct bfi_enet_diag_lb_req *diag_lb_req =
 		&ethport->bfi_enet_cmd.lpbk_req;
-	struct bfi_enet_rsp *rsp =
-		container_of(msghdr, struct bfi_enet_rsp, mh);
+	struct bfi_enet_rsp *rsp = (struct bfi_enet_rsp *)msghdr;
 
 	switch (diag_lb_req->enable) {
 	case BNA_STATUS_T_ENABLED:
@@ -164,8 +161,7 @@ static void
 bna_bfi_attr_get_rsp(struct bna_ioceth *ioceth,
 			struct bfi_msgq_mhdr *msghdr)
 {
-	struct bfi_enet_attr_rsp *rsp =
-		container_of(msghdr, struct bfi_enet_attr_rsp, mh);
+	struct bfi_enet_attr_rsp *rsp = (struct bfi_enet_attr_rsp *)msghdr;
 
 	/**
 	 * Store only if not set earlier, since BNAD can override the HW

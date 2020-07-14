@@ -39,7 +39,6 @@
 #include <asm/firmware.h>
 #include <asm/cell-regs.h>
 
-#include "cell.h"
 #include "interrupt.h"
 
 /* Define CELL_IOMMU_REAL_UNMAP to actually unmap non-used pages
@@ -622,9 +621,8 @@ static int dma_fixed_map_sg(struct device *dev, struct scatterlist *sg,
 	if (iommu_fixed_is_weak == dma_get_attr(DMA_ATTR_WEAK_ORDERING, attrs))
 		return dma_direct_ops.map_sg(dev, sg, nents, direction, attrs);
 	else
-		return ppc_iommu_map_sg(dev, cell_get_iommu_table(dev), sg,
-					nents, device_to_mask(dev),
-					direction, attrs);
+		return iommu_map_sg(dev, cell_get_iommu_table(dev), sg, nents,
+				    device_to_mask(dev), direction, attrs);
 }
 
 static void dma_fixed_unmap_sg(struct device *dev, struct scatterlist *sg,
@@ -634,8 +632,8 @@ static void dma_fixed_unmap_sg(struct device *dev, struct scatterlist *sg,
 	if (iommu_fixed_is_weak == dma_get_attr(DMA_ATTR_WEAK_ORDERING, attrs))
 		dma_direct_ops.unmap_sg(dev, sg, nents, direction, attrs);
 	else
-		ppc_iommu_unmap_sg(cell_get_iommu_table(dev), sg, nents,
-				   direction, attrs);
+		iommu_unmap_sg(cell_get_iommu_table(dev), sg, nents, direction,
+			       attrs);
 }
 
 static int dma_fixed_dma_supported(struct device *dev, u64 mask)
@@ -858,7 +856,7 @@ static int __init cell_iommu_init_disabled(void)
 	cell_dma_direct_offset += base;
 
 	if (cell_dma_direct_offset != 0)
-		cell_pci_controller_ops.dma_dev_setup = cell_pci_dma_dev_setup;
+		ppc_md.pci_dma_dev_setup = cell_pci_dma_dev_setup;
 
 	printk("iommu: disabled, direct DMA offset is 0x%lx\n",
 	       cell_dma_direct_offset);
@@ -1198,8 +1196,8 @@ static int __init cell_iommu_init(void)
 		if (cell_iommu_init_disabled() == 0)
 			goto bail;
 
-	/* Setup various callbacks */
-	cell_pci_controller_ops.dma_dev_setup = cell_pci_dma_dev_setup;
+	/* Setup various ppc_md. callbacks */
+	ppc_md.pci_dma_dev_setup = cell_pci_dma_dev_setup;
 	ppc_md.dma_get_required_mask = cell_dma_get_required_mask;
 	ppc_md.tce_build = tce_build_cell;
 	ppc_md.tce_free = tce_free_cell;
@@ -1235,3 +1233,5 @@ static int __init cell_iommu_init(void)
 	return 0;
 }
 machine_arch_initcall(cell, cell_iommu_init);
+machine_arch_initcall(celleb_native, cell_iommu_init);
+

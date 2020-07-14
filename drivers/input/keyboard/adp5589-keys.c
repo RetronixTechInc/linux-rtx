@@ -567,7 +567,9 @@ static void adp5589_gpio_remove(struct adp5589_kpad *kpad)
 			dev_warn(dev, "teardown failed %d\n", error);
 	}
 
-	gpiochip_remove(&kpad->gc);
+	error = gpiochip_remove(&kpad->gc);
+	if (error)
+		dev_warn(dev, "gpiochip_remove failed %d\n", error);
 }
 #else
 static inline int adp5589_gpio_add(struct adp5589_kpad *kpad)

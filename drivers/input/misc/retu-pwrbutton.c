@@ -85,6 +85,7 @@ static struct platform_driver retu_pwrbutton_driver = {
 	.remove		= retu_pwrbutton_remove,
 	.driver		= {
 		.name	= "retu-pwrbutton",
+		.owner	= THIS_MODULE,
 	},
 };
 module_platform_driver(retu_pwrbutton_driver);

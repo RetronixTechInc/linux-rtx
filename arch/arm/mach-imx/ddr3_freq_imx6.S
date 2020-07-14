@@ -10,6 +10,10 @@
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
+
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
 #include <linux/linkage.h>
@@ -396,14 +400,11 @@ mx6_ddr3_freq_change_start:
 	ldr	r7, [r6]
 
 	/*
-	  * Need to flush and disable L1 before
-	  * disabling L2, we need data to
-	  * coherent. Flushing L1 pushes
-	  * everyhting to L2. We sync L2 later, but
-	  * it can still have dirty lines.
-	  * While exiting, we need to enable L2 first
+	  * Need to flush and disable L1 before disabling L2, we need data to
+	  * coherent. Flushing L1 pushes everyhting to L2. We sync L2 later, but
+	  * it can still have dirty lines. While exiting, we need to enable L2 first
 	  * and then L1.
-	  */
+	 . */
 	disable_l1_dcache
 
 #ifdef CONFIG_CACHE_L2X0

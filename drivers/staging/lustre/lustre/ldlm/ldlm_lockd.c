@@ -41,9 +41,10 @@
 
 #define DEBUG_SUBSYSTEM S_LDLM
 
-#include "../../include/linux/libcfs/libcfs.h"
-#include "../include/lustre_dlm.h"
-#include "../include/obd_class.h"
+# include <linux/libcfs/libcfs.h>
+
+#include <lustre_dlm.h>
+#include <obd_class.h>
 #include <linux/list.h>
 #include "ldlm_internal.h"
 
@@ -55,6 +56,8 @@ static char *ldlm_cpts;
 module_param(ldlm_cpts, charp, 0444);
 MODULE_PARM_DESC(ldlm_cpts, "CPU partitions ldlm threads should run on");
 
+extern struct kmem_cache *ldlm_resource_slab;
+extern struct kmem_cache *ldlm_lock_slab;
 static struct mutex	ldlm_ref_mutex;
 static int ldlm_refcount;
 
@@ -67,7 +70,7 @@ struct ldlm_cb_async_args {
 
 static struct ldlm_state *ldlm_state;
 
-inline unsigned long round_timeout(unsigned long timeout)
+inline cfs_time_t round_timeout(cfs_time_t timeout)
 {
 	return cfs_time_seconds((int)cfs_duration_sec(cfs_time_sub(timeout, 0)) + 1);
 }
@@ -152,19 +155,17 @@ void ldlm_handle_bl_callback(struct ldlm_namespace *ns,
 	if (lock->l_flags & LDLM_FL_CANCEL_ON_BLOCK)
 		lock->l_flags |= LDLM_FL_CANCEL;
 
-	do_ast = !lock->l_readers && !lock->l_writers;
+	do_ast = (!lock->l_readers && !lock->l_writers);
 	unlock_res_and_lock(lock);
 
 	if (do_ast) {
-		CDEBUG(D_DLMTRACE,
-		       "Lock %p already unused, calling callback (%p)\n", lock,
-		       lock->l_blocking_ast);
+		CDEBUG(D_DLMTRACE, "Lock %p already unused, calling callback (%p)\n",
+		       lock, lock->l_blocking_ast);
 		if (lock->l_blocking_ast != NULL)
 			lock->l_blocking_ast(lock, ld, lock->l_ast_data,
 					     LDLM_CB_BLOCKING);
 	} else {
-		CDEBUG(D_DLMTRACE,
-		       "Lock %p is referenced, will be cancelled later\n",
+		CDEBUG(D_DLMTRACE, "Lock %p is referenced, will be cancelled later\n",
 		       lock);
 	}
 
@@ -190,10 +191,9 @@ static void ldlm_handle_cp_callback(struct ptlrpc_request *req,
 
 	if (OBD_FAIL_CHECK(OBD_FAIL_LDLM_CANCEL_BL_CB_RACE)) {
 		int to = cfs_time_seconds(1);
-
 		while (to > 0) {
-			set_current_state(TASK_INTERRUPTIBLE);
-			schedule_timeout(to);
+			schedule_timeout_and_set_state(
+				TASK_INTERRUPTIBLE, to);
 			if (lock->l_granted_mode == lock->l_req_mode ||
 			    lock->l_flags & LDLM_FL_DESTROYED)
 				break;
@@ -203,18 +203,18 @@ static void ldlm_handle_cp_callback(struct ptlrpc_request *req,
 	lvb_len = req_capsule_get_size(&req->rq_pill, &RMF_DLM_LVB, RCL_CLIENT);
 	if (lvb_len < 0) {
 		LDLM_ERROR(lock, "Fail to get lvb_len, rc = %d", lvb_len);
-		rc = lvb_len;
-		goto out;
+		GOTO(out, rc = lvb_len);
 	} else if (lvb_len > 0) {
 		if (lock->l_lvb_len > 0) {
 			/* for extent lock, lvb contains ost_lvb{}. */
 			LASSERT(lock->l_lvb_data != NULL);
 
 			if (unlikely(lock->l_lvb_len < lvb_len)) {
-				LDLM_ERROR(lock, "Replied LVB is larger than expectation, expected = %d, replied = %d",
+				LDLM_ERROR(lock, "Replied LVB is larger than "
+					   "expectation, expected = %d, "
+					   "replied = %d",
 					   lock->l_lvb_len, lvb_len);
-				rc = -EINVAL;
-				goto out;
+				GOTO(out, rc = -EINVAL);
 			}
 		} else if (ldlm_has_layout(lock)) { /* for layout lock, lvb has
 						     * variable length */
@@ -223,13 +223,11 @@ static void ldlm_handle_cp_callback(struct ptlrpc_request *req,
 			OBD_ALLOC(lvb_data, lvb_len);
 			if (lvb_data == NULL) {
 				LDLM_ERROR(lock, "No memory: %d.\n", lvb_len);
-				rc = -ENOMEM;
-				goto out;
+				GOTO(out, rc = -ENOMEM);
 			}
 
 			lock_res_and_lock(lock);
 			LASSERT(lock->l_lvb_data == NULL);
-			lock->l_lvb_type = LVB_T_LAYOUT;
 			lock->l_lvb_data = lvb_data;
 			lock->l_lvb_len = lvb_len;
 			unlock_res_and_lock(lock);
@@ -242,8 +240,7 @@ static void ldlm_handle_cp_callback(struct ptlrpc_request *req,
 		/* bug 11300: the lock has already been granted */
 		unlock_res_and_lock(lock);
 		LDLM_DEBUG(lock, "Double grant race happened");
-		rc = 0;
-		goto out;
+		GOTO(out, rc = 0);
 	}
 
 	/* If we receive the completion AST before the actual enqueue returned,
@@ -270,7 +267,7 @@ static void ldlm_handle_cp_callback(struct ptlrpc_request *req,
 				&dlm_req->lock_desc.l_resource.lr_name);
 		if (rc < 0) {
 			LDLM_ERROR(lock, "Failed to allocate resource");
-			goto out;
+			GOTO(out, rc);
 		}
 		LDLM_DEBUG(lock, "completion AST, new resource");
 		CERROR("change resource!\n");
@@ -290,7 +287,7 @@ static void ldlm_handle_cp_callback(struct ptlrpc_request *req,
 				   lock->l_lvb_data, lvb_len);
 		if (rc < 0) {
 			unlock_res_and_lock(lock);
-			goto out;
+			GOTO(out, rc);
 		}
 	}
 
@@ -307,7 +304,7 @@ static void ldlm_handle_cp_callback(struct ptlrpc_request *req,
 
 	LDLM_DEBUG_NOLOCK("client completion callback handler END (lock %p)",
 			  lock);
-	goto out;
+	GOTO(out, rc);
 
 out:
 	if (rc < 0) {
@@ -528,7 +525,7 @@ static inline void ldlm_callback_errmsg(struct ptlrpc_request *req,
 					struct lustre_handle *handle)
 {
 	DEBUG_REQ((req->rq_no_reply || rc) ? D_WARNING : D_DLMTRACE, req,
-		  "%s: [nid %s] [rc %d] [lock %#llx]",
+		  "%s: [nid %s] [rc %d] [lock "LPX64"]",
 		  msg, libcfs_id2str(req->rq_peer), rc,
 		  handle ? handle->cookie : 0);
 	if (req->rq_no_reply)
@@ -638,8 +635,8 @@ static int ldlm_callback_handler(struct ptlrpc_request *req)
 
 	lock = ldlm_handle2lock_long(&dlm_req->lock_handle[0], 0);
 	if (!lock) {
-		CDEBUG(D_DLMTRACE, "callback on lock %#llx - lock disappeared\n",
-		       dlm_req->lock_handle[0].cookie);
+		CDEBUG(D_DLMTRACE, "callback on lock "LPX64" - lock "
+		       "disappeared\n", dlm_req->lock_handle[0].cookie);
 		rc = ldlm_callback_reply(req, -EINVAL);
 		ldlm_callback_errmsg(req, "Operate with invalid parameter", rc,
 				     &dlm_req->lock_handle[0]);
@@ -662,7 +659,8 @@ static int ldlm_callback_handler(struct ptlrpc_request *req)
 		if (((lock->l_flags & LDLM_FL_CANCELING) &&
 		    (lock->l_flags & LDLM_FL_BL_DONE)) ||
 		    (lock->l_flags & LDLM_FL_FAILED)) {
-			LDLM_DEBUG(lock, "callback on lock %#llx - lock disappeared\n",
+			LDLM_DEBUG(lock, "callback on lock "
+				   LPX64" - lock disappeared\n",
 				   dlm_req->lock_handle[0].cookie);
 			unlock_res_and_lock(lock);
 			LDLM_LOCK_RELEASE(lock);
@@ -722,7 +720,7 @@ static int ldlm_callback_handler(struct ptlrpc_request *req)
 static struct ldlm_bl_work_item *ldlm_bl_get_work(struct ldlm_bl_pool *blp)
 {
 	struct ldlm_bl_work_item *blwi = NULL;
-	static unsigned int num_bl;
+	static unsigned int num_bl = 0;
 
 	spin_lock(&blp->blp_lock);
 	/* process a request from the blp_list at least every blp_num_threads */
@@ -885,7 +883,6 @@ void ldlm_put_ref(void)
 	mutex_lock(&ldlm_ref_mutex);
 	if (ldlm_refcount == 1) {
 		int rc = ldlm_cleanup();
-
 		if (rc)
 			CERROR("ldlm_cleanup failed: %d\n", rc);
 		else
@@ -968,7 +965,6 @@ static cfs_hash_ops_t ldlm_export_lock_ops = {
 int ldlm_init_export(struct obd_export *exp)
 {
 	int rc;
-
 	exp->exp_lock_hash =
 		cfs_hash_create(obd_uuid2str(&exp->exp_client_uuid),
 				HASH_EXP_LOCK_CUR_BITS,
@@ -984,7 +980,7 @@ int ldlm_init_export(struct obd_export *exp)
 
 	rc = ldlm_init_flock_export(exp);
 	if (rc)
-		goto err;
+		GOTO(err, rc);
 
 	return 0;
 err:
@@ -1018,7 +1014,7 @@ static int ldlm_setup(void)
 
 	rc = ldlm_proc_setup();
 	if (rc != 0)
-		goto out;
+		GOTO(out, rc);
 
 	memset(&conf, 0, sizeof(conf));
 	conf = (typeof(conf)) {
@@ -1049,21 +1045,19 @@ static int ldlm_setup(void)
 			.so_req_handler		= ldlm_callback_handler,
 		},
 	};
-	ldlm_state->ldlm_cb_service =
+	ldlm_state->ldlm_cb_service = \
 			ptlrpc_register_service(&conf, ldlm_svc_proc_dir);
 	if (IS_ERR(ldlm_state->ldlm_cb_service)) {
 		CERROR("failed to start service\n");
 		rc = PTR_ERR(ldlm_state->ldlm_cb_service);
 		ldlm_state->ldlm_cb_service = NULL;
-		goto out;
+		GOTO(out, rc);
 	}
 
 
 	OBD_ALLOC(blp, sizeof(*blp));
-	if (blp == NULL) {
-		rc = -ENOMEM;
-		goto out;
-	}
+	if (blp == NULL)
+		GOTO(out, rc = -ENOMEM);
 	ldlm_state->ldlm_bl_pool = blp;
 
 	spin_lock_init(&blp->blp_lock);
@@ -1077,7 +1071,7 @@ static int ldlm_setup(void)
 		blp->blp_min_threads = LDLM_NTHRS_INIT;
 		blp->blp_max_threads = LDLM_NTHRS_MAX;
 	} else {
-		blp->blp_min_threads = blp->blp_max_threads =
+		blp->blp_min_threads = blp->blp_max_threads = \
 			min_t(int, LDLM_NTHRS_MAX, max_t(int, LDLM_NTHRS_INIT,
 							 ldlm_num_threads));
 	}
@@ -1085,14 +1079,14 @@ static int ldlm_setup(void)
 	for (i = 0; i < blp->blp_min_threads; i++) {
 		rc = ldlm_bl_thread_start(blp);
 		if (rc < 0)
-			goto out;
+			GOTO(out, rc);
 	}
 
 
 	rc = ldlm_pools_init();
 	if (rc) {
 		CERROR("Failed to initialize LDLM pools: %d\n", rc);
-		goto out;
+		GOTO(out, rc);
 	}
 	return 0;
 

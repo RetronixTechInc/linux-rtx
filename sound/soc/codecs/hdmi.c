@@ -20,7 +20,6 @@
  */
 #include <linux/module.h>
 #include <sound/soc.h>
-#include <linux/of.h>
 #include <linux/of_device.h>
 
 #define DRV_NAME "hdmi-audio-codec"
@@ -94,6 +93,7 @@ static int hdmi_codec_remove(struct platform_device *pdev)
 static struct platform_driver hdmi_codec_driver = {
 	.driver		= {
 		.name	= DRV_NAME,
+		.owner	= THIS_MODULE,
 		.of_match_table = of_match_ptr(hdmi_audio_codec_ids),
 	},
 

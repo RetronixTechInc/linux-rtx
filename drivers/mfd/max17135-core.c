@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2010-2015 Freescale Semiconductor, Inc.
+ * Copyright (C) 2010-2014 Freescale Semiconductor, Inc.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -197,6 +197,16 @@ static int max17135_remove(struct i2c_client *i2c)
 	return 0;
 }
 
+static int max17135_suspend(struct i2c_client *client, pm_message_t state)
+{
+	return 0;
+}
+
+static int max17135_resume(struct i2c_client *client)
+{
+	return 0;
+}
+
 /* Return 0 if detection is successful, -ENODEV otherwise */
 static int max17135_detect(struct i2c_client *client,
 			  struct i2c_board_info *info)
@@ -259,6 +269,8 @@ static struct i2c_driver max17135_driver = {
 	},
 	.probe = max17135_probe,
 	.remove = max17135_remove,
+	.suspend = max17135_suspend,
+	.resume = max17135_resume,
 	.id_table = max17135_id,
 	.detect = max17135_detect,
 	.address_list = &normal_i2c[0],

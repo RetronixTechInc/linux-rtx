@@ -313,6 +313,21 @@ const struct file_operations configfs_file_operations = {
 	.release	= configfs_release,
 };
 
+
+int configfs_add_file(struct dentry * dir, const struct configfs_attribute * attr, int type)
+{
+	struct configfs_dirent * parent_sd = dir->d_fsdata;
+	umode_t mode = (attr->ca_mode & S_IALLUGO) | S_IFREG;
+	int error = 0;
+
+	mutex_lock_nested(&dir->d_inode->i_mutex, I_MUTEX_NORMAL);
+	error = configfs_make_dirent(parent_sd, NULL, (void *) attr, mode, type);
+	mutex_unlock(&dir->d_inode->i_mutex);
+
+	return error;
+}
+
+
 /**
  *	configfs_create_file - create an attribute file for an item.
  *	@item:	item we're creating for.
@@ -321,16 +336,9 @@ const struct file_operations configfs_file_operations = {
 
 int configfs_create_file(struct config_item * item, const struct configfs_attribute * attr)
 {
-	struct dentry *dir = item->ci_dentry;
-	struct configfs_dirent *parent_sd = dir->d_fsdata;
-	umode_t mode = (attr->ca_mode & S_IALLUGO) | S_IFREG;
-	int error = 0;
+	BUG_ON(!item || !item->ci_dentry || !attr);
 
-	mutex_lock_nested(&d_inode(dir)->i_mutex, I_MUTEX_NORMAL);
-	error = configfs_make_dirent(parent_sd, NULL, (void *) attr, mode,
-				     CONFIGFS_ITEM_ATTR);
-	mutex_unlock(&d_inode(dir)->i_mutex);
-
-	return error;
+	return configfs_add_file(item->ci_dentry, attr,
+				 CONFIGFS_ITEM_ATTR);
 }
 

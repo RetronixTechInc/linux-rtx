@@ -178,10 +178,10 @@ static int gru_dump_context(struct gru_state *gru, int ctxnum,
 	hdr.cbrcnt = cbrcnt;
 	hdr.dsrcnt = dsrcnt;
 	hdr.cch_locked = cch_locked;
-	if (copy_to_user(uhdr, &hdr, sizeof(hdr)))
-		return -EFAULT;
+	if (!ret && copy_to_user((void __user *)uhdr, &hdr, sizeof(hdr)))
+		ret = -EFAULT;
 
-	return bytes;
+	return ret ? ret : bytes;
 }
 
 int gru_dump_chiplet_request(unsigned long arg)

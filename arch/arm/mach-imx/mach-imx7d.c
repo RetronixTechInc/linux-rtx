@@ -21,12 +21,6 @@
 #include "common.h"
 #include "cpuidle.h"
 
-static struct property device_disabled = {
-	.name = "status",
-	.length = sizeof("disabled"),
-	.value = "disabled",
-};
-
 static int ar8031_phy_fixup(struct phy_device *dev)
 {
 	u16 val;
@@ -110,26 +104,17 @@ static void __init imx7d_enet_clk_sel(void)
 
 static inline void imx7d_enet_init(void)
 {
-	imx6_enet_mac_init("fsl,imx7d-fec", "fsl,imx7d-ocotp");
+	imx6_enet_mac_init("fsl,imx7d-fec");
 	imx7d_enet_mdio_fixup();
 	imx7d_enet_phy_init();
 	imx7d_enet_clk_sel();
 }
 
-static inline void imx7d_disable_arm_arch_timer(void)
-{
-	struct device_node *node;
-
-	node = of_find_compatible_node(NULL, NULL, "arm,armv7-timer");
-	if (node) {
-		pr_info("disable arm arch timer for nosmp!\n");
-		of_add_property(node, &device_disabled);
-	}
-}
-
 static void __init imx7d_init_machine(void)
 {
 	struct device *parent;
+
+	mxc_arch_reset_init_dt();
 
 	parent = imx_soc_device_init();
 	if (parent == NULL)
@@ -143,13 +128,10 @@ static void __init imx7d_init_machine(void)
 
 static void __init imx7d_init_irq(void)
 {
-	imx_gpcv2_check_dt();
 	imx_init_revision_from_anatop();
 	imx_src_init();
+	imx_gpcv2_init();
 	irqchip_init();
-#ifndef CONFIG_SMP
-	imx7d_disable_arm_arch_timer();
-#endif
 }
 
 static void __init imx7d_init_late(void)
@@ -182,9 +164,20 @@ static void imx7d_reserve(void)
 	struct membank *bank;
 
 #ifdef CONFIG_PSTORE_RAM
-	max_phys = memblock_end_of_DRAM();
-	/* reserve 64M for uboot avoid ram console data is cleaned by uboot */
-	phys = memblock_alloc_base(SZ_1M, SZ_4K, max_phys - SZ_64M);
+	mi = &meminfo;
+	if (!mi) {
+		pr_err("no memory reserve for ramoops.\n");
+		return;
+	}
+	/* use memmory bank 0 for ram console store */
+	bank = &mi->bank[0];
+	if (!bank) {
+		pr_err("no memory reserve for ramoops.\n");
+		return;
+	}
+	max_phys = bank->start + bank->size;
+	/* reserve 256M for uboot avoid ram console data is cleaned by uboot */
+	phys = memblock_alloc_base(SZ_1M, SZ_4K, max_phys - SZ_256M);
 	if (phys) {
 		memblock_remove(phys, SZ_1M);
 		memblock_reserve(phys, SZ_1M);
@@ -206,5 +199,6 @@ DT_MACHINE_START(IMX7D, "Freescale i.MX7 Dual (Device Tree)")
 	.init_machine	= imx7d_init_machine,
 	.init_late	= imx7d_init_late,
 	.dt_compat	= imx7d_dt_compat,
-	.reserve        = imx7d_reserve,
+	.reserve     = imx7d_reserve,
+	.restart	= mxc_restart,
 MACHINE_END

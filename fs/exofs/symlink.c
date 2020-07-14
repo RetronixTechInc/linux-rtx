@@ -2,7 +2,7 @@
  * Copyright (C) 2005, 2006
  * Avishay Traeger (avishay@gmail.com)
  * Copyright (C) 2008, 2009
- * Boaz Harrosh <ooo@electrozaur.com>
+ * Boaz Harrosh <bharrosh@panasas.com>
  *
  * Copyrights for code taken from ext2:
  *     Copyright (C) 1992, 1993, 1994, 1995
@@ -37,7 +37,7 @@
 
 static void *exofs_follow_link(struct dentry *dentry, struct nameidata *nd)
 {
-	struct exofs_i_info *oi = exofs_i(d_inode(dentry));
+	struct exofs_i_info *oi = exofs_i(dentry->d_inode);
 
 	nd_set_link(nd, (char *)oi->i_data);
 	return NULL;

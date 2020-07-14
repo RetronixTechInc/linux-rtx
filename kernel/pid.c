@@ -79,10 +79,7 @@ struct pid_namespace init_pid_ns = {
 	.level = 0,
 	.child_reaper = &init_task,
 	.user_ns = &init_user_ns,
-	.ns.inum = PROC_PID_INIT_INO,
-#ifdef CONFIG_PID_NS
-	.ns.ops = &pidns_operations,
-#endif
+	.proc_inum = PROC_PID_INIT_INO,
 };
 EXPORT_SYMBOL_GPL(init_pid_ns);
 
@@ -182,7 +179,7 @@ static int alloc_pidmap(struct pid_namespace *pid_ns)
 			spin_unlock_irq(&pidmap_lock);
 			kfree(page);
 			if (unlikely(!map->page))
-				return -ENOMEM;
+				break;
 		}
 		if (likely(atomic_read(&map->nr_free))) {
 			for ( ; ; ) {
@@ -210,7 +207,7 @@ static int alloc_pidmap(struct pid_namespace *pid_ns)
 		}
 		pid = mk_pid(pid_ns, map, offset);
 	}
-	return -EAGAIN;
+	return -1;
 }
 
 int next_pidmap(struct pid_namespace *pid_ns, unsigned int last)
@@ -301,20 +298,17 @@ struct pid *alloc_pid(struct pid_namespace *ns)
 	int i, nr;
 	struct pid_namespace *tmp;
 	struct upid *upid;
-	int retval = -ENOMEM;
 
 	pid = kmem_cache_alloc(ns->pid_cachep, GFP_KERNEL);
 	if (!pid)
-		return ERR_PTR(retval);
+		goto out;
 
 	tmp = ns;
 	pid->level = ns->level;
 	for (i = ns->level; i >= 0; i--) {
 		nr = alloc_pidmap(tmp);
-		if (IS_ERR_VALUE(nr)) {
-			retval = nr;
+		if (nr < 0)
 			goto out_free;
-		}
 
 		pid->numbers[i].nr = nr;
 		pid->numbers[i].ns = tmp;
@@ -342,6 +336,7 @@ struct pid *alloc_pid(struct pid_namespace *ns)
 	}
 	spin_unlock_irq(&pidmap_lock);
 
+out:
 	return pid;
 
 out_unlock:
@@ -353,7 +348,8 @@ out_free:
 		free_pidmap(pid->numbers + i);
 
 	kmem_cache_free(ns->pid_cachep, pid);
-	return ERR_PTR(retval);
+	pid = NULL;
+	goto out;
 }
 
 void disable_pid_allocation(struct pid_namespace *ns)

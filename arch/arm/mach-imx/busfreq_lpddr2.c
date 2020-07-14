@@ -31,7 +31,6 @@
 #include <linux/delay.h>
 #include <linux/genalloc.h>
 #include <linux/interrupt.h>
-#include <linux/irq.h>
 #include <linux/irqchip/arm-gic.h>
 #include <linux/kernel.h>
 #include <linux/mutex.h>
@@ -55,8 +54,6 @@ void (*mx6_change_lpddr2_freq)(u32 ddr_freq, int bus_freq_mode) = NULL;
 extern unsigned int ddr_normal_rate;
 extern void mx6_lpddr2_freq_change(u32 freq, int bus_freq_mode);
 extern void imx6_up_lpddr2_freq_change(u32 freq, int bus_freq_mode);
-extern unsigned long save_ttbr1(void);
-extern void restore_ttbr1(unsigned long ttbr1);
 extern void mx6q_lpddr2_freq_change(u32 freq, int bus_freq_mode);
 extern unsigned long ddr_freq_change_iram_base;
 extern unsigned long imx6_lpddr2_freq_change_start asm("imx6_lpddr2_freq_change_start");
@@ -133,13 +130,13 @@ int init_mmdc_lpddr2_settings(struct platform_device *busfreq_pdev)
 	unsigned long ddr_code_size;
 	busfreq_dev = &busfreq_pdev->dev;
 
-	ddr_code_size = SZ_4K;
+	ddr_code_size = (&imx6_lpddr2_freq_change_end -&imx6_lpddr2_freq_change_start) *4;
 
 	if (cpu_is_imx6sl())
 		mx6_change_lpddr2_freq = (void *)fncpy(
 			(void *)ddr_freq_change_iram_base,
 			&mx6_lpddr2_freq_change, ddr_code_size);
-	if (cpu_is_imx6sx() || cpu_is_imx6ul())
+	else if (cpu_is_imx6sx() || cpu_is_imx6ul())
 		mx6_change_lpddr2_freq = (void *)fncpy(
 			(void *)ddr_freq_change_iram_base,
 			&imx6_up_lpddr2_freq_change, ddr_code_size);
@@ -152,17 +149,15 @@ int init_mmdc_lpddr2_settings(struct platform_device *busfreq_pdev)
 int update_lpddr2_freq_smp(int ddr_rate)
 {
 	unsigned long ttbr1;
-	int me = 0;
 	int mode = get_bus_freq_mode();
 #ifdef CONFIG_SMP
 	int cpu = 0;
+	int me = 0;
 	u32 reg;
 #endif
 
 	if (ddr_rate == curr_ddr_rate)
 		return 0;
-
-	printk(KERN_DEBUG "Bus freq set to %d start...\n", ddr_rate);
 
 	/* ensure that all Cores are in WFE. */
 	local_irq_disable();
@@ -233,7 +228,6 @@ int update_lpddr2_freq_smp(int ddr_rate)
 #endif
 
 	local_irq_enable();
-	printk(KERN_DEBUG "Bus freq set to %d done! cpu=%d\n", ddr_rate, me);
 
 	return 0;
 }
@@ -244,7 +238,6 @@ int init_mmdc_lpddr2_settings_mx6q(struct platform_device *busfreq_pdev)
 #ifdef CONFIG_SMP
 	struct device *dev = &busfreq_pdev->dev;
 	struct device_node *node;
-	struct irq_data *d;
 	u32 cpu;
 	int err;
 
@@ -277,8 +270,7 @@ int init_mmdc_lpddr2_settings_mx6q(struct platform_device *busfreq_pdev)
 				irq);
 			return err;
 		}
-		d = irq_get_irq_data(irq);
-		irqs_used[cpu] = d->hwirq + 32;
+		irqs_used[cpu] = irq;
 	}
 
 	/* Stoange_iram_basee the variable used to communicate between cores in

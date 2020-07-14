@@ -32,6 +32,7 @@
 #include <linux/sched.h>
 #include <linux/sysfs.h>
 #include <linux/tty.h>
+#include <linux/of_gpio.h>
 
 #include <linux/skbuff.h>
 #include <linux/ti_wilink_st.h>
@@ -759,8 +760,7 @@ static struct ti_st_plat_data *get_platform_data(struct device *dev)
 	dt_property = of_get_property(np, "dev_name", &len);
 	if (dt_property)
 		memcpy(&dt_pdata->dev_name, dt_property, len);
-	of_property_read_u32(np, "nshutdown_gpio",
-			     &dt_pdata->nshutdown_gpio);
+	dt_pdata->nshutdown_gpio = of_get_named_gpio(np, "nshutdown_gpio", 0);
 	of_property_read_u32(np, "flow_cntrl", &dt_pdata->flow_cntrl);
 	of_property_read_u32(np, "baud_rate", &dt_pdata->baud_rate);
 
@@ -840,6 +840,7 @@ static int kim_probe(struct platform_device *pdev)
 	kim_gdata->baud_rate = pdata->baud_rate;
 	pr_info("sysfs entries created\n");
 
+#ifdef CONFIG_DEBUG_FS
 	kim_debugfs_dir = debugfs_create_dir("ti-st", NULL);
 	if (!kim_debugfs_dir) {
 		pr_err(" debugfs entries creation failed ");
@@ -852,6 +853,7 @@ static int kim_probe(struct platform_device *pdev)
 				kim_gdata, &list_debugfs_fops);
 	return 0;
 
+ #endif
 err_sysfs_group:
 	st_core_exit(kim_gdata->core_data);
 
@@ -873,6 +875,7 @@ static int kim_remove(struct platform_device *pdev)
 	} else {
 		pdata = pdev->dev.platform_data;
 	}
+
 
 	kim_gdata = platform_get_drvdata(pdev);
 

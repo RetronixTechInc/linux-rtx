@@ -32,7 +32,7 @@
 #include <linux/gpio.h>
 #include <linux/platform_device.h>
 #include <linux/dma-mapping.h>
-#include <linux/usb/usb_phy_generic.h>
+#include <linux/usb/usb_phy_gen_xceiv.h>
 
 #include <mach/cputype.h>
 #include <mach/hardware.h>
@@ -381,6 +381,7 @@ static int davinci_musb_init(struct musb *musb)
 	u32		revision;
 	int 		ret = -ENODEV;
 
+	usb_nop_xceiv_register();
 	musb->xceiv = usb_get_phy(USB_PHY_TYPE_USB2);
 	if (IS_ERR_OR_NULL(musb->xceiv)) {
 		ret = -EPROBE_DEFER;
@@ -438,7 +439,7 @@ static int davinci_musb_init(struct musb *musb)
 fail:
 	usb_put_phy(musb->xceiv);
 unregister:
-	usb_phy_generic_unregister();
+	usb_nop_xceiv_unregister();
 	return ret;
 }
 
@@ -486,6 +487,7 @@ static int davinci_musb_exit(struct musb *musb)
 	phy_off();
 
 	usb_put_phy(musb->xceiv);
+	usb_nop_xceiv_unregister();
 
 	return 0;
 }
@@ -519,21 +521,23 @@ static int davinci_probe(struct platform_device *pdev)
 
 	int				ret = -ENOMEM;
 
-	glue = devm_kzalloc(&pdev->dev, sizeof(*glue), GFP_KERNEL);
-	if (!glue)
+	glue = kzalloc(sizeof(*glue), GFP_KERNEL);
+	if (!glue) {
+		dev_err(&pdev->dev, "failed to allocate glue context\n");
 		goto err0;
+	}
 
-	clk = devm_clk_get(&pdev->dev, "usb");
+	clk = clk_get(&pdev->dev, "usb");
 	if (IS_ERR(clk)) {
 		dev_err(&pdev->dev, "failed to get clock\n");
 		ret = PTR_ERR(clk);
-		goto err0;
+		goto err3;
 	}
 
 	ret = clk_enable(clk);
 	if (ret) {
 		dev_err(&pdev->dev, "failed to enable clock\n");
-		goto err0;
+		goto err4;
 	}
 
 	glue->dev			= &pdev->dev;
@@ -541,7 +545,6 @@ static int davinci_probe(struct platform_device *pdev)
 
 	pdata->platform_ops		= &davinci_ops;
 
-	usb_phy_generic_register();
 	platform_set_drvdata(pdev, glue);
 
 	memset(musb_resources, 0x00, sizeof(*musb_resources) *
@@ -577,13 +580,19 @@ static int davinci_probe(struct platform_device *pdev)
 	if (IS_ERR(musb)) {
 		ret = PTR_ERR(musb);
 		dev_err(&pdev->dev, "failed to register musb device: %d\n", ret);
-		goto err1;
+		goto err5;
 	}
 
 	return 0;
 
-err1:
+err5:
 	clk_disable(clk);
+
+err4:
+	clk_put(clk);
+
+err3:
+	kfree(glue);
 
 err0:
 	return ret;
@@ -594,8 +603,9 @@ static int davinci_remove(struct platform_device *pdev)
 	struct davinci_glue		*glue = platform_get_drvdata(pdev);
 
 	platform_device_unregister(glue->musb);
-	usb_phy_generic_unregister();
 	clk_disable(glue->clk);
+	clk_put(glue->clk);
+	kfree(glue);
 
 	return 0;
 }

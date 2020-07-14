@@ -24,10 +24,8 @@
 #include <linux/context_tracking.h>
 #include <asm/fpumacro.h>
 #include <asm/cacheflush.h>
-#include <asm/setup.h>
 
 #include "entry.h"
-#include "kernel.h"
 
 enum direction {
 	load,    /* ld, ldd, ldh, ldsh */

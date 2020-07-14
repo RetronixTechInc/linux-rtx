@@ -371,7 +371,7 @@ static struct spear_function *spear310_functions[] = {
 	&tdm_function,
 };
 
-static const struct of_device_id spear310_pinctrl_of_match[] = {
+static struct of_device_id spear310_pinctrl_of_match[] = {
 	{
 		.compatible = "st,spear310-pinmux",
 	},
@@ -408,6 +408,7 @@ static int spear310_pinctrl_remove(struct platform_device *pdev)
 static struct platform_driver spear310_pinctrl_driver = {
 	.driver = {
 		.name = DRIVER_NAME,
+		.owner = THIS_MODULE,
 		.of_match_table = spear310_pinctrl_of_match,
 	},
 	.probe = spear310_pinctrl_probe,

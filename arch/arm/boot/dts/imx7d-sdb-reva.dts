@@ -14,9 +14,9 @@
 			gpio = <&gpio4 7 GPIO_ACTIVE_HIGH>;
 		};
 
-		reg_pcie: regulator@2 {
+		reg_pcie: regulator@4 {
 			compatible = "regulator-fixed";
-			reg = <2>;
+			reg = <4>;
 			regulator-name = "MPCIE_3V3";
 			regulator-min-microvolt = <3300000>;
 			regulator-max-microvolt = <3300000>;

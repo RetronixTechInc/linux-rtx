@@ -13,8 +13,6 @@
 #include <linux/hw_breakpoint.h>
 #include <linux/trace_seq.h>
 #include <linux/ftrace_event.h>
-#include <linux/compiler.h>
-#include <linux/trace_seq.h>
 
 #ifdef CONFIG_FTRACE_SYSCALLS
 #include <asm/unistd.h>		/* For NR_SYSCALLS	     */
@@ -191,22 +189,7 @@ struct trace_array {
 	 */
 	struct trace_buffer	max_buffer;
 	bool			allocated_snapshot;
-	unsigned long		max_latency;
 #endif
-	/*
-	 * max_lock is used to protect the swapping of buffers
-	 * when taking a max snapshot. The buffers themselves are
-	 * protected by per_cpu spinlocks. But the action of the swap
-	 * needs its own lock.
-	 *
-	 * This is defined as a arch_spinlock_t in order to help
-	 * with performance when lockdep debugging is enabled.
-	 *
-	 * It is also used in other places outside the update_max_tr
-	 * so it needs to be defined outside of the
-	 * CONFIG_TRACER_MAX_TRACE.
-	 */
-	arch_spinlock_t		max_lock;
 	int			buffer_disabled;
 #ifdef CONFIG_FTRACE_SYSCALLS
 	int			sys_refcount_enter;
@@ -227,11 +210,6 @@ struct trace_array {
 	struct list_head	events;
 	cpumask_var_t		tracing_cpumask; /* only trace on set CPUs */
 	int			ref;
-#ifdef CONFIG_FUNCTION_TRACER
-	struct ftrace_ops	*ops;
-	/* function tracing enabled */
-	int			function_enabled;
-#endif
 };
 
 enum {
@@ -252,9 +230,6 @@ extern void trace_array_put(struct trace_array *tr);
 static inline struct trace_array *top_trace_array(void)
 {
 	struct trace_array *tr;
-
-	if (list_empty(&ftrace_trace_arrays))
-		return NULL;
 
 	tr = list_entry(ftrace_trace_arrays.prev,
 			typeof(*tr), list);
@@ -334,15 +309,15 @@ struct tracer_flags {
 
 
 /**
- * struct tracer - a specific tracer and its callbacks to interact with tracefs
+ * struct tracer - a specific tracer and its callbacks to interact with debugfs
  * @name: the name chosen to select it on the available_tracers file
  * @init: called when one switches to this tracer (echo name > current_tracer)
  * @reset: called when one switches to another tracer
  * @start: called when tracing is unpaused (echo 1 > tracing_enabled)
  * @stop: called when tracing is paused (echo 0 > tracing_enabled)
- * @update_thresh: called when tracing_thresh is updated
  * @open: called when the trace file is opened
  * @pipe_open: called when the trace_pipe file is opened
+ * @wait_pipe: override how the user waits for traces on trace_pipe
  * @close: called when the trace file is released
  * @pipe_close: called when the trace_pipe file is released
  * @read: override the default read callback on trace_pipe
@@ -359,9 +334,9 @@ struct tracer {
 	void			(*reset)(struct trace_array *tr);
 	void			(*start)(struct trace_array *tr);
 	void			(*stop)(struct trace_array *tr);
-	int			(*update_thresh)(struct trace_array *tr);
 	void			(*open)(struct trace_iterator *iter);
 	void			(*pipe_open)(struct trace_iterator *iter);
+	int			(*wait_pipe)(struct trace_iterator *iter);
 	void			(*close)(struct trace_iterator *iter);
 	void			(*pipe_close)(struct trace_iterator *iter);
 	ssize_t			(*read)(struct trace_iterator *iter,
@@ -380,17 +355,14 @@ struct tracer {
 	void			(*print_header)(struct seq_file *m);
 	enum print_line_t	(*print_line)(struct trace_iterator *iter);
 	/* If you handled the flag setting, return 0 */
-	int			(*set_flag)(struct trace_array *tr,
-					    u32 old_flags, u32 bit, int set);
+	int			(*set_flag)(u32 old_flags, u32 bit, int set);
 	/* Return 0 if OK with change, else return non-zero */
-	int			(*flag_changed)(struct trace_array *tr,
+	int			(*flag_changed)(struct tracer *tracer,
 						u32 mask, int set);
 	struct tracer		*next;
 	struct tracer_flags	*flags;
-	int			enabled;
-	int			ref;
 	bool			print_max;
-	bool			allow_instances;
+	bool			enabled;
 #ifdef CONFIG_TRACER_MAX_TRACE
 	bool			use_max_tr;
 #endif
@@ -436,7 +408,13 @@ enum {
 	TRACE_FTRACE_IRQ_BIT,
 	TRACE_FTRACE_SIRQ_BIT,
 
-	/* INTERNAL_BITs must be greater than FTRACE_BITs */
+	/* GLOBAL_BITs must be greater than FTRACE_BITs */
+	TRACE_GLOBAL_BIT,
+	TRACE_GLOBAL_NMI_BIT,
+	TRACE_GLOBAL_IRQ_BIT,
+	TRACE_GLOBAL_SIRQ_BIT,
+
+	/* INTERNAL_BITs must be greater than GLOBAL_BITs */
 	TRACE_INTERNAL_BIT,
 	TRACE_INTERNAL_NMI_BIT,
 	TRACE_INTERNAL_IRQ_BIT,
@@ -463,6 +441,9 @@ enum {
 
 #define TRACE_FTRACE_START	TRACE_FTRACE_BIT
 #define TRACE_FTRACE_MAX	((1 << (TRACE_FTRACE_START + TRACE_CONTEXT_BITS)) - 1)
+
+#define TRACE_GLOBAL_START	TRACE_GLOBAL_BIT
+#define TRACE_GLOBAL_MAX	((1 << (TRACE_GLOBAL_START + TRACE_CONTEXT_BITS)) - 1)
 
 #define TRACE_LIST_START	TRACE_INTERNAL_BIT
 #define TRACE_LIST_MAX		((1 << (TRACE_LIST_START + TRACE_CONTEXT_BITS)) - 1)
@@ -543,6 +524,7 @@ struct dentry *trace_create_file(const char *name,
 				 void *data,
 				 const struct file_operations *fops);
 
+struct dentry *tracing_init_dentry_tr(struct trace_array *tr);
 struct dentry *tracing_init_dentry(void);
 
 struct ring_buffer_event;
@@ -571,6 +553,17 @@ void trace_init_global_iter(struct trace_iterator *iter);
 
 void tracing_iter_reset(struct trace_iterator *iter, int cpu);
 
+int poll_wait_pipe(struct trace_iterator *iter);
+
+void tracing_sched_switch_trace(struct trace_array *tr,
+				struct task_struct *prev,
+				struct task_struct *next,
+				unsigned long flags, int pc);
+
+void tracing_sched_wakeup_trace(struct trace_array *tr,
+				struct task_struct *wakee,
+				struct task_struct *cur,
+				unsigned long flags, int pc);
 void trace_function(struct trace_array *tr,
 		    unsigned long ip,
 		    unsigned long parent_ip,
@@ -590,6 +583,9 @@ void set_graph_array(struct trace_array *tr);
 
 void tracing_start_cmdline_record(void);
 void tracing_stop_cmdline_record(void);
+void tracing_sched_switch_assign_trace(struct trace_array *tr);
+void tracing_stop_sched_switch_record(void);
+void tracing_start_sched_switch_record(void);
 int register_tracer(struct tracer *type);
 int is_tracing_stopped(void);
 
@@ -605,6 +601,8 @@ extern unsigned long nsecs_to_usecs(unsigned long nsecs);
 extern unsigned long tracing_thresh;
 
 #ifdef CONFIG_TRACER_MAX_TRACE
+extern unsigned long tracing_max_latency;
+
 void update_max_tr(struct trace_array *tr, struct task_struct *tsk, int cpu);
 void update_max_tr_single(struct trace_array *tr,
 			  struct task_struct *tsk, int cpu);
@@ -710,8 +708,6 @@ enum print_line_t print_trace_line(struct trace_iterator *iter);
 
 extern unsigned long trace_flags;
 
-extern char trace_find_mark(unsigned long long duration);
-
 /* Standard output formatting function used for function return traces */
 #ifdef CONFIG_FUNCTION_GRAPH_TRACER
 
@@ -722,15 +718,13 @@ extern char trace_find_mark(unsigned long long duration);
 #define TRACE_GRAPH_PRINT_PROC          0x8
 #define TRACE_GRAPH_PRINT_DURATION      0x10
 #define TRACE_GRAPH_PRINT_ABS_TIME      0x20
-#define TRACE_GRAPH_PRINT_IRQS          0x40
-#define TRACE_GRAPH_PRINT_TAIL          0x80
 #define TRACE_GRAPH_PRINT_FILL_SHIFT	28
 #define TRACE_GRAPH_PRINT_FILL_MASK	(0x3 << TRACE_GRAPH_PRINT_FILL_SHIFT)
 
 extern enum print_line_t
 print_graph_function_flags(struct trace_iterator *iter, u32 flags);
 extern void print_graph_headers_flags(struct seq_file *s, u32 flags);
-extern void
+extern enum print_line_t
 trace_print_graph_duration(unsigned long long duration, struct trace_seq *s);
 extern void graph_trace_open(struct trace_iterator *iter);
 extern void graph_trace_close(struct trace_iterator *iter);
@@ -820,45 +814,13 @@ static inline int ftrace_trace_task(struct task_struct *task)
 	return test_tsk_trace_trace(task);
 }
 extern int ftrace_is_dead(void);
-int ftrace_create_function_files(struct trace_array *tr,
-				 struct dentry *parent);
-void ftrace_destroy_function_files(struct trace_array *tr);
-void ftrace_init_global_array_ops(struct trace_array *tr);
-void ftrace_init_array_ops(struct trace_array *tr, ftrace_func_t func);
-void ftrace_reset_array_ops(struct trace_array *tr);
-int using_ftrace_ops_list_func(void);
 #else
 static inline int ftrace_trace_task(struct task_struct *task)
 {
 	return 1;
 }
 static inline int ftrace_is_dead(void) { return 0; }
-static inline int
-ftrace_create_function_files(struct trace_array *tr,
-			     struct dentry *parent)
-{
-	return 0;
-}
-static inline void ftrace_destroy_function_files(struct trace_array *tr) { }
-static inline __init void
-ftrace_init_global_array_ops(struct trace_array *tr) { }
-static inline void ftrace_reset_array_ops(struct trace_array *tr) { }
-/* ftace_func_t type is not defined, use macro instead of static inline */
-#define ftrace_init_array_ops(tr, func) do { } while (0)
-#endif /* CONFIG_FUNCTION_TRACER */
-
-#if defined(CONFIG_FUNCTION_TRACER) && defined(CONFIG_DYNAMIC_FTRACE)
-void ftrace_create_filter_files(struct ftrace_ops *ops,
-				struct dentry *parent);
-void ftrace_destroy_filter_files(struct ftrace_ops *ops);
-#else
-/*
- * The ops parameter passed in is usually undefined.
- * This must be a macro.
- */
-#define ftrace_create_filter_files(ops, parent) do { } while (0)
-#define ftrace_destroy_filter_files(ops) do { } while (0)
-#endif /* CONFIG_FUNCTION_TRACER && CONFIG_DYNAMIC_FTRACE */
+#endif
 
 int ftrace_event_is_function(struct ftrace_event_call *call);
 
@@ -1290,7 +1252,7 @@ int set_tracer_flag(struct trace_array *tr, unsigned int mask, int enabled);
 #undef FTRACE_ENTRY
 #define FTRACE_ENTRY(call, struct_name, id, tstruct, print, filter)	\
 	extern struct ftrace_event_call					\
-	__aligned(4) event_##call;
+	__attribute__((__aligned__(4))) event_##call;
 #undef FTRACE_ENTRY_DUP
 #define FTRACE_ENTRY_DUP(call, struct_name, id, tstruct, print, filter)	\
 	FTRACE_ENTRY(call, struct_name, id, PARAMS(tstruct), PARAMS(print), \
@@ -1303,21 +1265,5 @@ int perf_ftrace_event_register(struct ftrace_event_call *call,
 #else
 #define perf_ftrace_event_register NULL
 #endif
-
-#ifdef CONFIG_FTRACE_SYSCALLS
-void init_ftrace_syscalls(void);
-#else
-static inline void init_ftrace_syscalls(void) { }
-#endif
-
-#ifdef CONFIG_EVENT_TRACING
-void trace_event_init(void);
-void trace_event_enum_update(struct trace_enum_map **map, int len);
-#else
-static inline void __init trace_event_init(void) { }
-static inline void trace_event_enum_update(struct trace_enum_map **map, int len) { }
-#endif
-
-extern struct trace_iterator *tracepoint_print_iter;
 
 #endif /* _LINUX_KERNEL_TRACE_H */

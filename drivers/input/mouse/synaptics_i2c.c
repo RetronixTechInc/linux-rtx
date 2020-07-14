@@ -614,7 +614,8 @@ static int synaptics_i2c_remove(struct i2c_client *client)
 	return 0;
 }
 
-static int __maybe_unused synaptics_i2c_suspend(struct device *dev)
+#ifdef CONFIG_PM_SLEEP
+static int synaptics_i2c_suspend(struct device *dev)
 {
 	struct i2c_client *client = to_i2c_client(dev);
 	struct synaptics_i2c *touch = i2c_get_clientdata(client);
@@ -627,7 +628,7 @@ static int __maybe_unused synaptics_i2c_suspend(struct device *dev)
 	return 0;
 }
 
-static int __maybe_unused synaptics_i2c_resume(struct device *dev)
+static int synaptics_i2c_resume(struct device *dev)
 {
 	int ret;
 	struct i2c_client *client = to_i2c_client(dev);
@@ -642,6 +643,7 @@ static int __maybe_unused synaptics_i2c_resume(struct device *dev)
 
 	return 0;
 }
+#endif
 
 static SIMPLE_DEV_PM_OPS(synaptics_i2c_pm, synaptics_i2c_suspend,
 			 synaptics_i2c_resume);

@@ -124,7 +124,8 @@ static inline int cfs_fail_timeout_set(__u32 id, __u32 value, int ms, int set)
 {
 	if (unlikely(CFS_FAIL_PRECHECK(id)))
 		return __cfs_fail_timeout_set(id, value, ms, set);
-	return 0;
+	else
+		return 0;
 }
 
 /* If id hit cfs_fail_loc, sleep for seconds or milliseconds */
@@ -152,11 +153,10 @@ static inline void cfs_race(__u32 id)
 	if (CFS_FAIL_PRECHECK(id)) {
 		if (unlikely(__cfs_fail_check_set(id, 0, CFS_FAIL_LOC_NOSET))) {
 			int rc;
-
 			cfs_race_state = 0;
 			CERROR("cfs_race id %x sleeping\n", id);
-			rc = wait_event_interruptible(cfs_race_waitq,
-						      cfs_race_state != 0);
+			cfs_wait_event_interruptible(cfs_race_waitq,
+						     cfs_race_state != 0, rc);
 			CERROR("cfs_fail_race id %x awake, rc=%d\n", id, rc);
 		} else {
 			CERROR("cfs_fail_race id %x waking\n", id);
@@ -165,7 +165,6 @@ static inline void cfs_race(__u32 id)
 		}
 	}
 }
-
 #define CFS_RACE(id) cfs_race(id)
 
 #endif /* _LIBCFS_FAIL_H */

@@ -1638,16 +1638,14 @@ static const struct file_operations dvb_ca_fops = {
 	.llseek = noop_llseek,
 };
 
-static const struct dvb_device dvbdev_ca = {
+static struct dvb_device dvbdev_ca = {
 	.priv = NULL,
 	.users = 1,
 	.readers = 1,
 	.writers = 1,
-#if defined(CONFIG_MEDIA_CONTROLLER_DVB)
-	.name = "dvb-ca-en50221",
-#endif
 	.fops = &dvb_ca_fops,
 };
+
 
 /* ******************************************************************************** */
 /* Initialisation/shutdown functions */
@@ -1678,14 +1676,14 @@ int dvb_ca_en50221_init(struct dvb_adapter *dvb_adapter,
 	/* initialise the system data */
 	if ((ca = kzalloc(sizeof(struct dvb_ca_private), GFP_KERNEL)) == NULL) {
 		ret = -ENOMEM;
-		goto exit;
+		goto error;
 	}
 	ca->pub = pubca;
 	ca->flags = flags;
 	ca->slot_count = slot_count;
 	if ((ca->slot_info = kcalloc(slot_count, sizeof(struct dvb_ca_slot), GFP_KERNEL)) == NULL) {
 		ret = -ENOMEM;
-		goto free_ca;
+		goto error;
 	}
 	init_waitqueue_head(&ca->wait_queue);
 	ca->open = 0;
@@ -1696,7 +1694,7 @@ int dvb_ca_en50221_init(struct dvb_adapter *dvb_adapter,
 	/* register the DVB device */
 	ret = dvb_register_device(dvb_adapter, &ca->dvbdev, &dvbdev_ca, ca, DVB_DEVICE_CA);
 	if (ret)
-		goto free_slot_info;
+		goto error;
 
 	/* now initialise each slot */
 	for (i = 0; i < slot_count; i++) {
@@ -1711,7 +1709,7 @@ int dvb_ca_en50221_init(struct dvb_adapter *dvb_adapter,
 
 	if (signal_pending(current)) {
 		ret = -EINTR;
-		goto unregister_device;
+		goto error;
 	}
 	mb();
 
@@ -1722,17 +1720,17 @@ int dvb_ca_en50221_init(struct dvb_adapter *dvb_adapter,
 		ret = PTR_ERR(ca->thread);
 		printk("dvb_ca_init: failed to start kernel_thread (%d)\n",
 			ret);
-		goto unregister_device;
+		goto error;
 	}
 	return 0;
 
-unregister_device:
-	dvb_unregister_device(ca->dvbdev);
-free_slot_info:
-	kfree(ca->slot_info);
-free_ca:
-	kfree(ca);
-exit:
+error:
+	if (ca != NULL) {
+		if (ca->dvbdev != NULL)
+			dvb_unregister_device(ca->dvbdev);
+		kfree(ca->slot_info);
+		kfree(ca);
+	}
 	pubca->private = NULL;
 	return ret;
 }

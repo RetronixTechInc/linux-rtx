@@ -10,7 +10,6 @@ struct perf_evsel;
 struct perf_sample;
 struct perf_tool;
 struct machine;
-struct ordered_events;
 
 typedef int (*event_sample)(struct perf_tool *tool, union perf_event *event,
 			    struct perf_sample *sample,
@@ -26,9 +25,6 @@ typedef int (*event_attr_op)(struct perf_tool *tool,
 typedef int (*event_op2)(struct perf_tool *tool, union perf_event *event,
 			 struct perf_session *session);
 
-typedef int (*event_oe)(struct perf_tool *tool, union perf_event *event,
-			struct ordered_events *oe);
-
 struct perf_tool {
 	event_sample	sample,
 			read;
@@ -42,10 +38,9 @@ struct perf_tool {
 			unthrottle;
 	event_attr_op	attr;
 	event_op2	tracing_data;
-	event_oe	finished_round;
-	event_op2	build_id,
-			id_index;
-	bool		ordered_events;
+	event_op2	finished_round,
+			build_id;
+	bool		ordered_samples;
 	bool		ordering_requires_timestamps;
 };
 

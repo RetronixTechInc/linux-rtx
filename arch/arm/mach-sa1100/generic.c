@@ -33,7 +33,6 @@
 #include <mach/irqs.h>
 
 #include "generic.h"
-#include <clocksource/pxa.h>
 
 unsigned int reset_status;
 EXPORT_SYMBOL(reset_status);
@@ -368,11 +367,6 @@ static struct map_desc standard_io_desc[] __initdata = {
 void __init sa1100_map_io(void)
 {
 	iotable_init(standard_io_desc, ARRAY_SIZE(standard_io_desc));
-}
-
-void __init sa1100_timer_init(void)
-{
-	pxa_timer_nodt_init(IRQ_OST0, io_p2v(0x90000000), 3686400);
 }
 
 /*

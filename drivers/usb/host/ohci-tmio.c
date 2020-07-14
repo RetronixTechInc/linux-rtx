@@ -368,5 +368,6 @@ static struct platform_driver ohci_hcd_tmio_driver = {
 	.resume		= ohci_hcd_tmio_drv_resume,
 	.driver		= {
 		.name	= "tmio-ohci",
+		.owner	= THIS_MODULE,
 	},
 };

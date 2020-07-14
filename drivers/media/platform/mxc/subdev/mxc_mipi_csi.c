@@ -1,7 +1,7 @@
 /*
  * Freescale i.MX7 SoC series MIPI-CSI V3.3 receiver driver
  *
- * Copyright (C) 2015-2016 Freescale Semiconductor, Inc. All Rights Reserved.
+ * Copyright (C) 2015 Freescale Semiconductor, Inc. All Rights Reserved.
  */
 
 /*
@@ -25,15 +25,19 @@
 
 #include <linux/clk.h>
 #include <linux/delay.h>
+#include <linux/device.h>
 #include <linux/errno.h>
 #include <linux/interrupt.h>
 #include <linux/io.h>
 #include <linux/irq.h>
 #include <linux/kernel.h>
+#include <linux/memory.h>
 #include <linux/mfd/syscon.h>
 #include <linux/module.h>
 #include <linux/of.h>
 #include <linux/of_graph.h>
+#include <linux/phy/phy.h>
+#include <linux/platform_data/mipi-csis.h>
 #include <linux/platform_device.h>
 #include <linux/pm_runtime.h>
 #include <linux/regmap.h>
@@ -250,7 +254,6 @@ struct csis_hw_reset {
  * @flags: the state variable for power and streaming control
  * @clock_frequency: device bus clock frequency
  * @hs_settle: HS-RX settle time
- * @clk_settle: Clk settle time
  * @num_lanes: number of MIPI-CSI data lanes used
  * @max_num_lanes: maximum number of MIPI-CSI data lanes supported
  * @wclk_ext: CSI wrapper clock: 0 - bus clock, 1 - external SCLK_CAM
@@ -278,7 +281,6 @@ struct csi_state {
 
 	u32 clk_frequency;
 	u32 hs_settle;
-	u32 clk_settle;
 	u32 num_lanes;
 	u32 max_num_lanes;
 	u8 wclk_ext;
@@ -308,22 +310,22 @@ struct csi_state {
  */
 struct csis_pix_format {
 	unsigned int pix_width_alignment;
-	u32 code;
+	enum v4l2_mbus_pixelcode code;
 	u32 fmt_reg;
 	u8 data_alignment;
 };
 
 static const struct csis_pix_format mipi_csis_formats[] = {
 	{
-		.code = MEDIA_BUS_FMT_YUYV8_2X8,
+		.code = V4L2_MBUS_FMT_YUYV8_2X8,
 		.fmt_reg = MIPI_CSIS_ISPCFG_FMT_YCBCR422_8BIT,
 		.data_alignment = 16,
 	}, {
-		.code = MEDIA_BUS_FMT_VYUY8_2X8,
+		.code = V4L2_MBUS_FMT_VYUY8_2X8,
 		.fmt_reg = MIPI_CSIS_ISPCFG_FMT_YCBCR422_8BIT,
 		.data_alignment = 16,
 	}, {
-		.code = MEDIA_BUS_FMT_SBGGR8_1X8,
+		.code = V4L2_MBUS_FMT_SBGGR8_1X8,
 		.fmt_reg = MIPI_CSIS_ISPCFG_FMT_RAW8,
 		.data_alignment = 8,
 	}
@@ -343,7 +345,8 @@ static inline struct csi_state
 	return container_of(n, struct csi_state, subdev_notifier);
 }
 
-static const struct csis_pix_format *find_csis_format(u32 code)
+static const struct csis_pix_format *find_csis_format(
+	enum v4l2_mbus_pixelcode code)
 {
 	int i;
 
@@ -470,14 +473,11 @@ static void __mipi_csis_set_format(struct csi_state *state)
 	mipi_csis_write(state, MIPI_CSIS_ISPRESOL_CH0, val);
 }
 
-static void mipi_csis_set_hsync_settle(struct csi_state *state,
-								int hs_settle, int clk_settle)
+static void mipi_csis_set_hsync_settle(struct csi_state *state, int settle)
 {
 	u32 val = mipi_csis_read(state, MIPI_CSIS_DPHYCTRL);
 
-	val = (val & ~MIPI_CSIS_DPHYCTRL_HSS_MASK) |
-				(hs_settle << 24) | (clk_settle << 22);
-
+	val = (val & ~MIPI_CSIS_DPHYCTRL_HSS_MASK) | (settle << 24);
 	mipi_csis_write(state, MIPI_CSIS_DPHYCTRL, val);
 }
 
@@ -492,7 +492,7 @@ static void mipi_csis_set_params(struct csi_state *state)
 
 	__mipi_csis_set_format(state);
 
-	mipi_csis_set_hsync_settle(state, state->hs_settle, state->clk_settle);
+	mipi_csis_set_hsync_settle(state, state->hs_settle);
 
 	val = mipi_csis_read(state, MIPI_CSIS_ISPCONFIG_CH0);
 	if (state->csis_fmt->data_alignment == 32)
@@ -687,7 +687,7 @@ unlock:
 }
 
 static int mipi_csis_enum_mbus_fmt(struct v4l2_subdev *mipi_sd, unsigned int index,
-				u32 *code)
+				enum v4l2_mbus_pixelcode *code)
 {
 	struct csi_state *state = mipi_sd_to_csi_state(mipi_sd);
 	struct v4l2_subdev *sensor_sd = state->sensor_sd;
@@ -803,23 +803,21 @@ static int mipi_csis_g_parm(struct v4l2_subdev *mipi_sd, struct v4l2_streamparm 
 }
 
 static int mipi_csis_enum_framesizes(struct v4l2_subdev *mipi_sd,
-		struct v4l2_subdev_pad_config *cfg,
-		struct v4l2_subdev_frame_size_enum *fse)
+		struct v4l2_frmsizeenum *fsize)
 {
 	struct csi_state *state = mipi_sd_to_csi_state(mipi_sd);
 	struct v4l2_subdev *sensor_sd = state->sensor_sd;
 
-	return v4l2_subdev_call(sensor_sd, pad, enum_frame_size, NULL, fse);
+	return v4l2_subdev_call(sensor_sd, video, enum_framesizes, fsize);
 }
 
 static int mipi_csis_enum_frameintervals(struct v4l2_subdev *mipi_sd,
-		struct v4l2_subdev_pad_config *cfg,
-		struct v4l2_subdev_frame_interval_enum *fie)
+		struct v4l2_frmivalenum *interval)
 {
 	struct csi_state *state = mipi_sd_to_csi_state(mipi_sd);
 	struct v4l2_subdev *sensor_sd = state->sensor_sd;
 
-	return v4l2_subdev_call(sensor_sd, pad, enum_frame_interval, NULL, fie);
+	return v4l2_subdev_call(sensor_sd, video, enum_frameintervals, interval);
 }
 
 static int mipi_csis_log_status(struct v4l2_subdev *mipi_sd)
@@ -850,17 +848,14 @@ static struct v4l2_subdev_video_ops mipi_csis_video_ops = {
 
 	.s_parm = mipi_csis_s_parm,
 	.g_parm = mipi_csis_g_parm,
-};
 
-static const struct v4l2_subdev_pad_ops mipi_csis_pad_ops = {
-	.enum_frame_size       = mipi_csis_enum_framesizes,
-	.enum_frame_interval   = mipi_csis_enum_frameintervals,
+	.enum_framesizes     = mipi_csis_enum_framesizes,
+	.enum_frameintervals = mipi_csis_enum_frameintervals,
 };
 
 static struct v4l2_subdev_ops mipi_csis_subdev_ops = {
 	.core = &mipi_csis_core_ops,
 	.video = &mipi_csis_video_ops,
-	.pad = &mipi_csis_pad_ops,
 };
 
 static irqreturn_t mipi_csis_irq_handler(int irq, void *dev_id)
@@ -947,9 +942,6 @@ static int mipi_csis_parse_dt(struct platform_device *pdev,
 	/* Get MIPI CSI-2 bus configration from the endpoint node. */
 	of_property_read_u32(node, "csis-hs-settle",
 					&state->hs_settle);
-
-	of_property_read_u32(node, "csis-clk-settle",
-					&state->clk_settle);
 	state->wclk_ext = of_property_read_bool(node,
 					"csis-wclk");
 
@@ -1125,10 +1117,9 @@ static int mipi_csis_probe(struct platform_device *pdev)
 			goto e_sd_host;
 	}
 
-	dev_info(&pdev->dev,
-			"lanes: %d, hs_settle: %d, clk_settle: %d, wclk: %d, freq: %u\n",
-		 state->num_lanes, state->hs_settle, state->clk_settle,
-		 state->wclk_ext, state->clk_frequency);
+	dev_info(&pdev->dev, "lanes: %d, hs_settle: %d, wclk: %d, freq: %u\n",
+		 state->num_lanes, state->hs_settle, state->wclk_ext,
+		 state->clk_frequency);
 	return 0;
 
 e_sd_host:
@@ -1211,6 +1202,7 @@ static int mipi_csis_resume(struct device *dev)
 }
 #endif
 
+#ifdef CONFIG_PM_RUNTIME
 static int mipi_csis_runtime_suspend(struct device *dev)
 {
 	return mipi_csis_pm_suspend(dev, true);
@@ -1220,6 +1212,7 @@ static int mipi_csis_runtime_resume(struct device *dev)
 {
 	return mipi_csis_pm_resume(dev, true);
 }
+#endif
 
 static int mipi_csis_remove(struct platform_device *pdev)
 {

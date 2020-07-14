@@ -322,7 +322,6 @@ static int ade7753_set_irq(struct device *dev, bool enable)
 {
 	int ret;
 	u8 irqen;
-
 	ret = ade7753_spi_read_reg_8(dev, ADE7753_IRQEN, &irqen);
 	if (ret)
 		goto error_ret;
@@ -378,10 +377,9 @@ static ssize_t ade7753_read_frequency(struct device *dev,
 		struct device_attribute *attr,
 		char *buf)
 {
-	int ret;
+	int ret, len = 0;
 	u16 t;
 	int sps;
-
 	ret = ade7753_spi_read_reg_16(dev, ADE7753_MODE, &t);
 	if (ret)
 		return ret;
@@ -389,7 +387,8 @@ static ssize_t ade7753_read_frequency(struct device *dev,
 	t = (t >> 11) & 0x3;
 	sps = 27900 / (1 + t);
 
-	return sprintf(buf, "%d\n", sps);
+	len = sprintf(buf, "%d\n", sps);
+	return len;
 }
 
 static ssize_t ade7753_write_frequency(struct device *dev,
@@ -411,7 +410,7 @@ static ssize_t ade7753_write_frequency(struct device *dev,
 
 	mutex_lock(&indio_dev->mlock);
 
-	t = 27900 / val;
+	t = (27900 / val);
 	if (t > 0)
 		t--;
 
@@ -517,7 +516,11 @@ static int ade7753_probe(struct spi_device *spi)
 	if (ret)
 		return ret;
 
-	return iio_device_register(indio_dev);
+	ret = iio_device_register(indio_dev);
+	if (ret)
+		return ret;
+
+	return 0;
 }
 
 /* fixme, confirm ordering in this function */

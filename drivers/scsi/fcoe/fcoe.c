@@ -280,15 +280,14 @@ static struct scsi_host_template fcoe_shost_template = {
 	.eh_device_reset_handler = fc_eh_device_reset,
 	.eh_host_reset_handler = fc_eh_host_reset,
 	.slave_alloc = fc_slave_alloc,
-	.change_queue_depth = scsi_change_queue_depth,
+	.change_queue_depth = fc_change_queue_depth,
+	.change_queue_type = fc_change_queue_type,
 	.this_id = -1,
 	.cmd_per_lun = 3,
 	.can_queue = FCOE_MAX_OUTSTANDING_COMMANDS,
 	.use_clustering = ENABLE_CLUSTERING,
 	.sg_tablesize = SG_ALL,
 	.max_sectors = 0xffff,
-	.use_blk_tags = 1,
-	.track_queue_depth = 1,
 };
 
 /**
@@ -1670,8 +1669,10 @@ static int fcoe_xmit(struct fc_lport *lport, struct fc_frame *fp)
 	    fcoe->realdev->features & NETIF_F_HW_VLAN_CTAG_TX) {
 		/* must set skb->dev before calling vlan_put_tag */
 		skb->dev = fcoe->realdev;
-		__vlan_hwaccel_put_tag(skb, htons(ETH_P_8021Q),
-				       vlan_dev_vlan_id(fcoe->netdev));
+		skb = __vlan_hwaccel_put_tag(skb, htons(ETH_P_8021Q),
+					     vlan_dev_vlan_id(fcoe->netdev));
+		if (!skb)
+			return -ENOMEM;
 	} else
 		skb->dev = fcoe->netdev;
 
@@ -1871,7 +1872,7 @@ static int fcoe_percpu_receive_thread(void *arg)
 
 	skb_queue_head_init(&tmp);
 
-	set_user_nice(current, MIN_NICE);
+	set_user_nice(current, -20);
 
 retry:
 	while (!kthread_should_stop()) {
@@ -1883,6 +1884,7 @@ retry:
 			set_current_state(TASK_INTERRUPTIBLE);
 			spin_unlock_bh(&p->fcoe_rx_list.lock);
 			schedule();
+			set_current_state(TASK_RUNNING);
 			goto retry;
 		}
 
@@ -2631,17 +2633,13 @@ static int __init fcoe_init(void)
 		skb_queue_head_init(&p->fcoe_rx_list);
 	}
 
-	cpu_notifier_register_begin();
-
 	for_each_online_cpu(cpu)
 		fcoe_percpu_thread_create(cpu);
 
 	/* Initialize per CPU interrupt thread */
-	rc = __register_hotcpu_notifier(&fcoe_cpu_notifier);
+	rc = register_hotcpu_notifier(&fcoe_cpu_notifier);
 	if (rc)
 		goto out_free;
-
-	cpu_notifier_register_done();
 
 	/* Setup link change notification */
 	fcoe_dev_setup();
@@ -2657,9 +2655,6 @@ out_free:
 	for_each_online_cpu(cpu) {
 		fcoe_percpu_thread_destroy(cpu);
 	}
-
-	cpu_notifier_register_done();
-
 	mutex_unlock(&fcoe_config_mutex);
 	destroy_workqueue(fcoe_wq);
 	return rc;
@@ -2692,14 +2687,10 @@ static void __exit fcoe_exit(void)
 	}
 	rtnl_unlock();
 
-	cpu_notifier_register_begin();
+	unregister_hotcpu_notifier(&fcoe_cpu_notifier);
 
 	for_each_online_cpu(cpu)
 		fcoe_percpu_thread_destroy(cpu);
-
-	__unregister_hotcpu_notifier(&fcoe_cpu_notifier);
-
-	cpu_notifier_register_done();
 
 	mutex_unlock(&fcoe_config_mutex);
 

@@ -175,9 +175,8 @@ static int cpu_is_mx6q(void)
 static void vpu_reset(void)
 {
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 10, 0)
-	int ret;
-
-	ret = device_reset(vpu_dev);
+	if (device_reset(vpu_dev))
+		dev_err(vpu_dev, "failed to reset vpu\n");
 #elif LINUX_VERSION_CODE >= KERNEL_VERSION(3, 5, 0)
 	imx_src_reset_vpu();
 #else

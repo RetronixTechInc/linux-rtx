@@ -36,7 +36,7 @@ static void write_pen_release(int val)
 
 static DEFINE_SPINLOCK(boot_lock);
 
-static void sti_secondary_init(unsigned int cpu)
+void sti_secondary_init(unsigned int cpu)
 {
 	trace_hardirqs_off();
 
@@ -53,7 +53,7 @@ static void sti_secondary_init(unsigned int cpu)
 	spin_unlock(&boot_lock);
 }
 
-static int sti_boot_secondary(unsigned int cpu, struct task_struct *idle)
+int sti_boot_secondary(unsigned int cpu, struct task_struct *idle)
 {
 	unsigned long timeout;
 
@@ -97,7 +97,7 @@ static int sti_boot_secondary(unsigned int cpu, struct task_struct *idle)
 	return pen_release != -1 ? -ENOSYS : 0;
 }
 
-static void __init sti_smp_prepare_cpus(unsigned int max_cpus)
+void __init sti_smp_prepare_cpus(unsigned int max_cpus)
 {
 	void __iomem *scu_base = NULL;
 	struct device_node *np = of_find_compatible_node(

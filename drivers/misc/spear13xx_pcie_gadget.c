@@ -9,7 +9,6 @@
  * warranty of any kind, whether express or implied.
  */
 
-#include <linux/device.h>
 #include <linux/clk.h>
 #include <linux/slab.h>
 #include <linux/delay.h>
@@ -744,33 +743,58 @@ static int spear_pcie_gadget_probe(struct platform_device *pdev)
 	struct config_item		*cg_item;
 	struct configfs_subsystem *subsys;
 
-	target = devm_kzalloc(&pdev->dev, sizeof(*target), GFP_KERNEL);
+	/* get resource for application registers*/
+
+	res0 = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	if (!res0) {
+		dev_err(&pdev->dev, "no resource defined\n");
+		return -EBUSY;
+	}
+	if (!request_mem_region(res0->start, resource_size(res0),
+				pdev->name)) {
+		dev_err(&pdev->dev, "pcie gadget region already	claimed\n");
+		return -EBUSY;
+	}
+	/* get resource for dbi registers*/
+
+	res1 = platform_get_resource(pdev, IORESOURCE_MEM, 1);
+	if (!res1) {
+		dev_err(&pdev->dev, "no resource defined\n");
+		goto err_rel_res0;
+	}
+	if (!request_mem_region(res1->start, resource_size(res1),
+				pdev->name)) {
+		dev_err(&pdev->dev, "pcie gadget region already	claimed\n");
+		goto err_rel_res0;
+	}
+
+	target = kzalloc(sizeof(*target), GFP_KERNEL);
 	if (!target) {
 		dev_err(&pdev->dev, "out of memory\n");
-		return -ENOMEM;
+		status = -ENOMEM;
+		goto err_rel_res;
 	}
 
 	cg_item = &target->subsys.su_group.cg_item;
 	sprintf(cg_item->ci_namebuf, "pcie_gadget.%d", pdev->id);
 	cg_item->ci_type	= &pcie_gadget_target_type;
 	config = &target->config;
-
-	/* get resource for application registers*/
-	res0 = platform_get_resource(pdev, IORESOURCE_MEM, 0);
-	config->va_app_base = devm_ioremap_resource(&pdev->dev, res0);
-	if (IS_ERR(config->va_app_base)) {
+	config->va_app_base = (void __iomem *)ioremap(res0->start,
+			resource_size(res0));
+	if (!config->va_app_base) {
 		dev_err(&pdev->dev, "ioremap fail\n");
-		return PTR_ERR(config->va_app_base);
+		status = -ENOMEM;
+		goto err_kzalloc;
 	}
 
-	/* get resource for dbi registers*/
-	res1 = platform_get_resource(pdev, IORESOURCE_MEM, 1);
 	config->base = (void __iomem *)res1->start;
 
-	config->va_dbi_base = devm_ioremap_resource(&pdev->dev, res1);
-	if (IS_ERR(config->va_dbi_base)) {
+	config->va_dbi_base = (void __iomem *)ioremap(res1->start,
+			resource_size(res1));
+	if (!config->va_dbi_base) {
 		dev_err(&pdev->dev, "ioremap fail\n");
-		return PTR_ERR(config->va_dbi_base);
+		status = -ENOMEM;
+		goto err_iounmap_app;
 	}
 
 	platform_set_drvdata(pdev, target);
@@ -778,15 +802,15 @@ static int spear_pcie_gadget_probe(struct platform_device *pdev)
 	irq = platform_get_irq(pdev, 0);
 	if (irq < 0) {
 		dev_err(&pdev->dev, "no update irq?\n");
-		return irq;
+		status = irq;
+		goto err_iounmap;
 	}
 
-	status = devm_request_irq(&pdev->dev, irq, spear_pcie_gadget_irq,
-				  0, pdev->name, NULL);
+	status = request_irq(irq, spear_pcie_gadget_irq, 0, pdev->name, NULL);
 	if (status) {
 		dev_err(&pdev->dev,
 			"pcie gadget interrupt IRQ%d already claimed\n", irq);
-		return status;
+		goto err_iounmap;
 	}
 
 	/* Register configfs hooks */
@@ -795,7 +819,7 @@ static int spear_pcie_gadget_probe(struct platform_device *pdev)
 	mutex_init(&subsys->su_mutex);
 	status = configfs_register_subsystem(subsys);
 	if (status)
-		return status;
+		goto err_irq;
 
 	/*
 	 * init basic pcie application registers
@@ -811,12 +835,13 @@ static int spear_pcie_gadget_probe(struct platform_device *pdev)
 		clk = clk_get_sys("pcie1", NULL);
 		if (IS_ERR(clk)) {
 			pr_err("%s:couldn't get clk for pcie1\n", __func__);
-			return PTR_ERR(clk);
+			status = PTR_ERR(clk);
+			goto err_irq;
 		}
 		status = clk_enable(clk);
 		if (status) {
 			pr_err("%s:couldn't enable clk for pcie1\n", __func__);
-			return status;
+			goto err_irq;
 		}
 	} else if (pdev->id == 2) {
 		/*
@@ -826,26 +851,53 @@ static int spear_pcie_gadget_probe(struct platform_device *pdev)
 		clk = clk_get_sys("pcie2", NULL);
 		if (IS_ERR(clk)) {
 			pr_err("%s:couldn't get clk for pcie2\n", __func__);
-			return PTR_ERR(clk);
+			status = PTR_ERR(clk);
+			goto err_irq;
 		}
 		status = clk_enable(clk);
 		if (status) {
 			pr_err("%s:couldn't enable clk for pcie2\n", __func__);
-			return status;
+			goto err_irq;
 		}
 	}
 	spear13xx_pcie_device_init(config);
 
 	return 0;
+err_irq:
+	free_irq(irq, NULL);
+err_iounmap:
+	iounmap(config->va_dbi_base);
+err_iounmap_app:
+	iounmap(config->va_app_base);
+err_kzalloc:
+	kfree(target);
+err_rel_res:
+	release_mem_region(res1->start, resource_size(res1));
+err_rel_res0:
+	release_mem_region(res0->start, resource_size(res0));
+	return status;
 }
 
 static int spear_pcie_gadget_remove(struct platform_device *pdev)
 {
+	struct resource *res0, *res1;
 	static struct pcie_gadget_target *target;
+	struct spear_pcie_gadget_config *config;
+	int irq;
 
+	res0 = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	res1 = platform_get_resource(pdev, IORESOURCE_MEM, 1);
+	irq = platform_get_irq(pdev, 0);
 	target = platform_get_drvdata(pdev);
+	config = &target->config;
 
+	free_irq(irq, NULL);
+	iounmap(config->va_dbi_base);
+	iounmap(config->va_app_base);
+	release_mem_region(res1->start, resource_size(res1));
+	release_mem_region(res0->start, resource_size(res0));
 	configfs_unregister_subsystem(&target->subsys);
+	kfree(target);
 
 	return 0;
 }

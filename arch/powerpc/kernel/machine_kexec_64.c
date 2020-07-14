@@ -96,6 +96,8 @@ int default_machine_kexec_prepare(struct kimage *image)
 	return 0;
 }
 
+#define IND_FLAGS (IND_DESTINATION | IND_INDIRECTION | IND_DONE | IND_SOURCE)
+
 static void copy_segments(unsigned long ind)
 {
 	unsigned long entry;
@@ -328,7 +330,7 @@ void default_machine_kexec(struct kimage *image)
         * using debugger IPI.
         */
 
-	if (!kdump_in_progress())
+	if (crashing_cpu == -1)
 		kexec_prepare_cpus();
 
 	pr_debug("kexec: Starting switchover sequence.\n");

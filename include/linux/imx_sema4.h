@@ -37,23 +37,26 @@ static const unsigned int idx_sema4[SEMA4_NUM_GATES] = {
 };
 
 struct imx_sema4_mutex {
-	u32			valid;
-	u32			gate_num;
+	unsigned int		valid;
+	unsigned int		gate_num;
 	unsigned char		gate_val;
 	wait_queue_head_t       wait_q;
 };
 
 struct imx_sema4_mutex_device {
 	struct device		*dev;
-	u16			cpntf_val;
-	u16			cpine_val;
+	unsigned short		cpntf_val;
+	unsigned short		cpine_val;
 	void __iomem		*ioaddr;	/* Mapped address */
 	spinlock_t		lock;		/* Mutex */
 	int			irq;
+	struct clk		*clk;
 
-	u16			alloced;
+	unsigned short		alloced;
 	struct imx_sema4_mutex	*mutex_ptr[SEMA4_NUM_GATES];
 };
+
+extern struct imx_sema4_mutex *mcc_shm_ptr;
 
 struct imx_sema4_mutex *
 	imx_sema4_mutex_create(u32 dev_num, u32 mutex_num);

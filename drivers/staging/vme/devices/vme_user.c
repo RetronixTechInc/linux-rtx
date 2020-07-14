@@ -17,7 +17,6 @@
 
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
-#include <linux/atomic.h>
 #include <linux/cdev.h>
 #include <linux/delay.h>
 #include <linux/device.h>
@@ -42,6 +41,7 @@
 
 #include "vme_user.h"
 
+static DEFINE_MUTEX(vme_user_mutex);
 static const char driver_name[] = "vme_user";
 
 static int bus[VME_USER_BUS_MAX];
@@ -100,7 +100,6 @@ struct image_desc {
 	struct device *device;	/* Sysfs device */
 	struct vme_resource *resource;	/* VME resource */
 	int users;		/* Number of current users */
-	int mmap_count;		/* Number of current mmap's */
 };
 static struct image_desc image[VME_DEVS];
 
@@ -136,10 +135,6 @@ static ssize_t vme_user_write(struct file *, const char __user *, size_t,
 	loff_t *);
 static loff_t vme_user_llseek(struct file *, loff_t, int);
 static long vme_user_unlocked_ioctl(struct file *, unsigned int, unsigned long);
-static int vme_user_mmap(struct file *file, struct vm_area_struct *vma);
-
-static void vme_user_vm_open(struct vm_area_struct *vma);
-static void vme_user_vm_close(struct vm_area_struct *vma);
 
 static int vme_user_match(struct vme_dev *);
 static int vme_user_probe(struct vme_dev *);
@@ -153,17 +148,6 @@ static const struct file_operations vme_user_fops = {
 	.llseek = vme_user_llseek,
 	.unlocked_ioctl = vme_user_unlocked_ioctl,
 	.compat_ioctl = vme_user_unlocked_ioctl,
-	.mmap = vme_user_mmap,
-};
-
-struct vme_user_vma_priv {
-	unsigned int minor;
-	atomic_t refcnt;
-};
-
-static const struct vm_operations_struct vme_user_vm_ops = {
-	.open = vme_user_vm_open,
-	.close = vme_user_vm_close,
 };
 
 
@@ -426,19 +410,42 @@ static ssize_t vme_user_write(struct file *file, const char __user *buf,
 
 static loff_t vme_user_llseek(struct file *file, loff_t off, int whence)
 {
+	loff_t absolute = -1;
 	unsigned int minor = MINOR(file_inode(file)->i_rdev);
 	size_t image_size;
-	loff_t res;
 
 	if (minor == CONTROL_MINOR)
 		return -EINVAL;
 
 	mutex_lock(&image[minor].mutex);
 	image_size = vme_get_size(image[minor].resource);
-	res = fixed_size_llseek(file, off, whence, image_size);
+
+	switch (whence) {
+	case SEEK_SET:
+		absolute = off;
+		break;
+	case SEEK_CUR:
+		absolute = file->f_pos + off;
+		break;
+	case SEEK_END:
+		absolute = image_size + off;
+		break;
+	default:
+		mutex_unlock(&image[minor].mutex);
+		return -EINVAL;
+		break;
+	}
+
+	if ((absolute < 0) || (absolute >= image_size)) {
+		mutex_unlock(&image[minor].mutex);
+		return -EINVAL;
+	}
+
+	file->f_pos = absolute;
+
 	mutex_unlock(&image[minor].mutex);
 
-	return res;
+	return absolute;
 }
 
 /*
@@ -476,9 +483,11 @@ static int vme_user_ioctl(struct inode *inode, struct file *file,
 				return -EFAULT;
 			}
 
-			return vme_irq_generate(vme_user_bridge,
+			retval = vme_irq_generate(vme_user_bridge,
 						  irq_req.level,
 						  irq_req.statid);
+
+			return retval;
 		}
 		break;
 	case MASTER_MINOR:
@@ -502,13 +511,9 @@ static int vme_user_ioctl(struct inode *inode, struct file *file,
 			}
 
 			return retval;
+			break;
 
 		case VME_SET_MASTER:
-
-			if (image[minor].mmap_count != 0) {
-				pr_warn("Can't adjust mapped window\n");
-				return -EPERM;
-			}
 
 			copied = copy_from_user(&master, argp, sizeof(master));
 			if (copied != 0) {
@@ -547,6 +552,7 @@ static int vme_user_ioctl(struct inode *inode, struct file *file,
 			}
 
 			return retval;
+			break;
 
 		case VME_SET_SLAVE:
 
@@ -576,77 +582,12 @@ static long
 vme_user_unlocked_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 {
 	int ret;
-	struct inode *inode = file_inode(file);
-	unsigned int minor = MINOR(inode->i_rdev);
 
-	mutex_lock(&image[minor].mutex);
-	ret = vme_user_ioctl(inode, file, cmd, arg);
-	mutex_unlock(&image[minor].mutex);
+	mutex_lock(&vme_user_mutex);
+	ret = vme_user_ioctl(file_inode(file), file, cmd, arg);
+	mutex_unlock(&vme_user_mutex);
 
 	return ret;
-}
-
-static void vme_user_vm_open(struct vm_area_struct *vma)
-{
-	struct vme_user_vma_priv *vma_priv = vma->vm_private_data;
-
-	atomic_inc(&vma_priv->refcnt);
-}
-
-static void vme_user_vm_close(struct vm_area_struct *vma)
-{
-	struct vme_user_vma_priv *vma_priv = vma->vm_private_data;
-	unsigned int minor = vma_priv->minor;
-
-	if (!atomic_dec_and_test(&vma_priv->refcnt))
-		return;
-
-	mutex_lock(&image[minor].mutex);
-	image[minor].mmap_count--;
-	mutex_unlock(&image[minor].mutex);
-
-	kfree(vma_priv);
-}
-
-static int vme_user_master_mmap(unsigned int minor, struct vm_area_struct *vma)
-{
-	int err;
-	struct vme_user_vma_priv *vma_priv;
-
-	mutex_lock(&image[minor].mutex);
-
-	err = vme_master_mmap(image[minor].resource, vma);
-	if (err) {
-		mutex_unlock(&image[minor].mutex);
-		return err;
-	}
-
-	vma_priv = kmalloc(sizeof(struct vme_user_vma_priv), GFP_KERNEL);
-	if (vma_priv == NULL) {
-		mutex_unlock(&image[minor].mutex);
-		return -ENOMEM;
-	}
-
-	vma_priv->minor = minor;
-	atomic_set(&vma_priv->refcnt, 1);
-	vma->vm_ops = &vme_user_vm_ops;
-	vma->vm_private_data = vma_priv;
-
-	image[minor].mmap_count++;
-
-	mutex_unlock(&image[minor].mutex);
-
-	return 0;
-}
-
-static int vme_user_mmap(struct file *file, struct vm_area_struct *vma)
-{
-	unsigned int minor = MINOR(file_inode(file)->i_rdev);
-
-	if (type[minor] == MASTER_MINOR)
-		return vme_user_master_mmap(minor, vma);
-
-	return -ENODEV;
 }
 
 
@@ -743,7 +684,7 @@ static int vme_user_match(struct vme_dev *vdev)
 static int vme_user_probe(struct vme_dev *vdev)
 {
 	int i, err;
-	char *name;
+	char name[12];
 
 	/* Save pointer to the bridge device */
 	if (vme_user_bridge != NULL) {
@@ -835,8 +776,7 @@ static int vme_user_probe(struct vme_dev *vdev)
 		image[i].kern_buf = kmalloc(image[i].size_buf, GFP_KERNEL);
 		if (image[i].kern_buf == NULL) {
 			err = -ENOMEM;
-			vme_master_free(image[i].resource);
-			goto err_master;
+			goto err_master_buf;
 		}
 	}
 
@@ -851,20 +791,20 @@ static int vme_user_probe(struct vme_dev *vdev)
 	/* Add sysfs Entries */
 	for (i = 0; i < VME_DEVS; i++) {
 		int num;
-
 		switch (type[i]) {
 		case MASTER_MINOR:
-			name = "bus/vme/m%d";
+			sprintf(name, "bus/vme/m%%d");
 			break;
 		case CONTROL_MINOR:
-			name = "bus/vme/ctl";
+			sprintf(name, "bus/vme/ctl");
 			break;
 		case SLAVE_MINOR:
-			name = "bus/vme/s%d";
+			sprintf(name, "bus/vme/s%%d");
 			break;
 		default:
 			err = -EINVAL;
 			goto err_sysfs;
+			break;
 		}
 
 		num = (type[i] == SLAVE_MINOR) ? i - (MASTER_MAX + 1) : i;
@@ -879,6 +819,8 @@ static int vme_user_probe(struct vme_dev *vdev)
 
 	return 0;
 
+	/* Ensure counter set correcty to destroy all sysfs devices */
+	i = VME_DEVS;
 err_sysfs:
 	while (i > 0) {
 		i--;
@@ -888,10 +830,12 @@ err_sysfs:
 
 	/* Ensure counter set correcty to unalloc all master windows */
 	i = MASTER_MAX + 1;
+err_master_buf:
+	for (i = MASTER_MINOR; i < (MASTER_MAX + 1); i++)
+		kfree(image[i].kern_buf);
 err_master:
 	while (i > MASTER_MINOR) {
 		i--;
-		kfree(image[i].kern_buf);
 		vme_master_free(image[i].resource);
 	}
 

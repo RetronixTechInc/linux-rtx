@@ -216,6 +216,8 @@ int sequencer_write(int dev, struct file *file, const char __user *buf, int coun
 
 	dev = dev >> 4;
 
+	DEB(printk("sequencer_write(dev=%d, count=%d)\n", dev, count));
+
 	if (mode == OPEN_READ)
 		return -EIO;
 
@@ -952,6 +954,8 @@ int sequencer_open(int dev, struct file *file)
 	dev = dev >> 4;
 	mode = translate_mode(file);
 
+	DEB(printk("sequencer_open(dev=%d)\n", dev));
+
 	if (!sequencer_ok)
 	{
 /*		printk("Sound card: sequencer not initialized\n");*/
@@ -1123,6 +1127,8 @@ void sequencer_release(int dev, struct file *file)
 	int mode = translate_mode(file);
 
 	dev = dev >> 4;
+
+	DEB(printk("sequencer_release(dev=%d)\n", dev));
 
 	/*
 	 * Wait until the queue is empty (if we don't have nonblock)

@@ -67,20 +67,9 @@ static int adp5588_gpio_get_value(struct gpio_chip *chip, unsigned off)
 {
 	struct adp5588_gpio *dev =
 	    container_of(chip, struct adp5588_gpio, gpio_chip);
-	unsigned bank = ADP5588_BANK(off);
-	unsigned bit = ADP5588_BIT(off);
-	int val;
 
-	mutex_lock(&dev->lock);
-
-	if (dev->dir[bank] & bit)
-		val = dev->dat_out[bank];
-	else
-		val = adp5588_gpio_read(dev->client, GPIO_DAT_STAT1 + bank);
-
-	mutex_unlock(&dev->lock);
-
-	return !!(val & bit);
+	return !!(adp5588_gpio_read(dev->client,
+		  GPIO_DAT_STAT1 + ADP5588_BANK(off)) & ADP5588_BIT(off));
 }
 
 static void adp5588_gpio_set_value(struct gpio_chip *chip,
@@ -367,7 +356,7 @@ static int adp5588_gpio_probe(struct i2c_client *client,
 	struct gpio_chip *gc;
 	int ret, i, revid;
 
-	if (!pdata) {
+	if (pdata == NULL) {
 		dev_err(&client->dev, "missing platform data\n");
 		return -ENODEV;
 	}
@@ -378,9 +367,11 @@ static int adp5588_gpio_probe(struct i2c_client *client,
 		return -EIO;
 	}
 
-	dev = devm_kzalloc(&client->dev, sizeof(*dev), GFP_KERNEL);
-	if (!dev)
+	dev = kzalloc(sizeof(*dev), GFP_KERNEL);
+	if (dev == NULL) {
+		dev_err(&client->dev, "failed to alloc memory\n");
 		return -ENOMEM;
+	}
 
 	dev->client = client;
 
@@ -395,7 +386,6 @@ static int adp5588_gpio_probe(struct i2c_client *client,
 	gc->ngpio = ADP5588_MAXGPIO;
 	gc->label = client->name;
 	gc->owner = THIS_MODULE;
-	gc->names = pdata->names;
 
 	mutex_init(&dev->lock);
 
@@ -446,6 +436,7 @@ static int adp5588_gpio_probe(struct i2c_client *client,
 err_irq:
 	adp5588_irq_teardown(dev);
 err:
+	kfree(dev);
 	return ret;
 }
 
@@ -469,8 +460,13 @@ static int adp5588_gpio_remove(struct i2c_client *client)
 	if (dev->irq_base)
 		free_irq(dev->client->irq, dev);
 
-	gpiochip_remove(&dev->gpio_chip);
+	ret = gpiochip_remove(&dev->gpio_chip);
+	if (ret) {
+		dev_err(&client->dev, "gpiochip_remove failed %d\n", ret);
+		return ret;
+	}
 
+	kfree(dev);
 	return 0;
 }
 

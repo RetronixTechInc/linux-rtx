@@ -32,9 +32,6 @@
 #define rmb()		dsb(ld)
 #define wmb()		dsb(st)
 
-#define dma_rmb()	dmb(oshld)
-#define dma_wmb()	dmb(oshst)
-
 #ifndef CONFIG_SMP
 #define smp_mb()	barrier()
 #define smp_rmb()	barrier()
@@ -43,7 +40,7 @@
 #define smp_store_release(p, v)						\
 do {									\
 	compiletime_assert_atomic_type(*p);				\
-	barrier();							\
+	smp_mb();							\
 	ACCESS_ONCE(*p) = (v);						\
 } while (0)
 
@@ -51,7 +48,7 @@ do {									\
 ({									\
 	typeof(*p) ___p1 = ACCESS_ONCE(*p);				\
 	compiletime_assert_atomic_type(*p);				\
-	barrier();							\
+	smp_mb();							\
 	___p1;								\
 })
 
@@ -65,14 +62,6 @@ do {									\
 do {									\
 	compiletime_assert_atomic_type(*p);				\
 	switch (sizeof(*p)) {						\
-	case 1:								\
-		asm volatile ("stlrb %w1, %0"				\
-				: "=Q" (*p) : "r" (v) : "memory");	\
-		break;							\
-	case 2:								\
-		asm volatile ("stlrh %w1, %0"				\
-				: "=Q" (*p) : "r" (v) : "memory");	\
-		break;							\
 	case 4:								\
 		asm volatile ("stlr %w1, %0"				\
 				: "=Q" (*p) : "r" (v) : "memory");	\
@@ -89,14 +78,6 @@ do {									\
 	typeof(*p) ___p1;						\
 	compiletime_assert_atomic_type(*p);				\
 	switch (sizeof(*p)) {						\
-	case 1:								\
-		asm volatile ("ldarb %w0, %1"				\
-			: "=r" (___p1) : "Q" (*p) : "memory");		\
-		break;							\
-	case 2:								\
-		asm volatile ("ldarh %w0, %1"				\
-			: "=r" (___p1) : "Q" (*p) : "memory");		\
-		break;							\
 	case 4:								\
 		asm volatile ("ldar %w0, %1"				\
 			: "=r" (___p1) : "Q" (*p) : "memory");		\
@@ -116,9 +97,6 @@ do {									\
 
 #define set_mb(var, value)	do { var = value; smp_mb(); } while (0)
 #define nop()		asm volatile("nop");
-
-#define smp_mb__before_atomic()	smp_mb()
-#define smp_mb__after_atomic()	smp_mb()
 
 #endif	/* __ASSEMBLY__ */
 

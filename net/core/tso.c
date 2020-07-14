@@ -1,7 +1,6 @@
 #include <linux/export.h>
 #include <net/ip.h>
 #include <net/tso.h>
-#include <asm/unaligned.h>
 
 /* Calculate expected number of TX descriptors */
 int tso_count_descs(struct sk_buff *skb)
@@ -24,7 +23,7 @@ void tso_build_hdr(struct sk_buff *skb, char *hdr, struct tso_t *tso,
 	iph->id = htons(tso->ip_id);
 	iph->tot_len = htons(size + hdr_len - mac_hdr_len);
 	tcph = (struct tcphdr *)(hdr + skb_transport_offset(skb));
-	put_unaligned_be32(tso->tcp_seq, &tcph->seq);
+	tcph->seq = htonl(tso->tcp_seq);
 	tso->ip_id++;
 
 	if (!is_last) {

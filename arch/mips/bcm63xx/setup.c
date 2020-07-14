@@ -20,7 +20,6 @@
 #include <bcm63xx_cpu.h>
 #include <bcm63xx_regs.h>
 #include <bcm63xx_io.h>
-#include <bcm63xx_gpio.h>
 
 void bcm63xx_machine_halt(void)
 {
@@ -161,9 +160,6 @@ void __init plat_mem_setup(void)
 
 int __init bcm63xx_register_devices(void)
 {
-	/* register gpiochip */
-	bcm63xx_gpio_init();
-
 	return board_register_devices();
 }
 

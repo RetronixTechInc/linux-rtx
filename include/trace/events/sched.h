@@ -97,19 +97,16 @@ static inline long __trace_sched_switch_state(struct task_struct *p)
 	long state = p->state;
 
 #ifdef CONFIG_PREEMPT
-#ifdef CONFIG_SCHED_DEBUG
-	BUG_ON(p != current);
-#endif /* CONFIG_SCHED_DEBUG */
 	/*
 	 * For all intents and purposes a preempted task is a running task.
 	 */
 	if (preempt_count() & PREEMPT_ACTIVE)
 		state = TASK_RUNNING | TASK_STATE_MAX;
-#endif /* CONFIG_PREEMPT */
+#endif
 
 	return state;
 }
-#endif /* CREATE_TRACE_POINTS */
+#endif
 
 /*
  * Tracepoint for task switches, performed by the scheduler:
@@ -180,31 +177,6 @@ TRACE_EVENT(sched_migrate_task,
 	TP_printk("comm=%s pid=%d prio=%d orig_cpu=%d dest_cpu=%d",
 		  __entry->comm, __entry->pid, __entry->prio,
 		  __entry->orig_cpu, __entry->dest_cpu)
-);
-
-/*
- * Tracepoint for a CPU going offline/online:
- */
-TRACE_EVENT(sched_cpu_hotplug,
-
-	TP_PROTO(int affected_cpu, int error, int status),
-
-	TP_ARGS(affected_cpu, error, status),
-
-	TP_STRUCT__entry(
-		__field(	int,	affected_cpu		)
-		__field(	int,	error			)
-		__field(	int,	status			)
-	),
-
-	TP_fast_assign(
-		__entry->affected_cpu	= affected_cpu;
-		__entry->error		= error;
-		__entry->status		= status;
-	),
-
-	TP_printk("cpu %d %s error=%d", __entry->affected_cpu,
-		__entry->status ? "online" : "offline", __entry->error)
 );
 
 DECLARE_EVENT_CLASS(sched_process_template,
@@ -557,26 +529,6 @@ TRACE_EVENT(sched_swap_numa,
 			__entry->src_cpu, __entry->src_nid,
 			__entry->dst_pid, __entry->dst_tgid, __entry->dst_ngid,
 			__entry->dst_cpu, __entry->dst_nid)
-);
-
-/*
- * Tracepoint for waking a polling cpu without an IPI.
- */
-TRACE_EVENT(sched_wake_idle_without_ipi,
-
-	TP_PROTO(int cpu),
-
-	TP_ARGS(cpu),
-
-	TP_STRUCT__entry(
-		__field(	int,	cpu	)
-	),
-
-	TP_fast_assign(
-		__entry->cpu	= cpu;
-	),
-
-	TP_printk("cpu=%d", __entry->cpu)
 );
 #endif /* _TRACE_SCHED_H */
 

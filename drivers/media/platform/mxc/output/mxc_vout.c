@@ -74,6 +74,7 @@ struct mxc_vout_fb {
 	int ipu_id;
 	struct v4l2_rect crop_bounds;
 	unsigned int disp_fmt;
+	unsigned int if_fmt;
 	bool disp_support_csc;
 	bool disp_support_windows;
 };
@@ -134,8 +135,6 @@ struct mxc_vout_output {
 
 	struct videobuf_buffer *pre1_vb;
 	struct videobuf_buffer *pre2_vb;
-
-	bool input_crop;
 };
 
 struct mxc_vout_dev {
@@ -153,10 +152,6 @@ static int debug;
 static int vdi_rate_double;
 static int video_nr = 16;
 
-static int mxc_vidioc_s_input_crop(struct mxc_vout_output *vout,
-				const struct v4l2_crop *crop);
-static int mxc_vidioc_g_input_crop(struct mxc_vout_output *vout,
-				struct v4l2_crop *crop);
 /* Module parameters */
 module_param(video_nr, int, S_IRUGO);
 MODULE_PARM_DESC(video_nr, "video device numbers");
@@ -301,7 +296,7 @@ static ipu_channel_t get_ipu_channel(struct fb_info *fbi)
 	return ipu_ch;
 }
 
-static unsigned int get_ipu_fmt(struct fb_info *fbi)
+static unsigned int get_fb_fmt(struct fb_info *fbi)
 {
 	mm_segment_t old_fs;
 	unsigned int fb_fmt;
@@ -309,12 +304,28 @@ static unsigned int get_ipu_fmt(struct fb_info *fbi)
 	if (fbi->fbops->fb_ioctl) {
 		old_fs = get_fs();
 		set_fs(KERNEL_DS);
-		fbi->fbops->fb_ioctl(fbi, MXCFB_GET_DIFMT,
+		fbi->fbops->fb_ioctl(fbi, MXCFB_GET_FBFMT,
 				(unsigned long)&fb_fmt);
 		set_fs(old_fs);
 	}
 
 	return fb_fmt;
+}
+
+static unsigned int get_ipu_fmt(struct fb_info *fbi)
+{
+	mm_segment_t old_fs;
+	unsigned int di_fmt;
+
+	if (fbi->fbops->fb_ioctl) {
+		old_fs = get_fs();
+		set_fs(KERNEL_DS);
+		fbi->fbops->fb_ioctl(fbi, MXCFB_GET_DIFMT,
+				(unsigned long)&di_fmt);
+		set_fs(old_fs);
+	}
+
+	return di_fmt;
 }
 
 static void update_display_setting(void)
@@ -339,14 +350,21 @@ static void update_display_setting(void)
 		g_fb_setting[i].crop_bounds.top = 0;
 		g_fb_setting[i].crop_bounds.width = fbi->var.xres;
 		g_fb_setting[i].crop_bounds.height = fbi->var.yres;
-		g_fb_setting[i].disp_fmt = get_ipu_fmt(fbi);
+		g_fb_setting[i].disp_fmt = get_fb_fmt(fbi);
+		g_fb_setting[i].if_fmt = get_ipu_fmt(fbi);
 
 		if (get_ipu_channel(fbi) == MEM_BG_SYNC) {
 			bg_crop_bounds[g_fb_setting[i].ipu_id] =
 				g_fb_setting[i].crop_bounds;
-			g_fb_setting[i].disp_support_csc = true;
+			if(colorspaceofpixel(g_fb_setting[i].disp_fmt) != colorspaceofpixel(g_fb_setting[i].if_fmt))
+				g_fb_setting[i].disp_support_csc = false;  // DP CSC need be used for fb to di output.
+			else
+				g_fb_setting[i].disp_support_csc = true;
 		} else if (get_ipu_channel(fbi) == MEM_FG_SYNC) {
-			g_fb_setting[i].disp_support_csc = true;
+			if(colorspaceofpixel(g_fb_setting[i].disp_fmt) != colorspaceofpixel(g_fb_setting[i].if_fmt))
+				g_fb_setting[i].disp_support_csc = false;  // DP CSC need be used for fb to di output.
+			else
+				g_fb_setting[i].disp_support_csc = true;
 			g_fb_setting[i].disp_support_windows = true;
 		}
 	}
@@ -377,8 +395,7 @@ static int update_setting_from_fbi(struct mxc_vout_output *vout,
 			if (!strcmp(fbi->fix.id, g_fb_setting[i].name)) {
 				vout->crop_bounds = g_fb_setting[i].crop_bounds;
 				vout->disp_fmt = g_fb_setting[i].disp_fmt;
-				vout->disp_support_csc =
-					g_fb_setting[i].disp_support_csc;
+				vout->disp_support_csc = false;
 				vout->disp_support_windows =
 					g_fb_setting[i].disp_support_windows;
 				found = true;
@@ -402,7 +419,6 @@ static int update_setting_from_fbi(struct mxc_vout_output *vout,
 	vout->task.input.crop.pos.y = 0;
 	vout->task.input.crop.w = DEF_INPUT_WIDTH;
 	vout->task.input.crop.h = DEF_INPUT_HEIGHT;
-	vout->input_crop = false;
 
 	vout->task.output.width = vout->crop_bounds.width;
 	vout->task.output.height = vout->crop_bounds.height;
@@ -410,10 +426,7 @@ static int update_setting_from_fbi(struct mxc_vout_output *vout,
 	vout->task.output.crop.pos.y = 0;
 	vout->task.output.crop.w = vout->crop_bounds.width;
 	vout->task.output.crop.h = vout->crop_bounds.height;
-	if (colorspaceofpixel(vout->disp_fmt) == YUV_CS)
-		vout->task.output.format = IPU_PIX_FMT_UYVY;
-	else
-		vout->task.output.format = IPU_PIX_FMT_RGB565;
+	vout->task.output.format = vout->disp_fmt;
 
 	mutex_unlock(&gfbi_mutex);
 	return 0;
@@ -976,29 +989,6 @@ static int mxc_vout_release(struct file *file)
 	return ret;
 }
 
-static long mxc_vout_ioctl(struct file *file,
-	       unsigned int cmd, unsigned long arg)
-{
-	struct mxc_vout_output *vout = file->private_data;
-	struct v4l2_crop crop;
-	int ret;
-
-	switch (cmd) {
-	case VIDIOC_S_INPUT_CROP:
-		if (copy_from_user(&crop, (void __user *)arg, sizeof(struct v4l2_crop)))
-			return -EFAULT;
-		ret = mxc_vidioc_s_input_crop(vout, &crop);
-		break;
-	case VIDIOC_G_INPUT_CROP:
-		mxc_vidioc_g_input_crop(vout, &crop);
-		ret = copy_from_user((void __user *)arg, &crop, sizeof(struct v4l2_crop));
-		break;
-	default:
-		ret = video_ioctl2(file, cmd, arg);
-	}
-	return ret;
-}
-
 static int mxc_vout_open(struct file *file)
 {
 	struct mxc_vout_output *vout = NULL;
@@ -1058,8 +1048,7 @@ static int mxc_vidioc_querycap(struct file *file, void *fh,
 	strlcpy(cap->driver, VOUT_NAME, sizeof(cap->driver));
 	strlcpy(cap->card, vout->vfd->name, sizeof(cap->card));
 	cap->bus_info[0] = '\0';
-	cap->device_caps = V4L2_CAP_STREAMING | V4L2_CAP_VIDEO_OUTPUT;
-	cap->capabilities = cap->device_caps | V4L2_CAP_DEVICE_CAPS;
+	cap->capabilities = V4L2_CAP_STREAMING | V4L2_CAP_VIDEO_OUTPUT;
 
 	return 0;
 }
@@ -1081,12 +1070,22 @@ static int mxc_vidioc_g_fmt_vid_out(struct file *file, void *fh,
 			struct v4l2_format *f)
 {
 	struct mxc_vout_output *vout = fh;
+	struct v4l2_rect rect;
 
 	f->fmt.pix.width = vout->task.input.width;
 	f->fmt.pix.height = vout->task.input.height;
 	f->fmt.pix.pixelformat = vout->task.input.format;
 	f->fmt.pix.sizeimage = get_frame_size(vout);
 
+	if (f->fmt.pix.priv) {
+		rect.left = vout->task.input.crop.pos.x;
+		rect.top = vout->task.input.crop.pos.y;
+		rect.width = vout->task.input.crop.w;
+		rect.height = vout->task.input.crop.h;
+		if (copy_to_user((void __user *)f->fmt.pix.priv,
+				&rect, sizeof(rect)))
+			return -EFAULT;
+	}
 	v4l2_dbg(1, debug, vout->vfd->v4l2_dev,
 			"frame_size:0x%x, pix_fmt:0x%x\n",
 			f->fmt.pix.sizeimage,
@@ -1250,18 +1249,7 @@ static int mxc_vout_try_task(struct mxc_vout_output *vout)
 		v4l2_info(vout->vfd->v4l2_dev, "Bypass IC.\n");
 		output->format = input->format;
 	} else {
-		/* if need CSC, choose IPU-DP or IPU_IC do it */
-		if (vout->disp_support_csc) {
-			if (colorspaceofpixel(input->format) == YUV_CS)
-				output->format = IPU_PIX_FMT_UYVY;
-			else
-				output->format = IPU_PIX_FMT_RGB565;
-		} else {
-			if (colorspaceofpixel(vout->disp_fmt) == YUV_CS)
-				output->format = IPU_PIX_FMT_UYVY;
-			else
-				output->format = IPU_PIX_FMT_RGB565;
-		}
+		output->format = vout->disp_fmt;
 
 		vout->tiled_bypass_pp = false;
 		if ((IPU_PIX_FMT_TILED_NV12 == input->format) ||
@@ -1308,6 +1296,7 @@ static int mxc_vout_try_format(struct mxc_vout_output *vout,
 				struct v4l2_format *f)
 {
 	int ret = 0;
+	struct v4l2_rect rect;
 
 	if ((f->fmt.pix.field != V4L2_FIELD_NONE) &&
 		(IPU_PIX_FMT_TILED_NV12 == vout->task.input.format)) {
@@ -1316,12 +1305,9 @@ static int mxc_vout_try_format(struct mxc_vout_output *vout,
 		return -EINVAL;
 	}
 
-	if (vout->input_crop == false) {
-		vout->task.input.crop.pos.x = 0;
-		vout->task.input.crop.pos.y = 0;
-		vout->task.input.crop.w = f->fmt.pix.width;
-		vout->task.input.crop.h = f->fmt.pix.height;
-	}
+	if (f->fmt.pix.priv && copy_from_user(&rect,
+		(void __user *)f->fmt.pix.priv, sizeof(rect)))
+		return -EFAULT;
 
 	vout->task.input.width = f->fmt.pix.width;
 	vout->task.input.height = f->fmt.pix.height;
@@ -1331,10 +1317,31 @@ static int mxc_vout_try_format(struct mxc_vout_output *vout,
 	if (ret < 0)
 		return ret;
 
+	if (f->fmt.pix.priv) {
+		vout->task.input.crop.pos.x = rect.left;
+		vout->task.input.crop.pos.y = rect.top;
+		vout->task.input.crop.w = rect.width;
+		vout->task.input.crop.h = rect.height;
+	} else {
+		vout->task.input.crop.pos.x = 0;
+		vout->task.input.crop.pos.y = 0;
+		vout->task.input.crop.w = f->fmt.pix.width;
+		vout->task.input.crop.h = f->fmt.pix.height;
+	}
+	memcpy(&vout->in_rect, &vout->task.input.crop, sizeof(vout->in_rect));
+
 	ret = mxc_vout_try_task(vout);
 	if (!ret) {
-		f->fmt.pix.width = vout->task.input.crop.w;
-		f->fmt.pix.height = vout->task.input.crop.h;
+		if (f->fmt.pix.priv) {
+			rect.width = vout->task.input.crop.w;
+			rect.height = vout->task.input.crop.h;
+			if (copy_to_user((void __user *)f->fmt.pix.priv,
+				&rect, sizeof(rect)))
+				ret = -EFAULT;
+		} else {
+			f->fmt.pix.width = vout->task.input.crop.w;
+			f->fmt.pix.height = vout->task.input.crop.h;
+		}
 	}
 
 	return ret;
@@ -1789,41 +1796,6 @@ static int mxc_vidioc_dqbuf(struct file *file, void *fh, struct v4l2_buffer *b)
 		return videobuf_dqbuf(&vout->vbq, (struct v4l2_buffer *)b, 0);
 }
 
-static int mxc_vidioc_s_input_crop(struct mxc_vout_output *vout,
-				const struct v4l2_crop *crop)
-{
-	int ret = 0;
-
-	if (crop->type != V4L2_BUF_TYPE_VIDEO_OUTPUT)
-		return -EINVAL;
-
-	if (crop->c.width < 0 || crop->c.height < 0)
-		return -EINVAL;
-
-	vout->task.input.crop.pos.x = crop->c.left;
-	vout->task.input.crop.pos.y = crop->c.top;
-	vout->task.input.crop.w = crop->c.width;
-	vout->task.input.crop.h = crop->c.height;
-
-	vout->input_crop = true;
-	memcpy(&vout->in_rect, &vout->task.input.crop, sizeof(vout->in_rect));
-
-	return ret;
-}
-
-static int mxc_vidioc_g_input_crop(struct mxc_vout_output *vout,
-				struct v4l2_crop *crop)
-{
-	int ret = 0;
-
-	crop->c.left = vout->task.input.crop.pos.x;
-	crop->c.top = vout->task.input.crop.pos.y;
-	crop->c.width = vout->task.input.crop.w;
-	crop->c.height = vout->task.input.crop.h;
-
-	return ret;
-}
-
 static int set_window_position(struct mxc_vout_output *vout,
 				struct mxcfb_pos *pos)
 {
@@ -2139,7 +2111,7 @@ static const struct v4l2_ioctl_ops mxc_vout_ioctl_ops = {
 
 static const struct v4l2_file_operations mxc_vout_fops = {
 	.owner		= THIS_MODULE,
-	.unlocked_ioctl	= mxc_vout_ioctl,
+	.unlocked_ioctl	= video_ioctl2,
 	.mmap		= mxc_vout_mmap,
 	.open		= mxc_vout_open,
 	.release	= mxc_vout_release,
@@ -2216,6 +2188,7 @@ static int mxc_vout_setup_output(struct mxc_vout_dev *dev)
 		}
 
 		*vout->vfd = mxc_vout_template;
+		vout->vfd->debug = debug;
 		vout->vfd->v4l2_dev = &dev->v4l2_dev;
 		vout->vfd->lock = &vout->mutex;
 		vout->vfd->vfl_dir = VFL_DIR_TX;

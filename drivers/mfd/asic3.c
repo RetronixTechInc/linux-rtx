@@ -605,8 +605,7 @@ static int asic3_gpio_remove(struct platform_device *pdev)
 {
 	struct asic3 *asic = platform_get_drvdata(pdev);
 
-	gpiochip_remove(&asic->gpio);
-	return 0;
+	return gpiochip_remove(&asic->gpio);
 }
 
 static void asic3_clk_enable(struct asic3 *asic, struct asic3_clk *clk)
@@ -900,15 +899,13 @@ static int __init asic3_mfd_probe(struct platform_device *pdev,
 	ds1wm_resources[0].end   >>= asic->bus_shift;
 
 	/* MMC */
-	if (mem_sdio) {
-		asic->tmio_cnf = ioremap((ASIC3_SD_CONFIG_BASE >> asic->bus_shift) +
+	asic->tmio_cnf = ioremap((ASIC3_SD_CONFIG_BASE >> asic->bus_shift) +
 				 mem_sdio->start,
 				 ASIC3_SD_CONFIG_SIZE >> asic->bus_shift);
-		if (!asic->tmio_cnf) {
-			ret = -ENOMEM;
-			dev_dbg(asic->dev, "Couldn't ioremap SD_CONFIG\n");
-			goto out;
-		}
+	if (!asic->tmio_cnf) {
+		ret = -ENOMEM;
+		dev_dbg(asic->dev, "Couldn't ioremap SD_CONFIG\n");
+		goto out;
 	}
 	asic3_mmc_resources[0].start >>= asic->bus_shift;
 	asic3_mmc_resources[0].end   >>= asic->bus_shift;

@@ -37,6 +37,7 @@
 
 #include <linux/module.h>
 #include <linux/types.h>
+#include <linux/init.h>
 #include <linux/kernel.h>
 #include <linux/string.h>
 #include <linux/ioport.h>
@@ -679,6 +680,9 @@ static int bf5xx_nand_remove(struct platform_device *pdev)
 	peripheral_free_list(bfin_nfc_pin_req);
 	bf5xx_nand_dma_remove(info);
 
+	/* free the common resources */
+	kfree(info);
+
 	return 0;
 }
 
@@ -739,10 +743,10 @@ static int bf5xx_nand_probe(struct platform_device *pdev)
 		return -EFAULT;
 	}
 
-	info = devm_kzalloc(&pdev->dev, sizeof(*info), GFP_KERNEL);
+	info = kzalloc(sizeof(*info), GFP_KERNEL);
 	if (info == NULL) {
 		err = -ENOMEM;
-		goto out_err;
+		goto out_err_kzalloc;
 	}
 
 	platform_set_drvdata(pdev, info);
@@ -787,7 +791,7 @@ static int bf5xx_nand_probe(struct platform_device *pdev)
 	/* initialise the hardware */
 	err = bf5xx_nand_hw_init(info);
 	if (err)
-		goto out_err;
+		goto out_err_hw_init;
 
 	/* setup hardware ECC data struct */
 	if (hardware_ecc) {
@@ -824,18 +828,45 @@ static int bf5xx_nand_probe(struct platform_device *pdev)
 
 out_err_nand_scan:
 	bf5xx_nand_dma_remove(info);
-out_err:
+out_err_hw_init:
+	kfree(info);
+out_err_kzalloc:
 	peripheral_free_list(bfin_nfc_pin_req);
 
 	return err;
 }
 
+/* PM Support */
+#ifdef CONFIG_PM
+
+static int bf5xx_nand_suspend(struct platform_device *dev, pm_message_t pm)
+{
+	struct bf5xx_nand_info *info = platform_get_drvdata(dev);
+
+	return 0;
+}
+
+static int bf5xx_nand_resume(struct platform_device *dev)
+{
+	struct bf5xx_nand_info *info = platform_get_drvdata(dev);
+
+	return 0;
+}
+
+#else
+#define bf5xx_nand_suspend NULL
+#define bf5xx_nand_resume NULL
+#endif
+
 /* driver device registration */
 static struct platform_driver bf5xx_nand_driver = {
 	.probe		= bf5xx_nand_probe,
 	.remove		= bf5xx_nand_remove,
+	.suspend	= bf5xx_nand_suspend,
+	.resume		= bf5xx_nand_resume,
 	.driver		= {
 		.name	= DRV_NAME,
+		.owner	= THIS_MODULE,
 	},
 };
 

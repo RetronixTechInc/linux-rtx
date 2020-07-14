@@ -425,5 +425,3 @@ static const char *prop_compression_extract(struct inode *inode)
 
 	return NULL;
 }
-
-

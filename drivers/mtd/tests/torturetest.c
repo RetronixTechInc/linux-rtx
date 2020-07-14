@@ -101,11 +101,11 @@ static inline int check_eraseblock(int ebnum, unsigned char *buf)
 {
 	int err, retries = 0;
 	size_t read;
-	loff_t addr = (loff_t)ebnum * mtd->erasesize;
+	loff_t addr = ebnum * mtd->erasesize;
 	size_t len = mtd->erasesize;
 
 	if (pgcnt) {
-		addr = (loff_t)(ebnum + 1) * mtd->erasesize - pgcnt * pgsize;
+		addr = (ebnum + 1) * mtd->erasesize - pgcnt * pgsize;
 		len = pgcnt * pgsize;
 	}
 
@@ -155,11 +155,11 @@ static inline int write_pattern(int ebnum, void *buf)
 {
 	int err;
 	size_t written;
-	loff_t addr = (loff_t)ebnum * mtd->erasesize;
+	loff_t addr = ebnum * mtd->erasesize;
 	size_t len = mtd->erasesize;
 
 	if (pgcnt) {
-		addr = (loff_t)(ebnum + 1) * mtd->erasesize - pgcnt * pgsize;
+		addr = (ebnum + 1) * mtd->erasesize - pgcnt * pgsize;
 		len = pgcnt * pgsize;
 	}
 	err = mtd_write(mtd, addr, len, &written, buf);
@@ -279,10 +279,7 @@ static int __init tort_init(void)
 					       " for 0xFF... pattern\n");
 					goto out;
 				}
-
-				err = mtdtest_relax();
-				if (err)
-					goto out;
+				cond_resched();
 			}
 		}
 
@@ -297,10 +294,7 @@ static int __init tort_init(void)
 			err = write_pattern(i, patt);
 			if (err)
 				goto out;
-
-			err = mtdtest_relax();
-			if (err)
-				goto out;
+			cond_resched();
 		}
 
 		/* Verify what we wrote */
@@ -320,10 +314,7 @@ static int __init tort_init(void)
 					       "0x55AA55..." : "0xAA55AA...");
 					goto out;
 				}
-
-				err = mtdtest_relax();
-				if (err)
-					goto out;
+				cond_resched();
 			}
 		}
 

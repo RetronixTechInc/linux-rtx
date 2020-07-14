@@ -41,10 +41,10 @@
  */
 
 #define DEBUG_SUBSYSTEM S_SEC
-#include "../include/lu_object.h"
-#include "../include/lustre_acl.h"
-#include "../include/lustre_eacl.h"
-#include "../include/obd_support.h"
+#include <lu_object.h>
+#include <lustre_acl.h>
+#include <lustre_eacl.h>
+#include <obd_support.h>
 
 #ifdef CONFIG_FS_POSIX_ACL
 
@@ -171,17 +171,17 @@ EXPORT_SYMBOL(lustre_posix_acl_xattr_2ext);
 /*
  * Filter out the "nobody" entries in the posix ACL.
  */
-int lustre_posix_acl_xattr_filter(posix_acl_xattr_header *header, size_t size,
+int lustre_posix_acl_xattr_filter(posix_acl_xattr_header *header, int size,
 				  posix_acl_xattr_header **out)
 {
 	int count, i, j, rc = 0;
 	__u32 id;
 	posix_acl_xattr_header *new;
 
-	if (!size)
-		return 0;
-	if (size < sizeof(*new))
+	if (unlikely(size < 0))
 		return -EINVAL;
+	else if (!size)
+		return 0;
 
 	OBD_ALLOC(new, size);
 	if (unlikely(new == NULL))
@@ -196,10 +196,8 @@ int lustre_posix_acl_xattr_filter(posix_acl_xattr_header *header, size_t size,
 		case ACL_GROUP_OBJ:
 		case ACL_MASK:
 		case ACL_OTHER:
-			if (id != ACL_UNDEFINED_ID) {
-				rc = -EIO;
-				goto _out;
-			}
+			if (id != ACL_UNDEFINED_ID)
+				GOTO(_out, rc = -EIO);
 
 			memcpy(&new->a_entries[j++], &header->a_entries[i],
 			       sizeof(posix_acl_xattr_entry));
@@ -217,8 +215,7 @@ int lustre_posix_acl_xattr_filter(posix_acl_xattr_header *header, size_t size,
 				       sizeof(posix_acl_xattr_entry));
 			break;
 		default:
-			rc = -EIO;
-			goto _out;
+			GOTO(_out, rc = -EIO);
 		}
 	}
 
@@ -321,10 +318,8 @@ int lustre_acl_xattr_merge2posix(posix_acl_xattr_header *posix_header, int size,
 			case ACL_USER_OBJ:
 			case ACL_GROUP_OBJ:
 			case ACL_OTHER:
-				if (ae.e_id != ACL_UNDEFINED_ID) {
-					rc = -EIO;
-					goto _out;
-				}
+				if (ae.e_id != ACL_UNDEFINED_ID)
+					GOTO(_out, rc = -EIO);
 
 				if (ae.e_stat != ES_DEL) {
 					new->a_entries[j].e_tag =
@@ -341,8 +336,7 @@ int lustre_acl_xattr_merge2posix(posix_acl_xattr_header *posix_header, int size,
 				if (ae.e_stat == ES_DEL)
 					break;
 			default:
-				rc = -EIO;
-				goto _out;
+				GOTO(_out, rc = -EIO);
 			}
 		}
 	} else {
@@ -443,10 +437,8 @@ lustre_acl_xattr_merge2ext(posix_acl_xattr_header *posix_header, int size,
 		case ACL_GROUP_OBJ:
 		case ACL_MASK:
 		case ACL_OTHER:
-			if (pae.e_id != ACL_UNDEFINED_ID) {
-				rc = -EIO;
-				goto out;
-		}
+			if (pae.e_id != ACL_UNDEFINED_ID)
+				GOTO(out, rc = -EIO);
 		case ACL_USER:
 			/* ignore "nobody" entry. */
 			if (pae.e_id == NOBODY_UID)
@@ -509,8 +501,7 @@ lustre_acl_xattr_merge2ext(posix_acl_xattr_header *posix_header, int size,
 			}
 			break;
 		default:
-			rc = -EIO;
-			goto out;
+			GOTO(out, rc = -EIO);
 		}
 	}
 

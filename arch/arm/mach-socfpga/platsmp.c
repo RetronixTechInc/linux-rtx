@@ -33,22 +33,18 @@ static int socfpga_boot_secondary(unsigned int cpu, struct task_struct *idle)
 {
 	int trampoline_size = &secondary_trampoline_end - &secondary_trampoline;
 
-	if (socfpga_cpu1start_addr) {
-		/* This will put CPU #1 into reset. */
-		writel(RSTMGR_MPUMODRST_CPU1,
-		       rst_manager_base_addr + SOCFPGA_RSTMGR_MODMPURST);
-
+	if (cpu1start_addr) {
 		memcpy(phys_to_virt(0), &secondary_trampoline, trampoline_size);
 
-		writel(virt_to_phys(secondary_startup),
-		       sys_manager_base_addr + (socfpga_cpu1start_addr & 0x000000ff));
+		__raw_writel(virt_to_phys(socfpga_secondary_startup),
+			(sys_manager_base_addr + (cpu1start_addr & 0x000000ff)));
 
 		flush_cache_all();
 		smp_wmb();
 		outer_clean_range(0, trampoline_size);
 
-		/* This will release CPU #1 out of reset. */
-		writel(0, rst_manager_base_addr + SOCFPGA_RSTMGR_MODMPURST);
+		/* This will release CPU #1 out of reset.*/
+		__raw_writel(0, rst_manager_base_addr + 0x10);
 	}
 
 	return 0;
@@ -90,9 +86,10 @@ static void __init socfpga_smp_prepare_cpus(unsigned int max_cpus)
  */
 static void socfpga_cpu_die(unsigned int cpu)
 {
-	/* Do WFI. If we wake up early, go back into WFI */
-	while (1)
-		cpu_do_idle();
+	cpu_do_idle();
+
+	/* We should have never returned from idle */
+	panic("cpu %d unexpectedly exit from shutdown\n", cpu);
 }
 
 struct smp_operations socfpga_smp_ops __initdata = {

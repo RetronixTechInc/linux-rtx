@@ -59,15 +59,7 @@ struct plat_smp_ops {
 /* TBD: stop exporting it for direct population by platform */
 extern struct plat_smp_ops  plat_smp_ops;
 
-#else /* CONFIG_SMP */
-
-static inline void smp_init_cpus(void) {}
-static inline const char *arc_platform_smp_cpuinfo(void)
-{
-	return "";
-}
-
-#endif  /* !CONFIG_SMP */
+#endif  /* CONFIG_SMP */
 
 /*
  * ARC700 doesn't support atomic Read-Modify-Write ops.

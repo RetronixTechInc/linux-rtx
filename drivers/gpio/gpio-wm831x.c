@@ -279,8 +279,7 @@ static int wm831x_gpio_remove(struct platform_device *pdev)
 {
 	struct wm831x_gpio *wm831x_gpio = platform_get_drvdata(pdev);
 
-	gpiochip_remove(&wm831x_gpio->gpio_chip);
-	return 0;
+	return  gpiochip_remove(&wm831x_gpio->gpio_chip);
 }
 
 static struct platform_driver wm831x_gpio_driver = {

@@ -85,20 +85,23 @@ static struct nvec_chip *nvec_power_handle;
 static const struct mfd_cell nvec_devices[] = {
 	{
 		.name = "nvec-kbd",
+		.id = 1,
 	},
 	{
 		.name = "nvec-mouse",
-	},
-	{
-		.name = "nvec-power",
-		.id = 0,
+		.id = 1,
 	},
 	{
 		.name = "nvec-power",
 		.id = 1,
 	},
 	{
+		.name = "nvec-power",
+		.id = 2,
+	},
+	{
 		.name = "nvec-paz00",
+		.id = 1,
 	},
 };
 
@@ -229,7 +232,8 @@ static size_t nvec_msg_size(struct nvec_msg *msg)
 		return 2;
 	else if (event_length == NVEC_3BYTES)
 		return 3;
-	return 0;
+	else
+		return 0;
 }
 
 /**
@@ -256,7 +260,7 @@ static void nvec_gpio_set_value(struct nvec_chip *nvec, int value)
  * and return immediately.
  *
  * Returns: 0 on success, a negative error code on failure. If a failure
- * occurred, the nvec driver may print an error.
+ * occured, the nvec driver may print an error.
  */
 int nvec_write_async(struct nvec_chip *nvec, const unsigned char *data,
 			short size)
@@ -674,7 +678,8 @@ static irqreturn_t nvec_interrupt(int irq, void *dev)
 			nvec->rx->data[nvec->rx->pos++] = received;
 		else
 			dev_err(nvec->dev,
-				"RX buffer overflow on %p: Trying to write byte %u of %u\n",
+				"RX buffer overflow on %p: "
+				"Trying to write byte %u of %u\n",
 				nvec->rx, nvec->rx ? nvec->rx->pos : 0,
 				NVEC_MSG_SIZE);
 		break;
@@ -803,9 +808,10 @@ static int tegra_nvec_probe(struct platform_device *pdev)
 	}
 
 	nvec = devm_kzalloc(&pdev->dev, sizeof(struct nvec_chip), GFP_KERNEL);
-	if (!nvec)
+	if (nvec == NULL) {
+		dev_err(&pdev->dev, "failed to reserve memory\n");
 		return -ENOMEM;
-
+	}
 	platform_set_drvdata(pdev, nvec);
 	nvec->dev = &pdev->dev;
 
@@ -818,8 +824,8 @@ static int tegra_nvec_probe(struct platform_device *pdev)
 	if (IS_ERR(base))
 		return PTR_ERR(base);
 
-	nvec->irq = platform_get_irq(pdev, 0);
-	if (nvec->irq < 0) {
+	res = platform_get_resource(pdev, IORESOURCE_IRQ, 0);
+	if (!res) {
 		dev_err(&pdev->dev, "no irq resource?\n");
 		return -ENODEV;
 	}
@@ -837,6 +843,7 @@ static int tegra_nvec_probe(struct platform_device *pdev)
 	}
 
 	nvec->base = base;
+	nvec->irq = res->start;
 	nvec->i2c_clk = i2c_clk;
 	nvec->rx = &nvec->msg_pool[0];
 
@@ -888,8 +895,8 @@ static int tegra_nvec_probe(struct platform_device *pdev)
 		nvec_msg_free(nvec, msg);
 	}
 
-	ret = mfd_add_devices(nvec->dev, 0, nvec_devices,
-			      ARRAY_SIZE(nvec_devices), NULL, 0, NULL);
+	ret = mfd_add_devices(nvec->dev, -1, nvec_devices,
+			      ARRAY_SIZE(nvec_devices), base, 0, NULL);
 	if (ret)
 		dev_err(nvec->dev, "error adding subdevices\n");
 
@@ -956,7 +963,7 @@ static int nvec_resume(struct device *dev)
 }
 #endif
 
-static SIMPLE_DEV_PM_OPS(nvec_pm_ops, nvec_suspend, nvec_resume);
+static const SIMPLE_DEV_PM_OPS(nvec_pm_ops, nvec_suspend, nvec_resume);
 
 /* Match table for of_platform binding */
 static const struct of_device_id nvidia_nvec_of_match[] = {
@@ -970,6 +977,7 @@ static struct platform_driver nvec_device_driver = {
 	.remove  = tegra_nvec_remove,
 	.driver  = {
 		.name = "nvec",
+		.owner = THIS_MODULE,
 		.pm = &nvec_pm_ops,
 		.of_match_table = nvidia_nvec_of_match,
 	}

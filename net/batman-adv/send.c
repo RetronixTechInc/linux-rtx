@@ -27,7 +27,6 @@
 #include "originator.h"
 #include "network-coding.h"
 #include "fragmentation.h"
-#include "multicast.h"
 
 static void batadv_send_outstanding_bcast_packet(struct work_struct *work);
 
@@ -60,8 +59,8 @@ int batadv_send_skb_packet(struct sk_buff *skb,
 	skb_reset_mac_header(skb);
 
 	ethhdr = eth_hdr(skb);
-	ether_addr_copy(ethhdr->h_source, hard_iface->net_dev->dev_addr);
-	ether_addr_copy(ethhdr->h_dest, dst_addr);
+	memcpy(ethhdr->h_source, hard_iface->net_dev->dev_addr, ETH_ALEN);
+	memcpy(ethhdr->h_dest, dst_addr, ETH_ALEN);
 	ethhdr->h_proto = htons(ETH_P_BATMAN);
 
 	skb_set_network_header(skb, ETH_HLEN);
@@ -166,7 +165,7 @@ batadv_send_skb_push_fill_unicast(struct sk_buff *skb, int hdr_size,
 	/* set unicast ttl */
 	unicast_packet->ttl = BATADV_TTL;
 	/* copy the destination for faster routing */
-	ether_addr_copy(unicast_packet->dest, orig_node->orig);
+	memcpy(unicast_packet->dest, orig_node->orig, ETH_ALEN);
 	/* set the destination tt version number */
 	unicast_packet->ttvn = ttvn;
 
@@ -221,7 +220,7 @@ bool batadv_send_skb_prepare_unicast_4addr(struct batadv_priv *bat_priv,
 
 	uc_4addr_packet = (struct batadv_unicast_4addr_packet *)skb->data;
 	uc_4addr_packet->u.packet_type = BATADV_UNICAST_4ADDR;
-	ether_addr_copy(uc_4addr_packet->src, primary_if->net_dev->dev_addr);
+	memcpy(uc_4addr_packet->src, primary_if->net_dev->dev_addr, ETH_ALEN);
 	uc_4addr_packet->subtype = packet_subtype;
 	uc_4addr_packet->reserved = 0;
 
@@ -249,15 +248,15 @@ out:
  *
  * Returns NET_XMIT_DROP in case of error or NET_XMIT_SUCCESS otherwise.
  */
-int batadv_send_skb_unicast(struct batadv_priv *bat_priv,
-			    struct sk_buff *skb, int packet_type,
-			    int packet_subtype,
-			    struct batadv_orig_node *orig_node,
-			    unsigned short vid)
+static int batadv_send_skb_unicast(struct batadv_priv *bat_priv,
+				   struct sk_buff *skb, int packet_type,
+				   int packet_subtype,
+				   struct batadv_orig_node *orig_node,
+				   unsigned short vid)
 {
 	struct ethhdr *ethhdr;
 	struct batadv_unicast_packet *unicast_packet;
-	int ret = NET_XMIT_DROP;
+	int ret = NET_XMIT_DROP, hdr_size;
 
 	if (!orig_node)
 		goto out;
@@ -266,12 +265,16 @@ int batadv_send_skb_unicast(struct batadv_priv *bat_priv,
 	case BATADV_UNICAST:
 		if (!batadv_send_skb_prepare_unicast(skb, orig_node))
 			goto out;
+
+		hdr_size = sizeof(*unicast_packet);
 		break;
 	case BATADV_UNICAST_4ADDR:
 		if (!batadv_send_skb_prepare_unicast_4addr(bat_priv, skb,
 							   orig_node,
 							   packet_subtype))
 			goto out;
+
+		hdr_size = sizeof(struct batadv_unicast_4addr_packet);
 		break;
 	default:
 		/* this function supports UNICAST and UNICAST_4ADDR only. It
@@ -280,10 +283,7 @@ int batadv_send_skb_unicast(struct batadv_priv *bat_priv,
 		goto out;
 	}
 
-	/* skb->data might have been reallocated by
-	 * batadv_send_skb_prepare_unicast{,_4addr}()
-	 */
-	ethhdr = eth_hdr(skb);
+	ethhdr = (struct ethhdr *)(skb->data + hdr_size);
 	unicast_packet = (struct batadv_unicast_packet *)skb->data;
 
 	/* inform the destination node that we are still missing a correct route
@@ -312,7 +312,6 @@ out:
  * @packet_type: the batman unicast packet type to use
  * @packet_subtype: the unicast 4addr packet subtype (only relevant for unicast
  *  4addr packets)
- * @dst_hint: can be used to override the destination contained in the skb
  * @vid: the vid to be used to search the translation table
  *
  * Look up the recipient node for the destination address in the ethernet

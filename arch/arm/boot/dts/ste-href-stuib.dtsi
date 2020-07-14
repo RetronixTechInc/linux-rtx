@@ -42,8 +42,6 @@
 				interrupts = <26 IRQ_TYPE_EDGE_FALLING>;
 				interrupt-parent = <&gpio6>;
 				interrupt-controller;
-				vcc-supply = <&db8500_vsmps2_reg>;
-				vio-supply = <&db8500_vsmps2_reg>;
 
 				wakeup-source;
 				st,autosleep-timeout = <1024>;
@@ -103,7 +101,7 @@
 			prox {
 				prox_stuib_mode: prox_stuib {
 					stuib_cfg {
-						pins = "GPIO217_AH12";
+						ste,pins = "GPIO217_AH12";
 						ste,config = <&gpio_in_pu>;
 					};
 				};
@@ -111,7 +109,7 @@
 			hall {
 				hall_stuib_mode: stuib_tvk {
 					stuib_cfg {
-						pins = "GPIO145_C13";
+						ste,pins = "GPIO145_C13";
 						ste,config = <&gpio_in_pu>;
 					};
 				};

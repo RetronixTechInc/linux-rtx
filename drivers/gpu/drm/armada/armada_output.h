@@ -9,7 +9,7 @@
 #define ARMADA_CONNETOR_H
 
 #define encoder_helper_funcs(encoder) \
-	((const struct drm_encoder_helper_funcs *)encoder->helper_private)
+	((struct drm_encoder_helper_funcs *)encoder->helper_private)
 
 struct armada_output_type {
 	int connector_type;

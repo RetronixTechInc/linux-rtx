@@ -60,7 +60,7 @@ int node_to_pxm(int node)
 	return node_to_pxm_map[node];
 }
 
-static void __acpi_map_pxm_to_node(int pxm, int node)
+void __acpi_map_pxm_to_node(int pxm, int node)
 {
 	if (pxm_to_node_map[pxm] == NUMA_NO_NODE || node < pxm_to_node_map[pxm])
 		pxm_to_node_map[pxm] = node;
@@ -177,7 +177,12 @@ static int __init slit_valid(struct acpi_table_slit *slit)
 
 static int __init acpi_parse_slit(struct acpi_table_header *table)
 {
-	struct acpi_table_slit *slit = (struct acpi_table_slit *)table;
+	struct acpi_table_slit *slit;
+
+	if (!table)
+		return -EINVAL;
+
+	slit = (struct acpi_table_slit *)table;
 
 	if (!slit_valid(slit)) {
 		printk(KERN_INFO "ACPI: SLIT table looks invalid. Not used.\n");
@@ -188,7 +193,7 @@ static int __init acpi_parse_slit(struct acpi_table_header *table)
 	return 0;
 }
 
-void __init __weak
+void __init __attribute__ ((weak))
 acpi_numa_x2apic_affinity_init(struct acpi_srat_x2apic_cpu_affinity *pa)
 {
 	printk(KERN_WARNING PREFIX
@@ -255,8 +260,11 @@ acpi_parse_memory_affinity(struct acpi_subtable_header * header,
 
 static int __init acpi_parse_srat(struct acpi_table_header *table)
 {
-	struct acpi_table_srat *srat = (struct acpi_table_srat *)table;
+	struct acpi_table_srat *srat;
+	if (!table)
+		return -EINVAL;
 
+	srat = (struct acpi_table_srat *)table;
 	acpi_srat_revision = srat->header.revision;
 
 	/* Real work done in acpi_table_parse_srat below. */
@@ -306,7 +314,7 @@ int __init acpi_numa_init(void)
 	return 0;
 }
 
-static int acpi_get_pxm(acpi_handle h)
+int acpi_get_pxm(acpi_handle h)
 {
 	unsigned long long pxm;
 	acpi_status status;
@@ -323,14 +331,14 @@ static int acpi_get_pxm(acpi_handle h)
 	return -1;
 }
 
-int acpi_get_node(acpi_handle handle)
+int acpi_get_node(acpi_handle *handle)
 {
-	int pxm;
+	int pxm, node = NUMA_NO_NODE;
 
 	pxm = acpi_get_pxm(handle);
-	if (pxm < 0 || pxm >= MAX_PXM_DOMAINS)
-		return NUMA_NO_NODE;
+	if (pxm >= 0 && pxm < MAX_PXM_DOMAINS)
+		node = acpi_map_pxm_to_node(pxm);
 
-	return acpi_map_pxm_to_node(pxm);
+	return node;
 }
 EXPORT_SYMBOL(acpi_get_node);

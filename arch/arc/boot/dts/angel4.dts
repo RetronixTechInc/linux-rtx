@@ -17,11 +17,16 @@
 	interrupt-parent = <&intc>;
 
 	chosen {
-		bootargs = "earlycon=arc_uart,mmio32,0xc0fc1000,115200n8 console=ttyARC0,115200n8";
+		bootargs = "console=ttyARC0,115200n8";
 	};
 
 	aliases {
 		serial0 = &arcuart0;
+	};
+
+	memory {
+		device_type = "memory";
+		reg = <0x00000000 0x10000000>;	/* 256M */
 	};
 
 	fpga {
@@ -64,7 +69,7 @@
 		};
 
 		arcpmu0: pmu {
-			compatible = "snps,arc700-pct";
+			compatible = "snps,arc700-pmu";
 		};
 	};
 };

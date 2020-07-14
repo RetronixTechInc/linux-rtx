@@ -1,19 +1,19 @@
-# List of programs to build
-hostprogs-$(CONFIG_X86_64) := mpssd
-
-mpssd-objs := mpssd.o sysfs.o
-
-# Tell kbuild to always build the programs
-always := $(hostprogs-y)
-
-HOSTCFLAGS += -I$(objtree)/usr/include -I$(srctree)/tools/include
-
+#
+# Makefile - Intel MIC User Space Tools.
+# Copyright(c) 2013, Intel Corporation.
+#
 ifdef DEBUG
-HOSTCFLAGS += -DDEBUG=$(DEBUG)
+CFLAGS += $(USERWARNFLAGS) -I. -g -Wall -DDEBUG=$(DEBUG)
+else
+CFLAGS += $(USERWARNFLAGS) -I. -g -Wall
 endif
 
-HOSTLOADLIBES_mpssd := -lpthread
+mpssd: mpssd.o sysfs.o
+	$(CC) $(CFLAGS) -o $@ $^ -lpthread
 
 install:
 	install mpssd /usr/sbin/mpssd
 	install micctrl /usr/sbin/micctrl
+
+clean:
+	rm -f mpssd *.o

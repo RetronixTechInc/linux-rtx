@@ -9,13 +9,6 @@
  * 2 of the Licence, or (at your option) any later version.
  */
 
-#ifdef pr_fmt
-#undef pr_fmt
-#endif
-
-#define pr_fmt(fmt) "CacheFiles: " fmt
-
-
 #include <linux/fscache-cache.h>
 #include <linux/timer.h>
 #include <linux/wait.h>
@@ -252,10 +245,11 @@ extern int cachefiles_remove_object_xattr(struct cachefiles_cache *cache,
 /*
  * error handling
  */
+#define kerror(FMT, ...) printk(KERN_ERR "CacheFiles: "FMT"\n", ##__VA_ARGS__)
 
 #define cachefiles_io_error(___cache, FMT, ...)		\
 do {							\
-	pr_err("I/O Error: " FMT"\n", ##__VA_ARGS__);	\
+	kerror("I/O Error: " FMT, ##__VA_ARGS__);	\
 	fscache_io_error(&(___cache)->cache);		\
 	set_bit(CACHEFILES_DEAD, &(___cache)->flags);	\
 } while (0)
@@ -316,8 +310,8 @@ do {							\
 #define ASSERT(X)							\
 do {									\
 	if (unlikely(!(X))) {						\
-		pr_err("\n");						\
-		pr_err("Assertion failed\n");		\
+		printk(KERN_ERR "\n");					\
+		printk(KERN_ERR "CacheFiles: Assertion failed\n");	\
 		BUG();							\
 	}								\
 } while (0)
@@ -325,9 +319,9 @@ do {									\
 #define ASSERTCMP(X, OP, Y)						\
 do {									\
 	if (unlikely(!((X) OP (Y)))) {					\
-		pr_err("\n");						\
-		pr_err("Assertion failed\n");		\
-		pr_err("%lx " #OP " %lx is false\n",			\
+		printk(KERN_ERR "\n");					\
+		printk(KERN_ERR "CacheFiles: Assertion failed\n");	\
+		printk(KERN_ERR "%lx " #OP " %lx is false\n",		\
 		       (unsigned long)(X), (unsigned long)(Y));		\
 		BUG();							\
 	}								\
@@ -336,8 +330,8 @@ do {									\
 #define ASSERTIF(C, X)							\
 do {									\
 	if (unlikely((C) && !(X))) {					\
-		pr_err("\n");						\
-		pr_err("Assertion failed\n");		\
+		printk(KERN_ERR "\n");					\
+		printk(KERN_ERR "CacheFiles: Assertion failed\n");	\
 		BUG();							\
 	}								\
 } while (0)
@@ -345,9 +339,9 @@ do {									\
 #define ASSERTIFCMP(C, X, OP, Y)					\
 do {									\
 	if (unlikely((C) && !((X) OP (Y)))) {				\
-		pr_err("\n");						\
-		pr_err("Assertion failed\n");		\
-		pr_err("%lx " #OP " %lx is false\n",			\
+		printk(KERN_ERR "\n");					\
+		printk(KERN_ERR "CacheFiles: Assertion failed\n");	\
+		printk(KERN_ERR "%lx " #OP " %lx is false\n",		\
 		       (unsigned long)(X), (unsigned long)(Y));		\
 		BUG();							\
 	}								\

@@ -412,22 +412,6 @@ static void dump_orphan_list(struct super_block *sb, struct ext3_sb_info *sbi)
 	}
 }
 
-/*
- * The del_gendisk() function uninitializes the disk-specific data
- * structures, including the bdi structure, without telling anyone
- * else.  Once this happens, any attempt to call mark_buffer_dirty()
- * (for example, by ext4_commit_super), will cause a kernel OOPS.
- * This is a kludge to prevent these oops until we can put in a proper
- * hook in del_gendisk() to inform the VFS and file system layers.
- */
-static int ext3_block_device_ejected(struct super_block *sb)
-{
-	struct inode *bd_inode = sb->s_bdev->bd_inode;
-	struct backing_dev_info *bdi = inode_to_bdi(bd_inode);
-
-	return bdi->dev == NULL;
-}
-
 static void ext3_put_super (struct super_block * sb)
 {
 	struct ext3_sb_info *sbi = EXT3_SB(sb);
@@ -444,11 +428,9 @@ static void ext3_put_super (struct super_block * sb)
 	if (!(sb->s_flags & MS_RDONLY)) {
 		EXT3_CLEAR_INCOMPAT_FEATURE(sb, EXT3_FEATURE_INCOMPAT_RECOVER);
 		es->s_state = cpu_to_le16(sbi->s_mount_state);
-		if (!ext3_block_device_ejected(sb)) {
-			BUFFER_TRACE(sbi->s_sbh, "marking dirty");
-			mark_buffer_dirty(sbi->s_sbh);
-			ext3_commit_super(sb, es, 1);
-		}
+		BUFFER_TRACE(sbi->s_sbh, "marking dirty");
+		mark_buffer_dirty(sbi->s_sbh);
+		ext3_commit_super(sb, es, 1);
 	}
 
 	for (i = 0; i < sbi->s_gdb_count; i++)
@@ -459,7 +441,7 @@ static void ext3_put_super (struct super_block * sb)
 	percpu_counter_destroy(&sbi->s_dirs_counter);
 	brelse(sbi->s_sbh);
 #ifdef CONFIG_QUOTA
-	for (i = 0; i < EXT3_MAXQUOTAS; i++)
+	for (i = 0; i < MAXQUOTAS; i++)
 		kfree(sbi->s_qf_names[i]);
 #endif
 
@@ -484,8 +466,6 @@ static void ext3_put_super (struct super_block * sb)
 	}
 	sb->s_fs_info = NULL;
 	kfree(sbi->s_blockgroup_lock);
-	mutex_destroy(&sbi->s_orphan_lock);
-	mutex_destroy(&sbi->s_resize_lock);
 	kfree(sbi);
 }
 
@@ -505,10 +485,6 @@ static struct inode *ext3_alloc_inode(struct super_block *sb)
 	ei->vfs_inode.i_version = 1;
 	atomic_set(&ei->i_datasync_tid, 0);
 	atomic_set(&ei->i_sync_tid, 0);
-#ifdef CONFIG_QUOTA
-	memset(&ei->i_dquot, 0, sizeof(ei->i_dquot));
-#endif
-
 	return &ei->vfs_inode;
 }
 
@@ -551,7 +527,7 @@ static void init_once(void *foo)
 	inode_init_once(&ei->vfs_inode);
 }
 
-static int __init init_inodecache(void)
+static int init_inodecache(void)
 {
 	ext3_inode_cachep = kmem_cache_create("ext3_inode_cache",
 					     sizeof(struct ext3_inode_info),
@@ -788,10 +764,6 @@ static ssize_t ext3_quota_read(struct super_block *sb, int type, char *data,
 			       size_t len, loff_t off);
 static ssize_t ext3_quota_write(struct super_block *sb, int type,
 				const char *data, size_t len, loff_t off);
-static struct dquot **ext3_get_dquots(struct inode *inode)
-{
-	return EXT3_I(inode)->i_dquot;
-}
 
 static const struct dquot_operations ext3_quota_operations = {
 	.write_dquot	= ext3_write_dquot,
@@ -807,7 +779,7 @@ static const struct quotactl_ops ext3_qctl_operations = {
 	.quota_on	= ext3_quota_on,
 	.quota_off	= dquot_quota_off,
 	.quota_sync	= dquot_quota_sync,
-	.get_state	= dquot_get_state,
+	.get_info	= dquot_get_dqinfo,
 	.set_info	= dquot_set_dqinfo,
 	.get_dqblk	= dquot_get_dqblk,
 	.set_dqblk	= dquot_set_dqblk
@@ -831,7 +803,6 @@ static const struct super_operations ext3_sops = {
 #ifdef CONFIG_QUOTA
 	.quota_read	= ext3_quota_read,
 	.quota_write	= ext3_quota_write,
-	.get_dquots	= ext3_get_dquots,
 #endif
 	.bdev_try_to_free_page = bdev_try_to_free_page,
 };
@@ -1188,7 +1159,7 @@ static int parse_options (char *options, struct super_block *sb,
 				return 0;
 			}
 
-			journal_inode = d_inode(path.dentry);
+			journal_inode = path.dentry->d_inode;
 			if (!S_ISBLK(journal_inode->i_mode)) {
 				ext3_msg(sb, KERN_ERR, "error: journal path %s "
 					"is not a block device", journal_path);
@@ -1577,7 +1548,7 @@ static void ext3_orphan_cleanup (struct super_block * sb,
 	/* Needed for iput() to work correctly and not trash data */
 	sb->s_flags |= MS_ACTIVE;
 	/* Turn on quotas so that they are updated correctly */
-	for (i = 0; i < EXT3_MAXQUOTAS; i++) {
+	for (i = 0; i < MAXQUOTAS; i++) {
 		if (EXT3_SB(sb)->s_qf_names[i]) {
 			int ret = ext3_quota_on_mount(sb, i);
 			if (ret < 0)
@@ -1628,7 +1599,7 @@ static void ext3_orphan_cleanup (struct super_block * sb,
 		       PLURAL(nr_truncates));
 #ifdef CONFIG_QUOTA
 	/* Turn quotas off */
-	for (i = 0; i < EXT3_MAXQUOTAS; i++) {
+	for (i = 0; i < MAXQUOTAS; i++) {
 		if (sb_dqopt(sb)->files[i])
 			dquot_quota_off(sb, i);
 	}
@@ -2030,7 +2001,6 @@ static int ext3_fill_super (struct super_block *sb, void *data, int silent)
 #ifdef CONFIG_QUOTA
 	sb->s_qcop = &ext3_qctl_operations;
 	sb->dq_op = &ext3_quota_operations;
-	sb->s_quota_types = QTYPE_MASK_USR | QTYPE_MASK_GRP;
 #endif
 	memcpy(sb->s_uuid, es->s_uuid, sizeof(es->s_uuid));
 	INIT_LIST_HEAD(&sbi->s_orphan); /* unlinked but open files */
@@ -2062,14 +2032,14 @@ static int ext3_fill_super (struct super_block *sb, void *data, int silent)
 		goto failed_mount2;
 	}
 	err = percpu_counter_init(&sbi->s_freeblocks_counter,
-			ext3_count_free_blocks(sb), GFP_KERNEL);
+			ext3_count_free_blocks(sb));
 	if (!err) {
 		err = percpu_counter_init(&sbi->s_freeinodes_counter,
-				ext3_count_free_inodes(sb), GFP_KERNEL);
+				ext3_count_free_inodes(sb));
 	}
 	if (!err) {
 		err = percpu_counter_init(&sbi->s_dirs_counter,
-				ext3_count_dirs(sb), GFP_KERNEL);
+				ext3_count_dirs(sb));
 	}
 	if (err) {
 		ext3_msg(sb, KERN_ERR, "error: insufficient memory");
@@ -2162,7 +2132,7 @@ failed_mount2:
 	kfree(sbi->s_group_desc);
 failed_mount:
 #ifdef CONFIG_QUOTA
-	for (i = 0; i < EXT3_MAXQUOTAS; i++)
+	for (i = 0; i < MAXQUOTAS; i++)
 		kfree(sbi->s_qf_names[i]);
 #endif
 	ext3_blkdev_remove(sbi);
@@ -2672,8 +2642,6 @@ static int ext3_remount (struct super_block * sb, int * flags, char * data)
 	int i;
 #endif
 
-	sync_filesystem(sb);
-
 	/* Store the original options */
 	old_sb_flags = sb->s_flags;
 	old_opts.s_mount_opt = sbi->s_mount_opt;
@@ -2682,7 +2650,7 @@ static int ext3_remount (struct super_block * sb, int * flags, char * data)
 	old_opts.s_commit_interval = sbi->s_commit_interval;
 #ifdef CONFIG_QUOTA
 	old_opts.s_jquota_fmt = sbi->s_jquota_fmt;
-	for (i = 0; i < EXT3_MAXQUOTAS; i++)
+	for (i = 0; i < MAXQUOTAS; i++)
 		if (sbi->s_qf_names[i]) {
 			old_opts.s_qf_names[i] = kstrdup(sbi->s_qf_names[i],
 							 GFP_KERNEL);
@@ -2786,7 +2754,7 @@ static int ext3_remount (struct super_block * sb, int * flags, char * data)
 	}
 #ifdef CONFIG_QUOTA
 	/* Release old quota file names */
-	for (i = 0; i < EXT3_MAXQUOTAS; i++)
+	for (i = 0; i < MAXQUOTAS; i++)
 		kfree(old_opts.s_qf_names[i]);
 #endif
 	if (enable_quota)
@@ -2800,7 +2768,7 @@ restore_opts:
 	sbi->s_commit_interval = old_opts.s_commit_interval;
 #ifdef CONFIG_QUOTA
 	sbi->s_jquota_fmt = old_opts.s_jquota_fmt;
-	for (i = 0; i < EXT3_MAXQUOTAS; i++) {
+	for (i = 0; i < MAXQUOTAS; i++) {
 		kfree(sbi->s_qf_names[i]);
 		sbi->s_qf_names[i] = old_opts.s_qf_names[i];
 	}
@@ -2851,9 +2819,8 @@ static int ext3_statfs (struct dentry * dentry, struct kstatfs * buf)
 		 */
 		overhead += ngroups * (2 + sbi->s_itb_per_group);
 
-		/* Add the internal journal blocks as well */
-		if (sbi->s_journal && !sbi->journal_bdev)
-			overhead += sbi->s_journal->j_maxlen;
+		/* Add the journal blocks as well */
+                overhead += sbi->s_journal->j_maxlen;
 
 		sbi->s_overhead_last = overhead;
 		smp_wmb();
@@ -2965,7 +2932,7 @@ static int ext3_write_info(struct super_block *sb, int type)
 	handle_t *handle;
 
 	/* Data block + inode block */
-	handle = ext3_journal_start(d_inode(sb->s_root), 2);
+	handle = ext3_journal_start(sb->s_root->d_inode, 2);
 	if (IS_ERR(handle))
 		return PTR_ERR(handle);
 	ret = dquot_commit_info(sb, type);
@@ -3012,7 +2979,7 @@ static int ext3_quota_on(struct super_block *sb, int type, int format_id,
 	 * When we journal data on quota file, we have to flush journal to see
 	 * all updates to the file when we bypass pagecache...
 	 */
-	if (ext3_should_journal_data(d_inode(path->dentry))) {
+	if (ext3_should_journal_data(path->dentry->d_inode)) {
 		/*
 		 * We don't need to lock updates but journal_flush() could
 		 * otherwise be livelocked...

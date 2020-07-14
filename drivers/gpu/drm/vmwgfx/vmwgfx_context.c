@@ -33,7 +33,6 @@ struct vmw_user_context {
 	struct ttm_base_object base;
 	struct vmw_resource res;
 	struct vmw_ctx_binding_state cbs;
-	struct vmw_cmdbuf_res_manager *man;
 };
 
 
@@ -104,8 +103,7 @@ static const vmw_scrub_func vmw_scrub_funcs[vmw_ctx_binding_max] = {
 
 static void vmw_hw_context_destroy(struct vmw_resource *res)
 {
-	struct vmw_user_context *uctx =
-		container_of(res, struct vmw_user_context, res);
+
 	struct vmw_private *dev_priv = res->dev_priv;
 	struct {
 		SVGA3dCmdHeader header;
@@ -115,9 +113,9 @@ static void vmw_hw_context_destroy(struct vmw_resource *res)
 
 	if (res->func->destroy == vmw_gb_context_destroy) {
 		mutex_lock(&dev_priv->cmdbuf_mutex);
-		vmw_cmdbuf_res_man_destroy(uctx->man);
 		mutex_lock(&dev_priv->binding_mutex);
-		(void) vmw_context_binding_state_kill(&uctx->cbs);
+		(void) vmw_context_binding_state_kill
+			(&container_of(res, struct vmw_user_context, res)->cbs);
 		(void) vmw_gb_context_destroy(res);
 		mutex_unlock(&dev_priv->binding_mutex);
 		if (dev_priv->pinned_bo != NULL &&
@@ -154,16 +152,13 @@ static int vmw_gb_context_init(struct vmw_private *dev_priv,
 	ret = vmw_resource_init(dev_priv, res, true,
 				res_free, &vmw_gb_context_func);
 	res->backup_size = SVGA3D_CONTEXT_DATA_SIZE;
-	if (unlikely(ret != 0))
-		goto out_err;
 
-	if (dev_priv->has_mob) {
-		uctx->man = vmw_cmdbuf_res_man_create(dev_priv);
-		if (unlikely(IS_ERR(uctx->man))) {
-			ret = PTR_ERR(uctx->man);
-			uctx->man = NULL;
-			goto out_err;
-		}
+	if (unlikely(ret != 0)) {
+		if (res_free)
+			res_free(res);
+		else
+			kfree(res);
+		return ret;
 	}
 
 	memset(&uctx->cbs, 0, sizeof(uctx->cbs));
@@ -171,13 +166,6 @@ static int vmw_gb_context_init(struct vmw_private *dev_priv,
 
 	vmw_resource_activate(res, vmw_hw_context_destroy);
 	return 0;
-
-out_err:
-	if (res_free)
-		res_free(res);
-	else
-		kfree(res);
-	return ret;
 }
 
 static int vmw_context_init(struct vmw_private *dev_priv,
@@ -474,6 +462,7 @@ int vmw_context_define_ioctl(struct drm_device *dev, void *data,
 	struct vmw_resource *tmp;
 	struct drm_vmw_context_arg *arg = (struct drm_vmw_context_arg *)data;
 	struct ttm_object_file *tfile = vmw_fpriv(file_priv)->tfile;
+	struct vmw_master *vmaster = vmw_master(file_priv->master);
 	int ret;
 
 
@@ -483,10 +472,9 @@ int vmw_context_define_ioctl(struct drm_device *dev, void *data,
 	 */
 
 	if (unlikely(vmw_user_context_size == 0))
-		vmw_user_context_size = ttm_round_pot(sizeof(*ctx)) + 128 +
-		  ((dev_priv->has_mob) ? vmw_cmdbuf_res_man_size() : 0);
+		vmw_user_context_size = ttm_round_pot(sizeof(*ctx)) + 128;
 
-	ret = ttm_read_lock(&dev_priv->reservation_sem, true);
+	ret = ttm_read_lock(&vmaster->lock, true);
 	if (unlikely(ret != 0))
 		return ret;
 
@@ -533,7 +521,7 @@ int vmw_context_define_ioctl(struct drm_device *dev, void *data,
 out_err:
 	vmw_resource_unreference(&res);
 out_unlock:
-	ttm_read_unlock(&dev_priv->reservation_sem);
+	ttm_read_unlock(&vmaster->lock);
 	return ret;
 
 }
@@ -913,9 +901,4 @@ int vmw_context_rebind_all(struct vmw_resource *ctx)
 struct list_head *vmw_context_binding_list(struct vmw_resource *ctx)
 {
 	return &(container_of(ctx, struct vmw_user_context, res)->cbs.list);
-}
-
-struct vmw_cmdbuf_res_manager *vmw_context_res_man(struct vmw_resource *ctx)
-{
-	return container_of(ctx, struct vmw_user_context, res)->man;
 }

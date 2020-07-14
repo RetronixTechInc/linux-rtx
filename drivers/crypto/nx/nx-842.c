@@ -936,14 +936,28 @@ static int nx842_OF_upd(struct property *new_prop)
 		goto error_out;
 	}
 
-	/*
-	 * If this is a property update, there are only certain properties that
-	 * we care about. Bail if it isn't in the below list
-	 */
-	if (new_prop && (strncmp(new_prop->name, "status", new_prop->length) ||
-		         strncmp(new_prop->name, "ibm,max-sg-len", new_prop->length) ||
-		         strncmp(new_prop->name, "ibm,max-sync-cop", new_prop->length)))
-		goto out;
+	/* Set ptr to new property if provided */
+	if (new_prop) {
+		/* Single property */
+		if (!strncmp(new_prop->name, "status", new_prop->length)) {
+			status = new_prop;
+
+		} else if (!strncmp(new_prop->name, "ibm,max-sg-len",
+					new_prop->length)) {
+			maxsglen = new_prop;
+
+		} else if (!strncmp(new_prop->name, "ibm,max-sync-cop",
+					new_prop->length)) {
+			maxsyncop = new_prop;
+
+		} else {
+			/*
+			 * Skip the update, the property being updated
+			 * has no impact.
+			 */
+			goto out;
+		}
+	}
 
 	/* Perform property updates */
 	ret = nx842_OF_upd_status(new_devdata, status);
@@ -1009,9 +1023,9 @@ error_out:
  *		notifier_to_errno() to decode this value
  */
 static int nx842_OF_notifier(struct notifier_block *np, unsigned long action,
-			     void *data)
+			     void *update)
 {
-	struct of_reconfig_data *upd = data;
+	struct of_prop_reconfig *upd = update;
 	struct nx842_devdata *local_devdata;
 	struct device_node *node = NULL;
 
@@ -1183,7 +1197,12 @@ static int __init nx842_probe(struct vio_dev *viodev,
 	}
 
 	rcu_read_lock();
-	dev_set_drvdata(&viodev->dev, rcu_dereference(devdata));
+	if (dev_set_drvdata(&viodev->dev, rcu_dereference(devdata))) {
+		rcu_read_unlock();
+		dev_err(&viodev->dev, "failed to set driver data for device\n");
+		ret = -1;
+		goto error;
+	}
 	rcu_read_unlock();
 
 	if (sysfs_create_group(&viodev->dev.kobj, &nx842_attribute_group)) {
@@ -1215,7 +1234,7 @@ static int __exit nx842_remove(struct vio_dev *viodev)
 	old_devdata = rcu_dereference_check(devdata,
 			lockdep_is_held(&devdata_mutex));
 	of_reconfig_notifier_unregister(&nx842_of_nb);
-	RCU_INIT_POINTER(devdata, NULL);
+	rcu_assign_pointer(devdata, NULL);
 	spin_unlock_irqrestore(&devdata_mutex, flags);
 	synchronize_rcu();
 	dev_set_drvdata(&viodev->dev, NULL);
@@ -1233,7 +1252,7 @@ static struct vio_device_id nx842_driver_ids[] = {
 static struct vio_driver nx842_driver = {
 	.name = MODULE_NAME,
 	.probe = nx842_probe,
-	.remove = __exit_p(nx842_remove),
+	.remove = nx842_remove,
 	.get_desired_dma = nx842_get_desired_dma,
 	.id_table = nx842_driver_ids,
 };
@@ -1266,7 +1285,7 @@ static void __exit nx842_exit(void)
 	spin_lock_irqsave(&devdata_mutex, flags);
 	old_devdata = rcu_dereference_check(devdata,
 			lockdep_is_held(&devdata_mutex));
-	RCU_INIT_POINTER(devdata, NULL);
+	rcu_assign_pointer(devdata, NULL);
 	spin_unlock_irqrestore(&devdata_mutex, flags);
 	synchronize_rcu();
 	if (old_devdata)

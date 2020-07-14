@@ -1929,6 +1929,7 @@ static int ibmvscsi_slave_configure(struct scsi_device *sdev)
 		blk_queue_rq_timeout(sdev->request_queue, 120 * HZ);
 	}
 	spin_unlock_irqrestore(shost->host_lock, lock_flags);
+	scsi_adjust_queue_depth(sdev, 0, shost->cmd_per_lun);
 	return 0;
 }
 
@@ -1941,11 +1942,17 @@ static int ibmvscsi_slave_configure(struct scsi_device *sdev)
  * Return value:
  * 	actual depth set
  **/
-static int ibmvscsi_change_queue_depth(struct scsi_device *sdev, int qdepth)
+static int ibmvscsi_change_queue_depth(struct scsi_device *sdev, int qdepth,
+				       int reason)
 {
+	if (reason != SCSI_QDEPTH_DEFAULT)
+		return -EOPNOTSUPP;
+
 	if (qdepth > IBMVSCSI_MAX_CMDS_PER_LUN)
 		qdepth = IBMVSCSI_MAX_CMDS_PER_LUN;
-	return scsi_change_queue_depth(sdev, qdepth);
+
+	scsi_adjust_queue_depth(sdev, 0, qdepth);
+	return sdev->queue_depth;
 }
 
 /* ------------------------------------------------------------
@@ -2217,7 +2224,7 @@ static int ibmvscsi_work(void *data)
 	struct ibmvscsi_host_data *hostdata = data;
 	int rc;
 
-	set_user_nice(current, MIN_NICE);
+	set_user_nice(current, -20);
 
 	while (1) {
 		rc = wait_event_interruptible(hostdata->work_wait_q,

@@ -57,21 +57,6 @@ do {							\
 #define sysfs_attr_init(attr) do {} while (0)
 #endif
 
-/**
- * struct attribute_group - data structure used to declare an attribute group.
- * @name:	Optional: Attribute group name
- *		If specified, the attribute group will be created in
- *		a new subdirectory with this name.
- * @is_visible:	Optional: Function to return permissions associated with an
- *		attribute of the group. Will be called repeatedly for each
- *		attribute in the group. Only read/write permissions as well as
- *		SYSFS_PREALLOC are accepted. Must return 0 if an attribute is
- *		not visible. The returned value will replace static permissions
- *		defined in struct attribute or struct bin_attribute.
- * @attrs:	Pointer to NULL terminated list of attributes.
- * @bin_attrs:	Pointer to NULL terminated list of binary attributes.
- *		Either attrs or bin_attrs or both must be provided.
- */
 struct attribute_group {
 	const char		*name;
 	umode_t			(*is_visible)(struct kobject *,
@@ -85,18 +70,8 @@ struct attribute_group {
  * for examples..
  */
 
-#define SYSFS_PREALLOC 010000
-
 #define __ATTR(_name, _mode, _show, _store) {				\
-	.attr = {.name = __stringify(_name),				\
-		 .mode = VERIFY_OCTAL_PERMISSIONS(_mode) },		\
-	.show	= _show,						\
-	.store	= _store,						\
-}
-
-#define __ATTR_PREALLOC(_name, _mode, _show, _store) {			\
-	.attr = {.name = __stringify(_name),				\
-		 .mode = SYSFS_PREALLOC | VERIFY_OCTAL_PERMISSIONS(_mode) },\
+	.attr = {.name = __stringify(_name), .mode = _mode },		\
 	.show	= _show,						\
 	.store	= _store,						\
 }
@@ -203,6 +178,9 @@ struct sysfs_ops {
 
 #ifdef CONFIG_SYSFS
 
+int sysfs_schedule_callback(struct kobject *kobj, void (*func)(void *),
+			    void *data, struct module *owner);
+
 int __must_check sysfs_create_dir_ns(struct kobject *kobj, const void *ns);
 void sysfs_remove_dir(struct kobject *kobj);
 int __must_check sysfs_rename_dir_ns(struct kobject *kobj, const char *new_name,
@@ -210,10 +188,6 @@ int __must_check sysfs_rename_dir_ns(struct kobject *kobj, const char *new_name,
 int __must_check sysfs_move_dir_ns(struct kobject *kobj,
 				   struct kobject *new_parent_kobj,
 				   const void *new_ns);
-int __must_check sysfs_create_mount_point(struct kobject *parent_kobj,
-					  const char *name);
-void sysfs_remove_mount_point(struct kobject *parent_kobj,
-			      const char *name);
 
 int __must_check sysfs_create_file_ns(struct kobject *kobj,
 				      const struct attribute *attr,
@@ -224,7 +198,6 @@ int __must_check sysfs_chmod_file(struct kobject *kobj,
 				  const struct attribute *attr, umode_t mode);
 void sysfs_remove_file_ns(struct kobject *kobj, const struct attribute *attr,
 			  const void *ns);
-bool sysfs_remove_file_self(struct kobject *kobj, const struct attribute *attr);
 void sysfs_remove_files(struct kobject *kobj, const struct attribute **attr);
 
 int __must_check sysfs_create_bin_file(struct kobject *kobj,
@@ -273,12 +246,13 @@ void sysfs_notify(struct kobject *kobj, const char *dir, const char *attr);
 
 int __must_check sysfs_init(void);
 
-static inline void sysfs_enable_ns(struct kernfs_node *kn)
-{
-	return kernfs_enable_ns(kn);
-}
-
 #else /* CONFIG_SYSFS */
+
+static inline int sysfs_schedule_callback(struct kobject *kobj,
+		void (*func)(void *), void *data, struct module *owner)
+{
+	return -ENOSYS;
+}
 
 static inline int sysfs_create_dir_ns(struct kobject *kobj, const void *ns)
 {
@@ -300,17 +274,6 @@ static inline int sysfs_move_dir_ns(struct kobject *kobj,
 				    const void *new_ns)
 {
 	return 0;
-}
-
-static inline int sysfs_create_mount_point(struct kobject *parent_kobj,
-					   const char *name)
-{
-	return 0;
-}
-
-static inline void sysfs_remove_mount_point(struct kobject *parent_kobj,
-					    const char *name)
-{
 }
 
 static inline int sysfs_create_file_ns(struct kobject *kobj,
@@ -336,12 +299,6 @@ static inline void sysfs_remove_file_ns(struct kobject *kobj,
 					const struct attribute *attr,
 					const void *ns)
 {
-}
-
-static inline bool sysfs_remove_file_self(struct kobject *kobj,
-					  const struct attribute *attr)
-{
-	return false;
 }
 
 static inline void sysfs_remove_files(struct kobject *kobj,
@@ -461,10 +418,6 @@ static inline int __must_check sysfs_init(void)
 	return 0;
 }
 
-static inline void sysfs_enable_ns(struct kernfs_node *kn)
-{
-}
-
 #endif /* CONFIG_SYSFS */
 
 static inline int __must_check sysfs_create_file(struct kobject *kobj,
@@ -476,7 +429,7 @@ static inline int __must_check sysfs_create_file(struct kobject *kobj,
 static inline void sysfs_remove_file(struct kobject *kobj,
 				     const struct attribute *attr)
 {
-	sysfs_remove_file_ns(kobj, attr, NULL);
+	return sysfs_remove_file_ns(kobj, attr, NULL);
 }
 
 static inline int sysfs_rename_link(struct kobject *kobj, struct kobject *target,

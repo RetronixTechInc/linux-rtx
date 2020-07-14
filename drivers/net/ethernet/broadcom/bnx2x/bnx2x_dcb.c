@@ -12,7 +12,7 @@
  * license other than the GPL, without Broadcom's express prior written
  * consent.
  *
- * Maintained by: Ariel Elior <ariel.elior@qlogic.com>
+ * Maintained by: Eilon Greenstein <eilong@broadcom.com>
  * Written by: Dmitry Kravkov
  *
  */
@@ -710,7 +710,8 @@ static inline void bnx2x_dcbx_update_tc_mapping(struct bnx2x *bp)
 	 * as we are handling an attention on a work queue which must be
 	 * flushed at some rtnl-locked contexts (e.g. if down)
 	 */
-	bnx2x_schedule_sp_rtnl(bp, BNX2X_SP_RTNL_SETUP_TC, 0);
+	if (!test_and_set_bit(BNX2X_SP_RTNL_SETUP_TC, &bp->sp_rtnl_state))
+		schedule_delayed_work(&bp->sp_rtnl_task, 0);
 }
 
 void bnx2x_dcbx_set_params(struct bnx2x *bp, u32 state)
@@ -763,7 +764,10 @@ void bnx2x_dcbx_set_params(struct bnx2x *bp, u32 state)
 			if (IS_MF(bp))
 				bnx2x_link_sync_notify(bp);
 
-			bnx2x_schedule_sp_rtnl(bp, BNX2X_SP_RTNL_TX_STOP, 0);
+			set_bit(BNX2X_SP_RTNL_TX_STOP, &bp->sp_rtnl_state);
+
+			schedule_delayed_work(&bp->sp_rtnl_task, 0);
+
 			return;
 		}
 	case BNX2X_DCBX_STATE_TX_PAUSED:
@@ -2092,6 +2096,7 @@ static void bnx2x_dcbnl_get_pfc_cfg(struct net_device *netdev, int prio,
 static u8 bnx2x_dcbnl_set_all(struct net_device *netdev)
 {
 	struct bnx2x *bp = netdev_priv(netdev);
+	int rc = 0;
 
 	DP(BNX2X_MSG_DCB, "SET-ALL\n");
 
@@ -2109,7 +2114,9 @@ static u8 bnx2x_dcbnl_set_all(struct net_device *netdev)
 				       1);
 		bnx2x_dcbx_init(bp, true);
 	}
-	DP(BNX2X_MSG_DCB, "set_dcbx_params done\n");
+	DP(BNX2X_MSG_DCB, "set_dcbx_params done (%d)\n", rc);
+	if (rc)
+		return 1;
 
 	return 0;
 }
@@ -2300,8 +2307,8 @@ static int bnx2x_set_admin_app_up(struct bnx2x *bp, u8 idtype, u16 idval, u8 up)
 	return 0;
 }
 
-static int bnx2x_dcbnl_set_app_up(struct net_device *netdev, u8 idtype,
-				  u16 idval, u8 up)
+static u8 bnx2x_dcbnl_set_app_up(struct net_device *netdev, u8 idtype,
+				 u16 idval, u8 up)
 {
 	struct bnx2x *bp = netdev_priv(netdev);
 

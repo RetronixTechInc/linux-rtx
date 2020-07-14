@@ -156,6 +156,7 @@ static struct platform_driver ux500_wdt_driver = {
 	.suspend	= ux500_wdt_suspend,
 	.resume		= ux500_wdt_resume,
 	.driver		= {
+		.owner	= THIS_MODULE,
 		.name	= "ux500_wdt",
 	},
 };

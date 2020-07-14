@@ -541,6 +541,9 @@ static void prio_io(struct cache *ca, uint64_t bucket, unsigned long rw)
 	closure_sync(cl);
 }
 
+#define buckets_free(c)	"free %zu, free_inc %zu, unused %zu",		\
+	fifo_used(&c->free), fifo_used(&c->free_inc), fifo_used(&c->unused)
+
 void bch_prio_write(struct cache *ca)
 {
 	int i;
@@ -550,6 +553,10 @@ void bch_prio_write(struct cache *ca)
 	closure_init_stack(&cl);
 
 	lockdep_assert_held(&ca->set->bucket_lock);
+
+	for (b = ca->buckets;
+	     b < ca->buckets + ca->sb.nbuckets; b++)
+		b->disk_gen = b->gen;
 
 	ca->disk_buckets->seq++;
 
@@ -594,17 +601,14 @@ void bch_prio_write(struct cache *ca)
 
 	mutex_lock(&ca->set->bucket_lock);
 
+	ca->need_save_prio = 0;
+
 	/*
 	 * Don't want the old priorities to get garbage collected until after we
 	 * finish writing the new ones, and they're journalled
 	 */
-	for (i = 0; i < prio_buckets(ca); i++) {
-		if (ca->prio_last_buckets[i])
-			__bch_bucket_free(ca,
-				&ca->buckets[ca->prio_last_buckets[i]]);
-
+	for (i = 0; i < prio_buckets(ca); i++)
 		ca->prio_last_buckets[i] = ca->prio_buckets[i];
-	}
 }
 
 static void prio_read(struct cache *ca, uint64_t bucket)
@@ -635,7 +639,7 @@ static void prio_read(struct cache *ca, uint64_t bucket)
 		}
 
 		b->prio = le16_to_cpu(d->prio);
-		b->gen = b->last_gc = d->gen;
+		b->gen = b->disk_gen = b->last_gc = b->gc_gen = d->gen;
 	}
 }
 
@@ -733,6 +737,8 @@ static void bcache_device_detach(struct bcache_device *d)
 static void bcache_device_attach(struct bcache_device *d, struct cache_set *c,
 				 unsigned id)
 {
+	BUG_ON(test_bit(CACHE_SET_STOPPING, &c->flags));
+
 	d->id = id;
 	d->c = c;
 	c->devices[id] = d;
@@ -837,12 +843,10 @@ static int bcache_device_init(struct bcache_device *d, unsigned block_size,
 	q->limits.max_segment_size	= UINT_MAX;
 	q->limits.max_segments		= BIO_MAX_PAGES;
 	q->limits.max_discard_sectors	= UINT_MAX;
-	q->limits.discard_granularity	= 512;
 	q->limits.io_min		= block_size;
 	q->limits.logical_block_size	= block_size;
 	q->limits.physical_block_size	= block_size;
 	set_bit(QUEUE_FLAG_NONROT,	&d->disk->queue->queue_flags);
-	clear_bit(QUEUE_FLAG_ADD_RANDOM, &d->disk->queue->queue_flags);
 	set_bit(QUEUE_FLAG_DISCARD,	&d->disk->queue->queue_flags);
 
 	blk_queue_flush(q, REQ_FLUSH|REQ_FUA);
@@ -926,7 +930,6 @@ static void cached_dev_detach_finish(struct work_struct *w)
 	list_move(&dc->list, &uncached_devices);
 
 	clear_bit(BCACHE_DEV_DETACHING, &dc->disk.flags);
-	clear_bit(BCACHE_DEV_UNLINK_DONE, &dc->disk.flags);
 
 	mutex_unlock(&bch_register_lock);
 
@@ -1041,9 +1044,6 @@ int bch_cached_dev_attach(struct cached_dev *dc, struct cache_set *c)
 	 */
 	atomic_set(&dc->count, 1);
 
-	if (bch_cached_dev_writeback_start(dc))
-		return -ENOMEM;
-
 	if (BDEV_STATE(&dc->sb) == BDEV_STATE_DIRTY) {
 		bch_sectors_dirty_init(dc);
 		atomic_set(&dc->has_dirty, 1);
@@ -1073,8 +1073,7 @@ static void cached_dev_free(struct closure *cl)
 	struct cached_dev *dc = container_of(cl, struct cached_dev, disk.cl);
 
 	cancel_delayed_work_sync(&dc->writeback_rate_update);
-	if (!IS_ERR_OR_NULL(dc->writeback_thread))
-		kthread_stop(dc->writeback_thread);
+	kthread_stop(dc->writeback_thread);
 
 	mutex_lock(&bch_register_lock);
 
@@ -1085,8 +1084,12 @@ static void cached_dev_free(struct closure *cl)
 
 	mutex_unlock(&bch_register_lock);
 
-	if (!IS_ERR_OR_NULL(dc->bdev))
+	if (!IS_ERR_OR_NULL(dc->bdev)) {
+		if (dc->bdev->bd_disk)
+			blk_sync_queue(bdev_get_queue(dc->bdev));
+
 		blkdev_put(dc->bdev, FMODE_READ|FMODE_WRITE|FMODE_EXCL);
+	}
 
 	wake_up(&unregister_wait);
 
@@ -1213,9 +1216,7 @@ void bch_flash_dev_release(struct kobject *kobj)
 static void flash_dev_free(struct closure *cl)
 {
 	struct bcache_device *d = container_of(cl, struct bcache_device, cl);
-	mutex_lock(&bch_register_lock);
 	bcache_device_free(d);
-	mutex_unlock(&bch_register_lock);
 	kobject_put(&d->kobj);
 }
 
@@ -1223,9 +1224,7 @@ static void flash_dev_flush(struct closure *cl)
 {
 	struct bcache_device *d = container_of(cl, struct bcache_device, cl);
 
-	mutex_lock(&bch_register_lock);
 	bcache_device_unlink(d);
-	mutex_unlock(&bch_register_lock);
 	kobject_del(&d->kobj);
 	continue_at(cl, flash_dev_free, system_wq);
 }
@@ -1280,9 +1279,6 @@ int bch_flash_dev_create(struct cache_set *c, uint64_t size)
 
 	if (test_bit(CACHE_SET_STOPPING, &c->flags))
 		return -EINTR;
-
-	if (!test_bit(CACHE_SET_RUNNING, &c->flags))
-		return -EPERM;
 
 	u = uuid_find_empty(c);
 	if (!u) {
@@ -1353,17 +1349,12 @@ static void cache_set_free(struct closure *cl)
 	bch_journal_free(c);
 
 	for_each_cache(ca, c, i)
-		if (ca) {
-			ca->set = NULL;
-			c->cache[ca->sb.nr_this_dev] = NULL;
+		if (ca)
 			kobject_put(&ca->kobj);
-		}
 
 	bch_bset_sort_state_free(&c->sort);
 	free_pages((unsigned long) c->uuids, ilog2(bucket_pages(c)));
 
-	if (c->moving_gc_wq)
-		destroy_workqueue(c->moving_gc_wq);
 	if (c->bio_split)
 		bioset_free(c->bio_split);
 	if (c->fill_iter)
@@ -1404,22 +1395,13 @@ static void cache_set_flush(struct closure *cl)
 		list_add(&c->root->list, &c->btree_cache);
 
 	/* Should skip this if we're unregistering because of an error */
-	list_for_each_entry(b, &c->btree_cache, list) {
-		mutex_lock(&b->write_lock);
+	list_for_each_entry(b, &c->btree_cache, list)
 		if (btree_node_dirty(b))
-			__bch_btree_node_write(b, NULL);
-		mutex_unlock(&b->write_lock);
-	}
+			bch_btree_node_write(b, NULL);
 
 	for_each_cache(ca, c, i)
 		if (ca->alloc_thread)
 			kthread_stop(ca->alloc_thread);
-
-	if (c->journal.cur) {
-		cancel_delayed_work_sync(&c->journal.work);
-		/* flush last journal entry if needed */
-		c->journal.work.work.func(&c->journal.work.work);
-	}
 
 	closure_return(cl);
 }
@@ -1503,13 +1485,14 @@ struct cache_set *bch_cache_set_alloc(struct cache_sb *sb)
 
 	sema_init(&c->sb_write_mutex, 1);
 	mutex_init(&c->bucket_lock);
-	init_waitqueue_head(&c->btree_cache_wait);
+	init_waitqueue_head(&c->try_wait);
 	init_waitqueue_head(&c->bucket_wait);
 	sema_init(&c->uuid_write_mutex, 1);
 
 	spin_lock_init(&c->btree_gc_time.lock);
 	spin_lock_init(&c->btree_split_time.lock);
 	spin_lock_init(&c->btree_read_time.lock);
+	spin_lock_init(&c->try_harder_time.lock);
 
 	bch_moving_init_cache_set(c);
 
@@ -1534,7 +1517,6 @@ struct cache_set *bch_cache_set_alloc(struct cache_sb *sb)
 	    !(c->fill_iter = mempool_create_kmalloc_pool(1, iter_size)) ||
 	    !(c->bio_split = bioset_create(4, offsetof(struct bbio, bio))) ||
 	    !(c->uuids = alloc_bucket_pages(GFP_KERNEL, c)) ||
-	    !(c->moving_gc_wq = create_workqueue("bcache_gc")) ||
 	    bch_journal_alloc(c) ||
 	    bch_btree_cache_alloc(c) ||
 	    bch_open_buckets_alloc(c) ||
@@ -1598,7 +1580,7 @@ static void run_cache_set(struct cache_set *c)
 			goto err;
 
 		err = "error reading btree root";
-		c->root = bch_btree_node_get(c, NULL, k, j->btree_level, true, NULL);
+		c->root = bch_btree_node_get(c, k, j->btree_level, true);
 		if (IS_ERR_OR_NULL(c->root))
 			goto err;
 
@@ -1614,7 +1596,7 @@ static void run_cache_set(struct cache_set *c)
 			goto err;
 
 		bch_journal_mark(c, &journal);
-		bch_initial_gc_finish(c);
+		bch_btree_gc_finish(c);
 		pr_debug("btree_check() done");
 
 		/*
@@ -1656,7 +1638,7 @@ static void run_cache_set(struct cache_set *c)
 				ca->sb.d[j] = ca->sb.first_bucket + j;
 		}
 
-		bch_initial_gc_finish(c);
+		bch_btree_gc_finish(c);
 
 		err = "error starting allocator thread";
 		for_each_cache(ca, c, i)
@@ -1673,14 +1655,12 @@ static void run_cache_set(struct cache_set *c)
 			goto err;
 
 		err = "cannot allocate new btree root";
-		c->root = __bch_btree_node_alloc(c, NULL, 0, true, NULL);
+		c->root = bch_btree_node_alloc(c, 0, true);
 		if (IS_ERR_OR_NULL(c->root))
 			goto err;
 
-		mutex_lock(&c->root->write_lock);
 		bkey_copy_key(&c->root->key, &MAX_KEY);
 		bch_btree_node_write(c->root, &cl);
-		mutex_unlock(&c->root->write_lock);
 
 		bch_btree_set_root(c->root);
 		rw_unlock(true, c->root);
@@ -1709,7 +1689,6 @@ static void run_cache_set(struct cache_set *c)
 
 	flash_devs_run(c);
 
-	set_bit(CACHE_SET_RUNNING, &c->flags);
 	return;
 err:
 	closure_sync(&cl);
@@ -1773,7 +1752,6 @@ found:
 		pr_debug("set version = %llu", c->sb.version);
 	}
 
-	kobject_get(&ca->kobj);
 	ca->set = c;
 	ca->set->cache[ca->sb.nr_this_dev] = ca;
 	c->cache_by_alloc[c->caches_loaded++] = ca;
@@ -1794,10 +1772,8 @@ void bch_cache_release(struct kobject *kobj)
 	struct cache *ca = container_of(kobj, struct cache, kobj);
 	unsigned i;
 
-	if (ca->set) {
-		BUG_ON(ca->set->cache[ca->sb.nr_this_dev] != ca);
+	if (ca->set)
 		ca->set->cache[ca->sb.nr_this_dev] = NULL;
-	}
 
 	bio_split_pool_free(&ca->bio_split_hook);
 
@@ -1806,6 +1782,7 @@ void bch_cache_release(struct kobject *kobj)
 	vfree(ca->buckets);
 
 	free_heap(&ca->heap);
+	free_fifo(&ca->unused);
 	free_fifo(&ca->free_inc);
 
 	for (i = 0; i < RESERVE_NR; i++)
@@ -1814,8 +1791,10 @@ void bch_cache_release(struct kobject *kobj)
 	if (ca->sb_bio.bi_inline_vecs[0].bv_page)
 		put_page(ca->sb_bio.bi_io_vec[0].bv_page);
 
-	if (!IS_ERR_OR_NULL(ca->bdev))
+	if (!IS_ERR_OR_NULL(ca->bdev)) {
+		blk_sync_queue(bdev_get_queue(ca->bdev));
 		blkdev_put(ca->bdev, FMODE_READ|FMODE_WRITE|FMODE_EXCL);
+	}
 
 	kfree(ca);
 	module_put(THIS_MODULE);
@@ -1840,6 +1819,7 @@ static int cache_alloc(struct cache_sb *sb, struct cache *ca)
 	    !init_fifo(&ca->free[RESERVE_MOVINGGC], free, GFP_KERNEL) ||
 	    !init_fifo(&ca->free[RESERVE_NONE], free, GFP_KERNEL) ||
 	    !init_fifo(&ca->free_inc,	free << 2, GFP_KERNEL) ||
+	    !init_fifo(&ca->unused,	free << 2, GFP_KERNEL) ||
 	    !init_heap(&ca->heap,	free << 3, GFP_KERNEL) ||
 	    !(ca->buckets	= vzalloc(sizeof(struct bucket) *
 					  ca->sb.nbuckets)) ||
@@ -1854,11 +1834,17 @@ static int cache_alloc(struct cache_sb *sb, struct cache *ca)
 	for_each_bucket(b, ca)
 		atomic_set(&b->pin, 0);
 
+	if (bch_cache_allocator_init(ca))
+		goto err;
+
 	return 0;
+err:
+	kobject_put(&ca->kobj);
+	return -ENOMEM;
 }
 
 static void register_cache(struct cache_sb *sb, struct page *sb_page,
-				struct block_device *bdev, struct cache *ca)
+				  struct block_device *bdev, struct cache *ca)
 {
 	char name[BDEVNAME_SIZE];
 	const char *err = "cannot allocate memory";
@@ -1883,20 +1869,15 @@ static void register_cache(struct cache_sb *sb, struct page *sb_page,
 	if (kobject_add(&ca->kobj, &part_to_dev(bdev->bd_part)->kobj, "bcache"))
 		goto err;
 
-	mutex_lock(&bch_register_lock);
 	err = register_cache_set(ca);
-	mutex_unlock(&bch_register_lock);
-
 	if (err)
 		goto err;
 
 	pr_info("registered cache device %s", bdevname(bdev, name));
-out:
-	kobject_put(&ca->kobj);
 	return;
 err:
 	pr_notice("error opening %s: %s", bdevname(bdev, name), err);
-	goto out;
+	kobject_put(&ca->kobj);
 }
 
 /* Global interfaces/init */
@@ -1950,6 +1931,8 @@ static ssize_t register_bcache(struct kobject *k, struct kobj_attribute *attr,
 	if (!try_module_get(THIS_MODULE))
 		return -EBUSY;
 
+	mutex_lock(&bch_register_lock);
+
 	if (!(path = kstrndup(buffer, size, GFP_KERNEL)) ||
 	    !(sb = kmalloc(sizeof(struct cache_sb), GFP_KERNEL)))
 		goto err;
@@ -1961,12 +1944,10 @@ static ssize_t register_bcache(struct kobject *k, struct kobj_attribute *attr,
 	if (IS_ERR(bdev)) {
 		if (bdev == ERR_PTR(-EBUSY)) {
 			bdev = lookup_bdev(strim(path));
-			mutex_lock(&bch_register_lock);
 			if (!IS_ERR(bdev) && bch_is_open(bdev))
 				err = "device already registered";
 			else
 				err = "device busy";
-			mutex_unlock(&bch_register_lock);
 		}
 		goto err;
 	}
@@ -1984,9 +1965,7 @@ static ssize_t register_bcache(struct kobject *k, struct kobj_attribute *attr,
 		if (!dc)
 			goto err_close;
 
-		mutex_lock(&bch_register_lock);
 		register_bdev(sb, sb_page, bdev, dc);
-		mutex_unlock(&bch_register_lock);
 	} else {
 		struct cache *ca = kzalloc(sizeof(*ca), GFP_KERNEL);
 		if (!ca)
@@ -1999,6 +1978,7 @@ out:
 		put_page(sb_page);
 	kfree(sb);
 	kfree(path);
+	mutex_unlock(&bch_register_lock);
 	module_put(THIS_MODULE);
 	return ret;
 
@@ -2077,6 +2057,7 @@ static void bcache_exit(void)
 {
 	bch_debug_exit();
 	bch_request_exit();
+	bch_btree_exit();
 	if (bcache_kobj)
 		kobject_put(bcache_kobj);
 	if (bcache_wq)
@@ -2106,6 +2087,7 @@ static int __init bcache_init(void)
 	if (!(bcache_wq = create_workqueue("bcache")) ||
 	    !(bcache_kobj = kobject_create_and_add("bcache", fs_kobj)) ||
 	    sysfs_create_files(bcache_kobj, files) ||
+	    bch_btree_init() ||
 	    bch_request_init() ||
 	    bch_debug_init(bcache_kobj))
 		goto err;

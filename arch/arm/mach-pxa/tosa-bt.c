@@ -129,6 +129,7 @@ static struct platform_driver tosa_bt_driver = {
 
 	.driver = {
 		.name = "tosa-bt",
+		.owner = THIS_MODULE,
 	},
 };
 

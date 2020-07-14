@@ -127,7 +127,6 @@ Version 0.0.6    2.1.110   07-aug-98   Eduardo Marcelo Serrat
 #include <linux/stat.h>
 #include <linux/init.h>
 #include <linux/poll.h>
-#include <linux/jiffies.h>
 #include <net/net_namespace.h>
 #include <net/neighbour.h>
 #include <net/dst.h>
@@ -482,7 +481,7 @@ static struct sock *dn_alloc_sock(struct net *net, struct socket *sock, gfp_t gf
 
 	sk->sk_backlog_rcv = dn_nsp_backlog_rcv;
 	sk->sk_destruct    = dn_destruct;
-	sk->sk_no_check_tx = 1;
+	sk->sk_no_check    = 1;
 	sk->sk_family      = PF_DECnet;
 	sk->sk_protocol    = 0;
 	sk->sk_allocation  = gfp;
@@ -599,7 +598,7 @@ int dn_destroy_timer(struct sock *sk)
 	if (sk->sk_socket)
 		return 0;
 
-	if (time_after_eq(jiffies, scp->stamp + HZ * decnet_time_wait)) {
+	if ((jiffies - scp->stamp) >= (HZ * decnet_time_wait)) {
 		dn_unhash_sock(sk);
 		sock_put(sk);
 		return 1;
@@ -1669,8 +1668,8 @@ static int dn_data_ready(struct sock *sk, struct sk_buff_head *q, int flags, int
 }
 
 
-static int dn_recvmsg(struct socket *sock, struct msghdr *msg, size_t size,
-		      int flags)
+static int dn_recvmsg(struct kiocb *iocb, struct socket *sock,
+	struct msghdr *msg, size_t size, int flags)
 {
 	struct sock *sk = sock->sk;
 	struct dn_scp *scp = DN_SK(sk);
@@ -1760,7 +1759,7 @@ static int dn_recvmsg(struct socket *sock, struct msghdr *msg, size_t size,
 		if ((chunk + copied) > size)
 			chunk = size - copied;
 
-		if (memcpy_to_msg(msg, skb->data, chunk)) {
+		if (memcpy_toiovec(msg->msg_iov, skb->data, chunk)) {
 			rv = -EFAULT;
 			break;
 		}
@@ -1905,7 +1904,8 @@ static inline struct sk_buff *dn_alloc_send_pskb(struct sock *sk,
 	return skb;
 }
 
-static int dn_sendmsg(struct socket *sock, struct msghdr *msg, size_t size)
+static int dn_sendmsg(struct kiocb *iocb, struct socket *sock,
+		      struct msghdr *msg, size_t size)
 {
 	struct sock *sk = sock->sk;
 	struct dn_scp *scp = DN_SK(sk);
@@ -2031,7 +2031,7 @@ static int dn_sendmsg(struct socket *sock, struct msghdr *msg, size_t size)
 
 		skb_reserve(skb, 64 + DN_MAX_NSP_DATA_HEADER);
 
-		if (memcpy_from_msg(skb_put(skb, len), msg, len)) {
+		if (memcpy_fromiovec(skb_put(skb, len), msg->msg_iov, len)) {
 			err = -EFAULT;
 			goto out;
 		}

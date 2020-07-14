@@ -54,7 +54,7 @@ static void rfcomm_sk_data_ready(struct rfcomm_dlc *d, struct sk_buff *skb)
 
 	atomic_add(skb->len, &sk->sk_rmem_alloc);
 	skb_queue_tail(&sk->sk_receive_queue, skb);
-	sk->sk_data_ready(sk);
+	sk->sk_data_ready(sk, skb->len);
 
 	if (atomic_read(&sk->sk_rmem_alloc) >= sk->sk_rcvbuf)
 		rfcomm_dlc_throttle(d);
@@ -84,7 +84,7 @@ static void rfcomm_sk_state_change(struct rfcomm_dlc *d, int err)
 			sock_set_flag(sk, SOCK_ZAPPED);
 			bt_accept_unlink(sk);
 		}
-		parent->sk_data_ready(parent);
+		parent->sk_data_ready(parent, 0);
 	} else {
 		if (d->state == BT_CONNECTED)
 			rfcomm_session_getaddr(d->session,
@@ -105,18 +105,13 @@ static void rfcomm_sk_state_change(struct rfcomm_dlc *d, int err)
 }
 
 /* ---- Socket functions ---- */
-static struct sock *__rfcomm_get_listen_sock_by_addr(u8 channel, bdaddr_t *src)
+static struct sock *__rfcomm_get_sock_by_addr(u8 channel, bdaddr_t *src)
 {
 	struct sock *sk = NULL;
 
 	sk_for_each(sk, &rfcomm_sk_list.head) {
-		if (rfcomm_pi(sk)->channel != channel)
-			continue;
-
-		if (bacmp(&rfcomm_pi(sk)->src, src))
-			continue;
-
-		if (sk->sk_state == BT_BOUND || sk->sk_state == BT_LISTEN)
+		if (rfcomm_pi(sk)->channel == channel &&
+				!bacmp(&rfcomm_pi(sk)->src, src))
 			break;
 	}
 
@@ -336,7 +331,6 @@ static int rfcomm_sock_bind(struct socket *sock, struct sockaddr *addr, int addr
 {
 	struct sockaddr_rc *sa = (struct sockaddr_rc *) addr;
 	struct sock *sk = sock->sk;
-	int chan = sa->rc_channel;
 	int err = 0;
 
 	BT_DBG("sk %p %pMR", sk, &sa->rc_bdaddr);
@@ -358,12 +352,12 @@ static int rfcomm_sock_bind(struct socket *sock, struct sockaddr *addr, int addr
 
 	write_lock(&rfcomm_sk_list.lock);
 
-	if (chan && __rfcomm_get_listen_sock_by_addr(chan, &sa->rc_bdaddr)) {
+	if (sa->rc_channel && __rfcomm_get_sock_by_addr(sa->rc_channel, &sa->rc_bdaddr)) {
 		err = -EADDRINUSE;
 	} else {
 		/* Save source address */
 		bacpy(&rfcomm_pi(sk)->src, &sa->rc_bdaddr);
-		rfcomm_pi(sk)->channel = chan;
+		rfcomm_pi(sk)->channel = sa->rc_channel;
 		sk->sk_state = BT_BOUND;
 	}
 
@@ -445,7 +439,7 @@ static int rfcomm_sock_listen(struct socket *sock, int backlog)
 		write_lock(&rfcomm_sk_list.lock);
 
 		for (channel = 1; channel < 31; channel++)
-			if (!__rfcomm_get_listen_sock_by_addr(channel, src)) {
+			if (!__rfcomm_get_sock_by_addr(channel, src)) {
 				rfcomm_pi(sk)->channel = channel;
 				err = 0;
 				break;
@@ -468,7 +462,7 @@ done:
 
 static int rfcomm_sock_accept(struct socket *sock, struct socket *newsock, int flags)
 {
-	DEFINE_WAIT_FUNC(wait, woken_wake_function);
+	DECLARE_WAITQUEUE(wait, current);
 	struct sock *sk = sock->sk, *nsk;
 	long timeo;
 	int err = 0;
@@ -487,6 +481,8 @@ static int rfcomm_sock_accept(struct socket *sock, struct socket *newsock, int f
 	/* Wait for an incoming connection. (wake-one). */
 	add_wait_queue_exclusive(sk_sleep(sk), &wait);
 	while (1) {
+		set_current_state(TASK_INTERRUPTIBLE);
+
 		if (sk->sk_state != BT_LISTEN) {
 			err = -EBADFD;
 			break;
@@ -507,11 +503,10 @@ static int rfcomm_sock_accept(struct socket *sock, struct socket *newsock, int f
 		}
 
 		release_sock(sk);
-
-		timeo = wait_woken(&wait, TASK_INTERRUPTIBLE, timeo);
-
+		timeo = schedule_timeout(timeo);
 		lock_sock_nested(sk, SINGLE_DEPTH_NESTING);
 	}
+	__set_current_state(TASK_RUNNING);
 	remove_wait_queue(sk_sleep(sk), &wait);
 
 	if (err)
@@ -533,10 +528,6 @@ static int rfcomm_sock_getname(struct socket *sock, struct sockaddr *addr, int *
 
 	BT_DBG("sock %p, sk %p", sock, sk);
 
-	if (peer && sk->sk_state != BT_CONNECTED &&
-	    sk->sk_state != BT_CONNECT && sk->sk_state != BT_CONNECT2)
-		return -ENOTCONN;
-
 	memset(sa, 0, sizeof(*sa));
 	sa->rc_family  = AF_BLUETOOTH;
 	sa->rc_channel = rfcomm_pi(sk)->channel;
@@ -549,8 +540,8 @@ static int rfcomm_sock_getname(struct socket *sock, struct sockaddr *addr, int *
 	return 0;
 }
 
-static int rfcomm_sock_sendmsg(struct socket *sock, struct msghdr *msg,
-			       size_t len)
+static int rfcomm_sock_sendmsg(struct kiocb *iocb, struct socket *sock,
+			       struct msghdr *msg, size_t len)
 {
 	struct sock *sk = sock->sk;
 	struct rfcomm_dlc *d = rfcomm_pi(sk)->dlc;
@@ -587,7 +578,7 @@ static int rfcomm_sock_sendmsg(struct socket *sock, struct msghdr *msg,
 		}
 		skb_reserve(skb, RFCOMM_SKB_HEAD_RESERVE);
 
-		err = memcpy_from_msg(skb_put(skb, size), msg, size);
+		err = memcpy_fromiovec(skb_put(skb, size), msg->msg_iov, size);
 		if (err) {
 			kfree_skb(skb);
 			if (sent == 0)
@@ -615,8 +606,8 @@ done:
 	return sent;
 }
 
-static int rfcomm_sock_recvmsg(struct socket *sock, struct msghdr *msg,
-			       size_t size, int flags)
+static int rfcomm_sock_recvmsg(struct kiocb *iocb, struct socket *sock,
+			       struct msghdr *msg, size_t size, int flags)
 {
 	struct sock *sk = sock->sk;
 	struct rfcomm_dlc *d = rfcomm_pi(sk)->dlc;
@@ -627,7 +618,7 @@ static int rfcomm_sock_recvmsg(struct socket *sock, struct msghdr *msg,
 		return 0;
 	}
 
-	len = bt_sock_stream_recvmsg(sock, msg, size, flags);
+	len = bt_sock_stream_recvmsg(iocb, sock, msg, size, flags);
 
 	lock_sock(sk);
 	if (!(flags & MSG_PEEK) && len > 0)
@@ -654,11 +645,6 @@ static int rfcomm_sock_setsockopt_old(struct socket *sock, int optname, char __u
 	case RFCOMM_LM:
 		if (get_user(opt, (u32 __user *) optval)) {
 			err = -EFAULT;
-			break;
-		}
-
-		if (opt & RFCOMM_LM_FIPS) {
-			err = -EINVAL;
 			break;
 		}
 
@@ -776,11 +762,7 @@ static int rfcomm_sock_getsockopt_old(struct socket *sock, int optname, char __u
 			break;
 		case BT_SECURITY_HIGH:
 			opt = RFCOMM_LM_AUTH | RFCOMM_LM_ENCRYPT |
-			      RFCOMM_LM_SECURE;
-			break;
-		case BT_SECURITY_FIPS:
-			opt = RFCOMM_LM_AUTH | RFCOMM_LM_ENCRYPT |
-			      RFCOMM_LM_SECURE | RFCOMM_LM_FIPS;
+							RFCOMM_LM_SECURE;
 			break;
 		default:
 			opt = 0;
@@ -792,7 +774,6 @@ static int rfcomm_sock_getsockopt_old(struct socket *sock, int optname, char __u
 
 		if (put_user(opt, (u32 __user *) optval))
 			err = -EFAULT;
-
 		break;
 
 	case RFCOMM_CONNINFO:
@@ -1056,8 +1037,6 @@ static const struct net_proto_family rfcomm_sock_family_ops = {
 int __init rfcomm_init_sockets(void)
 {
 	int err;
-
-	BUILD_BUG_ON(sizeof(struct sockaddr_rc) > sizeof(struct sockaddr));
 
 	err = proto_register(&rfcomm_proto, 0);
 	if (err < 0)

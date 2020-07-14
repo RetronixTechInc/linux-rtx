@@ -8,6 +8,7 @@
 
 #include "imx7d-12x12-lpddr3-arm2.dts"
 
+
 / {
 	sound {
 		compatible = "fsl,imx7d-12x12-lpddr3-arm2-wm8958",
@@ -35,10 +36,6 @@
 
 &sdma {
 	status = "okay";
-};
-
-&sim1 {
-	status = "disabled";
 };
 
 &usdhc2 {

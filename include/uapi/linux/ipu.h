@@ -3,12 +3,19 @@
  */
 
 /*
- * The code contained herein is licensed under the GNU General Public
- * License. You may obtain a copy of the GNU General Public License
- * Version 2 or later at the following locations:
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
  *
- * http://www.opensource.org/licenses/gpl-license.html
- * http://www.gnu.org/copyleft/gpl.html
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
 /*!
@@ -108,6 +115,8 @@ typedef enum {
 #define IPU_PIX_FMT_GENERIC_16 fourcc('I', 'P', 'U', '2')	/*!< IPU Generic Data */
 #define IPU_PIX_FMT_LVDS666 fourcc('L', 'V', 'D', '6')	/*!< IPU Generic Data */
 #define IPU_PIX_FMT_LVDS888 fourcc('L', 'V', 'D', '8')	/*!< IPU Generic Data */
+#define IPU_PIX_FMT_BT656    fourcc('B', 'T', '6', '5')	/*!< BT656, 8 bits UYVY */
+#define IPU_PIX_FMT_BT1120    fourcc('B', 'T', '1', '1')	/*!< BT1120, 16 bits UYVY */
 /*! @} */
 /*! @name RGB Formats */
 /*! @{ */

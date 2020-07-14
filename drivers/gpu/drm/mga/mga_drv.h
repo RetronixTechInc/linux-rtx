@@ -31,8 +31,6 @@
 #ifndef __MGA_DRV_H__
 #define __MGA_DRV_H__
 
-#include <drm/drm_legacy.h>
-
 /* General customization:
  */
 

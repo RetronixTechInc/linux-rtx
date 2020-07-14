@@ -151,7 +151,14 @@ static const struct snd_pcm_hardware fsl_dma_hardware = {
  */
 static void fsl_dma_abort_stream(struct snd_pcm_substream *substream)
 {
-	snd_pcm_stop_xrun(substream);
+	unsigned long flags;
+
+	snd_pcm_stream_lock_irqsave(substream, flags);
+
+	if (snd_pcm_running(substream))
+		snd_pcm_stop(substream, SNDRV_PCM_STATE_XRUN);
+
+	snd_pcm_stream_unlock_irqrestore(substream, flags);
 }
 
 /**
@@ -964,6 +971,7 @@ MODULE_DEVICE_TABLE(of, fsl_soc_dma_ids);
 static struct platform_driver fsl_soc_dma_driver = {
 	.driver = {
 		.name = "fsl-pcm-audio",
+		.owner = THIS_MODULE,
 		.of_match_table = fsl_soc_dma_ids,
 	},
 	.probe = fsl_soc_dma_probe,

@@ -154,7 +154,7 @@ static const unsigned int out_sidetone_tlv[] = {
 static int wm899x_outpga_put_volsw_vu(struct snd_kcontrol *kcontrol,
 				      struct snd_ctl_elem_value *ucontrol)
 {
-	struct snd_soc_codec *codec = snd_soc_kcontrol_codec(kcontrol);
+	struct snd_soc_codec *codec = snd_kcontrol_chip(kcontrol);
 	int reg = kcontrol->private_value & 0xff;
 	int ret;
 	u16 val;
@@ -171,23 +171,26 @@ static int wm899x_outpga_put_volsw_vu(struct snd_kcontrol *kcontrol,
 static const char *wm8991_digital_sidetone[] =
 {"None", "Left ADC", "Right ADC", "Reserved"};
 
-static SOC_ENUM_SINGLE_DECL(wm8991_left_digital_sidetone_enum,
-			    WM8991_DIGITAL_SIDE_TONE,
-			    WM8991_ADC_TO_DACL_SHIFT,
-			    wm8991_digital_sidetone);
+static const struct soc_enum wm8991_left_digital_sidetone_enum =
+	SOC_ENUM_SINGLE(WM8991_DIGITAL_SIDE_TONE,
+			WM8991_ADC_TO_DACL_SHIFT,
+			WM8991_ADC_TO_DACL_MASK,
+			wm8991_digital_sidetone);
 
-static SOC_ENUM_SINGLE_DECL(wm8991_right_digital_sidetone_enum,
-			    WM8991_DIGITAL_SIDE_TONE,
-			    WM8991_ADC_TO_DACR_SHIFT,
-			    wm8991_digital_sidetone);
+static const struct soc_enum wm8991_right_digital_sidetone_enum =
+	SOC_ENUM_SINGLE(WM8991_DIGITAL_SIDE_TONE,
+			WM8991_ADC_TO_DACR_SHIFT,
+			WM8991_ADC_TO_DACR_MASK,
+			wm8991_digital_sidetone);
 
 static const char *wm8991_adcmode[] =
 {"Hi-fi mode", "Voice mode 1", "Voice mode 2", "Voice mode 3"};
 
-static SOC_ENUM_SINGLE_DECL(wm8991_right_adcmode_enum,
-			    WM8991_ADC_CTRL,
-			    WM8991_ADC_HPF_CUT_SHIFT,
-			    wm8991_adcmode);
+static const struct soc_enum wm8991_right_adcmode_enum =
+	SOC_ENUM_SINGLE(WM8991_ADC_CTRL,
+			WM8991_ADC_HPF_CUT_SHIFT,
+			WM8991_ADC_HPF_CUT_MASK,
+			wm8991_adcmode);
 
 static const struct snd_kcontrol_new wm8991_snd_controls[] = {
 	/* INMIXL */
@@ -382,14 +385,13 @@ static const struct snd_kcontrol_new wm8991_snd_controls[] = {
 static int outmixer_event(struct snd_soc_dapm_widget *w,
 			  struct snd_kcontrol *kcontrol, int event)
 {
-	struct snd_soc_codec *codec = snd_soc_dapm_to_codec(w->dapm);
 	u32 reg_shift = kcontrol->private_value & 0xfff;
 	int ret = 0;
 	u16 reg;
 
 	switch (reg_shift) {
 	case WM8991_SPEAKER_MIXER | (WM8991_LDSPK_BIT << 8):
-		reg = snd_soc_read(codec, WM8991_OUTPUT_MIXER1);
+		reg = snd_soc_read(w->codec, WM8991_OUTPUT_MIXER1);
 		if (reg & WM8991_LDLO) {
 			printk(KERN_WARNING
 			       "Cannot set as Output Mixer 1 LDLO Set\n");
@@ -398,7 +400,7 @@ static int outmixer_event(struct snd_soc_dapm_widget *w,
 		break;
 
 	case WM8991_SPEAKER_MIXER | (WM8991_RDSPK_BIT << 8):
-		reg = snd_soc_read(codec, WM8991_OUTPUT_MIXER2);
+		reg = snd_soc_read(w->codec, WM8991_OUTPUT_MIXER2);
 		if (reg & WM8991_RDRO) {
 			printk(KERN_WARNING
 			       "Cannot set as Output Mixer 2 RDRO Set\n");
@@ -407,7 +409,7 @@ static int outmixer_event(struct snd_soc_dapm_widget *w,
 		break;
 
 	case WM8991_OUTPUT_MIXER1 | (WM8991_LDLO_BIT << 8):
-		reg = snd_soc_read(codec, WM8991_SPEAKER_MIXER);
+		reg = snd_soc_read(w->codec, WM8991_SPEAKER_MIXER);
 		if (reg & WM8991_LDSPK) {
 			printk(KERN_WARNING
 			       "Cannot set as Speaker Mixer LDSPK Set\n");
@@ -416,7 +418,7 @@ static int outmixer_event(struct snd_soc_dapm_widget *w,
 		break;
 
 	case WM8991_OUTPUT_MIXER2 | (WM8991_RDRO_BIT << 8):
-		reg = snd_soc_read(codec, WM8991_SPEAKER_MIXER);
+		reg = snd_soc_read(w->codec, WM8991_SPEAKER_MIXER);
 		if (reg & WM8991_RDSPK) {
 			printk(KERN_WARNING
 			       "Cannot set as Speaker Mixer RDSPK Set\n");
@@ -484,9 +486,9 @@ static const struct snd_kcontrol_new wm8991_dapm_inmixr_controls[] = {
 static const char *wm8991_ainlmux[] =
 {"INMIXL Mix", "RXVOICE Mix", "DIFFINL Mix"};
 
-static SOC_ENUM_SINGLE_DECL(wm8991_ainlmux_enum,
-			    WM8991_INPUT_MIXER1, WM8991_AINLMODE_SHIFT,
-			    wm8991_ainlmux);
+static const struct soc_enum wm8991_ainlmux_enum =
+	SOC_ENUM_SINGLE(WM8991_INPUT_MIXER1, WM8991_AINLMODE_SHIFT,
+			ARRAY_SIZE(wm8991_ainlmux), wm8991_ainlmux);
 
 static const struct snd_kcontrol_new wm8991_dapm_ainlmux_controls =
 	SOC_DAPM_ENUM("Route", wm8991_ainlmux_enum);
@@ -497,9 +499,9 @@ static const struct snd_kcontrol_new wm8991_dapm_ainlmux_controls =
 static const char *wm8991_ainrmux[] =
 {"INMIXR Mix", "RXVOICE Mix", "DIFFINR Mix"};
 
-static SOC_ENUM_SINGLE_DECL(wm8991_ainrmux_enum,
-			    WM8991_INPUT_MIXER1, WM8991_AINRMODE_SHIFT,
-			    wm8991_ainrmux);
+static const struct soc_enum wm8991_ainrmux_enum =
+	SOC_ENUM_SINGLE(WM8991_INPUT_MIXER1, WM8991_AINRMODE_SHIFT,
+			ARRAY_SIZE(wm8991_ainrmux), wm8991_ainrmux);
 
 static const struct snd_kcontrol_new wm8991_dapm_ainrmux_controls =
 	SOC_DAPM_ENUM("Route", wm8991_ainrmux_enum);
@@ -1082,16 +1084,16 @@ static int wm8991_hw_params(struct snd_pcm_substream *substream,
 
 	audio1 &= ~WM8991_AIF_WL_MASK;
 	/* bit size */
-	switch (params_width(params)) {
-	case 16:
+	switch (params_format(params)) {
+	case SNDRV_PCM_FORMAT_S16_LE:
 		break;
-	case 20:
+	case SNDRV_PCM_FORMAT_S20_3LE:
 		audio1 |= WM8991_AIF_WL_20BITS;
 		break;
-	case 24:
+	case SNDRV_PCM_FORMAT_S24_LE:
 		audio1 |= WM8991_AIF_WL_24BITS;
 		break;
-	case 32:
+	case SNDRV_PCM_FORMAT_S32_LE:
 		audio1 |= WM8991_AIF_WL_32BITS;
 		break;
 	}
@@ -1228,6 +1230,43 @@ static int wm8991_set_bias_level(struct snd_soc_codec *codec,
 	return 0;
 }
 
+static int wm8991_suspend(struct snd_soc_codec *codec)
+{
+	wm8991_set_bias_level(codec, SND_SOC_BIAS_OFF);
+	return 0;
+}
+
+static int wm8991_resume(struct snd_soc_codec *codec)
+{
+	wm8991_set_bias_level(codec, SND_SOC_BIAS_STANDBY);
+	return 0;
+}
+
+/* power down chip */
+static int wm8991_remove(struct snd_soc_codec *codec)
+{
+	wm8991_set_bias_level(codec, SND_SOC_BIAS_OFF);
+	return 0;
+}
+
+static int wm8991_probe(struct snd_soc_codec *codec)
+{
+	struct wm8991_priv *wm8991;
+	int ret;
+
+	wm8991 = snd_soc_codec_get_drvdata(codec);
+
+	ret = snd_soc_codec_set_cache_io(codec, 8, 16, SND_SOC_REGMAP);
+	if (ret < 0) {
+		dev_err(codec->dev, "Failed to set cache i/o: %d\n", ret);
+		return ret;
+	}
+
+	wm8991_set_bias_level(codec, SND_SOC_BIAS_STANDBY);
+
+	return 0;
+}
+
 #define WM8991_FORMATS (SNDRV_PCM_FMTBIT_S16_LE | SNDRV_PCM_FMTBIT_S20_3LE |\
 			SNDRV_PCM_FMTBIT_S24_LE)
 
@@ -1268,9 +1307,11 @@ static struct snd_soc_dai_driver wm8991_dai = {
 };
 
 static struct snd_soc_codec_driver soc_codec_dev_wm8991 = {
+	.probe = wm8991_probe,
+	.remove = wm8991_remove,
+	.suspend = wm8991_suspend,
+	.resume = wm8991_resume,
 	.set_bias_level = wm8991_set_bias_level,
-	.suspend_bias_off = true,
-
 	.controls = wm8991_snd_controls,
 	.num_controls = ARRAY_SIZE(wm8991_snd_controls),
 	.dapm_widgets = wm8991_dapm_widgets,

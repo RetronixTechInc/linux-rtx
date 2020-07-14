@@ -317,8 +317,8 @@ static int load_elf_fdpic_binary(struct linux_binprm *bprm)
 		goto error;
 
 	/* there's now no turning back... the old userspace image is dead,
-	 * defunct, deceased, etc.
-	 */
+	 * defunct, deceased, etc. after this point we have to exit via
+	 * error_kill */
 	set_personality(PER_LINUX_FDPIC);
 	if (elf_read_implies_exec(&exec_params.hdr, executable_stack))
 		current->personality |= READ_IMPLIES_EXEC;
@@ -343,22 +343,24 @@ static int load_elf_fdpic_binary(struct linux_binprm *bprm)
 
 	retval = setup_arg_pages(bprm, current->mm->start_stack,
 				 executable_stack);
-	if (retval < 0)
-		goto error;
+	if (retval < 0) {
+		send_sig(SIGKILL, current, 0);
+		goto error_kill;
+	}
 #endif
 
 	/* load the executable and interpreter into memory */
 	retval = elf_fdpic_map_file(&exec_params, bprm->file, current->mm,
 				    "executable");
 	if (retval < 0)
-		goto error;
+		goto error_kill;
 
 	if (interpreter_name) {
 		retval = elf_fdpic_map_file(&interp_params, interpreter,
 					    current->mm, "interpreter");
 		if (retval < 0) {
 			printk(KERN_ERR "Unable to load interpreter\n");
-			goto error;
+			goto error_kill;
 		}
 
 		allow_write_access(interpreter);
@@ -395,7 +397,7 @@ static int load_elf_fdpic_binary(struct linux_binprm *bprm)
 	if (IS_ERR_VALUE(current->mm->start_brk)) {
 		retval = current->mm->start_brk;
 		current->mm->start_brk = 0;
-		goto error;
+		goto error_kill;
 	}
 
 	current->mm->brk = current->mm->start_brk;
@@ -408,7 +410,7 @@ static int load_elf_fdpic_binary(struct linux_binprm *bprm)
 	install_exec_creds(bprm);
 	if (create_elf_fdpic_tables(bprm, current->mm,
 				    &exec_params, &interp_params) < 0)
-		goto error;
+		goto error_kill;
 
 	kdebug("- start_code  %lx", current->mm->start_code);
 	kdebug("- end_code    %lx", current->mm->end_code);
@@ -447,6 +449,12 @@ error:
 	kfree(interp_params.phdrs);
 	kfree(interp_params.loadmap);
 	return retval;
+
+	/* unrecoverable error - kill the process */
+error_kill:
+	send_sig(SIGSEGV, current, 0);
+	goto error;
+
 }
 
 /*****************************************************************************/

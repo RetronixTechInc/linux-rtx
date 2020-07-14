@@ -131,12 +131,8 @@ static const struct sdhci_ops bcm2835_sdhci_ops = {
 	.read_l = bcm2835_sdhci_readl,
 	.read_w = bcm2835_sdhci_readw,
 	.read_b = bcm2835_sdhci_readb,
-	.set_clock = sdhci_set_clock,
 	.get_max_clock = sdhci_pltfm_clk_get_max_clock,
 	.get_min_clock = bcm2835_sdhci_get_min_clock,
-	.set_bus_width = sdhci_set_bus_width,
-	.reset = sdhci_reset,
-	.set_uhs_signaling = sdhci_set_uhs_signaling,
 };
 
 static const struct sdhci_pltfm_data bcm2835_sdhci_pdata = {
@@ -180,6 +176,11 @@ err:
 	return ret;
 }
 
+static int bcm2835_sdhci_remove(struct platform_device *pdev)
+{
+	return sdhci_pltfm_unregister(pdev);
+}
+
 static const struct of_device_id bcm2835_sdhci_of_match[] = {
 	{ .compatible = "brcm,bcm2835-sdhci" },
 	{ }
@@ -189,11 +190,12 @@ MODULE_DEVICE_TABLE(of, bcm2835_sdhci_of_match);
 static struct platform_driver bcm2835_sdhci_driver = {
 	.driver = {
 		.name = "sdhci-bcm2835",
+		.owner = THIS_MODULE,
 		.of_match_table = bcm2835_sdhci_of_match,
 		.pm = SDHCI_PLTFM_PMOPS,
 	},
 	.probe = bcm2835_sdhci_probe,
-	.remove = sdhci_pltfm_unregister,
+	.remove = bcm2835_sdhci_remove,
 };
 module_platform_driver(bcm2835_sdhci_driver);
 

@@ -30,7 +30,6 @@
 #include <linux/of_device.h>
 #include <linux/pm_runtime.h>
 #include <linux/regmap.h>
-#include <linux/media-bus-format.h>
 #include <media/v4l2-ioctl.h>
 #include <linux/videodev2.h>
 #include <media/v4l2-device.h>
@@ -453,6 +452,14 @@ static int vadc_g_std(struct v4l2_subdev *sd, v4l2_std_id *std)
 	return 0;
 }
 
+static int vadc_s_std(struct v4l2_subdev *sd, v4l2_std_id std)
+{
+	struct vadc_state *state = to_state(sd);
+
+//	state->fmt->v4l2_std = std;
+	return 0;
+}
+
 /*!
  * Return attributes of current video standard.
  * Since this device autodetects the current standard, this function also
@@ -493,14 +500,14 @@ static int vadc_querystd(struct v4l2_subdev *sd, v4l2_std_id *std)
 	return 0;
 }
 
-static int vadc_enum_mbus_fmt(struct v4l2_subdev *sd,
-				unsigned index,	u32 *code)
+static int vadc_enum_mbus_fmt(struct v4l2_subdev *sd, unsigned index,
+					enum v4l2_mbus_pixelcode *code)
 {
 	/* support only one format  */
 	if (index >= 1)
 		return -EINVAL;
 
-	*code = MEDIA_BUS_FMT_AYUV8_1X32;
+	*code = V4L2_MBUS_FMT_AYUV8_1X32;
 	return 0;
 }
 
@@ -509,7 +516,7 @@ static int vadc_mbus_fmt(struct v4l2_subdev *sd,
 {
 	struct vadc_state *state = to_state(sd);
 
-	fmt->code = MEDIA_BUS_FMT_AYUV8_1X32;
+	fmt->code = V4L2_MBUS_FMT_AYUV8_1X32;
 	fmt->colorspace = V4L2_COLORSPACE_SMPTE170M;
 	fmt->field = V4L2_FIELD_INTERLACED;
 	fmt->width = 720;
@@ -519,32 +526,33 @@ static int vadc_mbus_fmt(struct v4l2_subdev *sd,
 }
 
 static int vadc_enum_framesizes(struct v4l2_subdev *sd,
-			       struct v4l2_subdev_pad_config *cfg,
-			       struct v4l2_subdev_frame_size_enum *fse)
+		struct v4l2_frmsizeenum *fsize)
 {
 	struct vadc_state *state = to_state(sd);
-	if (fse->index >= 1)
+
+	pr_info("%s:%d\n", __func__, fsize->index);
+	if (fsize->index >= 1)
 		return -EINVAL;
 
-	fse->min_width = state->fmt->active_width;
-	fse->max_width = state->fmt->active_width;
-	fse->min_height  = state->fmt->active_height;
-	fse->max_height  = state->fmt->active_height;
+	fsize->pixel_format = V4L2_PIX_FMT_YUYV;
+	fsize->type = V4L2_FRMSIZE_TYPE_DISCRETE;
+	fsize->discrete.width = state->fmt->active_width;
+	fsize->discrete.height  = state->fmt->active_height;
 
 	return 0;
 }
 static int vadc_enum_frameintervals(struct v4l2_subdev *sd,
-		struct v4l2_subdev_pad_config *cfg,
-		struct v4l2_subdev_frame_interval_enum *fie)
+		struct v4l2_frmivalenum *fival)
 {
 	struct vadc_state *state = to_state(sd);
 
-	if (fie->index < 0 || fie->index >= 1)
+	if (fival->index < 0 || fival->index >= 1)
 		return -EINVAL;
 
-	fie->interval.numerator = 1;
+	fival->type = V4L2_FRMIVAL_TYPE_DISCRETE;
+	fival->discrete.numerator = 1;
 
-	fie->interval.denominator = state->fmt->framerates;
+	fival->discrete.denominator = state->fmt->framerates;
 
 	return 0;
 }
@@ -570,18 +578,19 @@ static const struct v4l2_subdev_video_ops vadc_video_ops = {
 	.try_mbus_fmt          = vadc_mbus_fmt,
 	.g_mbus_fmt            = vadc_mbus_fmt,
 	.s_mbus_fmt            = vadc_mbus_fmt,
+	.enum_framesizes       = vadc_enum_framesizes,
+	.enum_frameintervals   = vadc_enum_frameintervals,
 	.s_parm                = vadc_s_parm,
-	.g_std                 = vadc_g_std,
 };
 
-static const struct v4l2_subdev_pad_ops vadc_pad_ops = {
-	.enum_frame_size       = vadc_enum_framesizes,
-	.enum_frame_interval   = vadc_enum_frameintervals,
+static const struct v4l2_subdev_core_ops vadc_core_ops = {
+	.g_std = vadc_g_std,
+	.s_std = vadc_s_std,
 };
 
 static const struct v4l2_subdev_ops vadc_ops = {
+	.core = &vadc_core_ops,
 	.video = &vadc_video_ops,
-	.pad = &vadc_pad_ops,
 };
 
 static const struct of_device_id fsl_vadc_dt_ids[] = {

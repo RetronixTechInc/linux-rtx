@@ -28,7 +28,7 @@ struct nft_queue {
 };
 
 static void nft_queue_eval(const struct nft_expr *expr,
-			   struct nft_regs *regs,
+			   struct nft_data data[NFT_REG_MAX + 1],
 			   const struct nft_pktinfo *pkt)
 {
 	struct nft_queue *priv = nft_expr_priv(expr);
@@ -51,7 +51,7 @@ static void nft_queue_eval(const struct nft_expr *expr,
 	if (priv->flags & NFT_QUEUE_FLAG_BYPASS)
 		ret |= NF_VERDICT_FLAG_QUEUE_BYPASS;
 
-	regs->verdict.code = ret;
+	data[NFT_REG_VERDICT].verdict = ret;
 }
 
 static const struct nla_policy nft_queue_policy[NFTA_QUEUE_MAX + 1] = {

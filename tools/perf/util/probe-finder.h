@@ -3,7 +3,6 @@
 
 #include <stdbool.h>
 #include "util.h"
-#include "intlist.h"
 #include "probe-event.h"
 
 #define MAX_PROBE_BUFFER	1024
@@ -30,8 +29,8 @@ struct debuginfo {
 	Dwarf_Addr	bias;
 };
 
-/* This also tries to open distro debuginfo */
 extern struct debuginfo *debuginfo__new(const char *path);
+extern struct debuginfo *debuginfo__new_online_kernel(unsigned long addr);
 extern void debuginfo__delete(struct debuginfo *dbg);
 
 /* Find probe_trace_events specified by perf_probe_event from debuginfo */
@@ -55,10 +54,6 @@ extern int debuginfo__find_available_vars_at(struct debuginfo *dbg,
 					     struct variable_list **vls,
 					     int max_points, bool externs);
 
-/* Find a src file from a DWARF tag path */
-int get_real_path(const char *raw_path, const char *comp_dir,
-			 char **new_path);
-
 struct probe_finder {
 	struct perf_probe_event	*pev;		/* Target probe event */
 
@@ -71,7 +66,7 @@ struct probe_finder {
 	const char		*fname;		/* Real file name */
 	Dwarf_Die		cu_die;		/* Current CU */
 	Dwarf_Die		sp_die;
-	struct intlist		*lcache;	/* Line cache for lazy match */
+	struct list_head	lcache;		/* Line cache for lazy match */
 
 	/* For variable searching */
 #if _ELFUTILS_PREREQ(0, 142)

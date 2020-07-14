@@ -48,12 +48,14 @@
 #ifndef _LUSTRE_DLM_H__
 #define _LUSTRE_DLM_H__
 
-#include "lustre_lib.h"
-#include "lustre_net.h"
-#include "lustre_import.h"
-#include "lustre_handles.h"
-#include "interval_tree.h"	/* for interval_node{}, ldlm_extent */
-#include "lu_ref.h"
+#include <linux/lustre_dlm.h>
+
+#include <lustre_lib.h>
+#include <lustre_net.h>
+#include <lustre_import.h>
+#include <lustre_handles.h>
+#include <interval_tree.h> /* for interval_node{}, ldlm_extent */
+#include <lu_ref.h>
 
 #include "lustre_dlm_flags.h"
 
@@ -210,7 +212,7 @@ struct ldlm_pool_ops {
 	int (*po_recalc)(struct ldlm_pool *pl);
 	/** Cancel at least \a nr locks from pool \a pl */
 	int (*po_shrink)(struct ldlm_pool *pl, int nr,
-			 gfp_t gfp_mask);
+			 unsigned int gfp_mask);
 	int (*po_setup)(struct ldlm_pool *pl, int limit);
 };
 
@@ -258,7 +260,7 @@ struct ldlm_pool {
 	/** Recalculation period for pool. */
 	time_t			pl_recalc_period;
 	/** Recalculation and shrink operations. */
-	const struct ldlm_pool_ops	*pl_ops;
+	struct ldlm_pool_ops	*pl_ops;
 	/** Number of planned locks for next period. */
 	int			pl_grant_plan;
 	/** Pool statistics. */
@@ -328,7 +330,7 @@ enum {
 };
 
 typedef enum {
-	/** invalid type */
+	/** invalide type */
 	LDLM_NS_TYPE_UNKNOWN    = 0,
 	/** mdc namespace */
 	LDLM_NS_TYPE_MDC,
@@ -439,7 +441,7 @@ struct ldlm_namespace {
 	 * \see ldlm_namespace_dump. Increased by 10 seconds every time
 	 * it is called.
 	 */
-	unsigned long		ns_next_dump;
+	cfs_time_t		ns_next_dump;
 
 	/** "policy" function that does actual lock conflict determination */
 	ldlm_res_policy		ns_policy;
@@ -781,13 +783,13 @@ struct ldlm_lock {
 	 * Seconds. It will be updated if there is any activity related to
 	 * the lock, e.g. enqueue the lock or send blocking AST.
 	 */
-	unsigned long		l_last_activity;
+	cfs_time_t		l_last_activity;
 
 	/**
 	 * Time last used by e.g. being matched by lock match.
 	 * Jiffies. Should be converted to time if needed.
 	 */
-	unsigned long		l_last_used;
+	cfs_time_t		l_last_used;
 
 	/** Originally requested extent for the extent lock. */
 	struct ldlm_extent	l_req_extent;
@@ -835,7 +837,7 @@ struct ldlm_lock {
 	 * under this lock.
 	 * \see ost_rw_prolong_locks
 	 */
-	unsigned long		l_callback_timeout;
+	cfs_time_t		l_callback_timeout;
 
 	/** Local PID of process which created this lock. */
 	__u32			l_pid;
@@ -949,7 +951,7 @@ struct ldlm_resource {
 	void			*lr_lvb_data;
 
 	/** When the resource was considered as contended. */
-	unsigned long		lr_contention_time;
+	cfs_time_t		lr_contention_time;
 	/** List of references to this resource. For debugging. */
 	struct lu_ref		lr_reference;
 
@@ -1070,12 +1072,12 @@ extern char *ldlm_it2str(int it);
 	    ((libcfs_debug & (mask)) != 0 &&			    \
 	     (libcfs_subsystem_debug & DEBUG_SUBSYSTEM) != 0))	  \
 		_ldlm_lock_debug(lock, msgdata, fmt, ##a);	      \
-} while (0)
+} while(0)
 
 void _ldlm_lock_debug(struct ldlm_lock *lock,
 		      struct libcfs_debug_msg_data *data,
 		      const char *fmt, ...)
-	__printf(3, 4);
+	__attribute__ ((format (printf, 3, 4)));
 
 /**
  * Rate-limited version of lock printing function.
@@ -1183,7 +1185,7 @@ ldlm_handle2lock_long(const struct lustre_handle *h, __u64 flags)
 
 /**
  * Update Lock Value Block Operations (LVBO) on a resource taking into account
- * data from request \a r
+ * data from reqest \a r
  */
 static inline int ldlm_res_lvbo_update(struct ldlm_resource *res,
 				       struct ptlrpc_request *r, int increase)
@@ -1283,7 +1285,7 @@ void ldlm_namespace_register(struct ldlm_namespace *ns, ldlm_side_t client);
 void ldlm_namespace_unregister(struct ldlm_namespace *ns, ldlm_side_t client);
 void ldlm_namespace_get(struct ldlm_namespace *ns);
 void ldlm_namespace_put(struct ldlm_namespace *ns);
-#if defined (CONFIG_PROC_FS)
+#ifdef LPROCFS
 int ldlm_proc_setup(void);
 void ldlm_proc_cleanup(void);
 #else
@@ -1310,11 +1312,11 @@ int ldlm_lock_change_resource(struct ldlm_namespace *, struct ldlm_lock *,
 			      const struct ldlm_res_id *);
 
 #define LDLM_RESOURCE_ADDREF(res) do {				  \
-	lu_ref_add_atomic(&(res)->lr_reference, __func__, current);  \
+	lu_ref_add_atomic(&(res)->lr_reference, __FUNCTION__, current);  \
 } while (0)
 
 #define LDLM_RESOURCE_DELREF(res) do {				  \
-	lu_ref_del(&(res)->lr_reference, __func__, current);	  \
+	lu_ref_del(&(res)->lr_reference, __FUNCTION__, current);  \
 } while (0)
 
 /* ldlm_request.c */
@@ -1388,7 +1390,7 @@ int ldlm_cli_cancel_req(struct obd_export *exp, struct list_head *head,
 int ldlm_cancel_resource_local(struct ldlm_resource *res,
 			       struct list_head *cancels,
 			       ldlm_policy_data_t *policy,
-			       ldlm_mode_t mode, __u64 lock_flags,
+			       ldlm_mode_t mode, int lock_flags,
 			       ldlm_cancel_flags_t cancel_flags, void *opaque);
 int ldlm_cli_cancel_list_local(struct list_head *cancels, int count,
 			       ldlm_cancel_flags_t flags);
@@ -1443,10 +1445,10 @@ static inline void unlock_res(struct ldlm_resource *res)
 /** Check if resource is already locked, assert if not. */
 static inline void check_res_locked(struct ldlm_resource *res)
 {
-	assert_spin_locked(&res->lr_lock);
+	LASSERT(spin_is_locked(&res->lr_lock));
 }
 
-struct ldlm_resource *lock_res_and_lock(struct ldlm_lock *lock);
+struct ldlm_resource * lock_res_and_lock(struct ldlm_lock *lock);
 void unlock_res_and_lock(struct ldlm_lock *lock);
 
 /* ldlm_pool.c */
@@ -1461,7 +1463,7 @@ void ldlm_pools_fini(void);
 int ldlm_pool_init(struct ldlm_pool *pl, struct ldlm_namespace *ns,
 		   int idx, ldlm_side_t client);
 int ldlm_pool_shrink(struct ldlm_pool *pl, int nr,
-		     gfp_t gfp_mask);
+		     unsigned int gfp_mask);
 void ldlm_pool_fini(struct ldlm_pool *pl);
 int ldlm_pool_setup(struct ldlm_pool *pl, int limit);
 int ldlm_pool_recalc(struct ldlm_pool *pl);

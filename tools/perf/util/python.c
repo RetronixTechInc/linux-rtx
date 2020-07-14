@@ -14,12 +14,12 @@
  */
 int verbose;
 
-int eprintf(int level, int var, const char *fmt, ...)
+int eprintf(int level, const char *fmt, ...)
 {
 	va_list args;
 	int ret = 0;
 
-	if (var >= level) {
+	if (verbose >= level) {
 		va_start(args, fmt);
 		ret = vfprintf(stderr, fmt, args);
 		va_end(args);
@@ -736,7 +736,7 @@ static PyObject *pyrf_evlist__poll(struct pyrf_evlist *pevlist,
 	if (!PyArg_ParseTupleAndKeywords(args, kwargs, "|i", kwlist, &timeout))
 		return NULL;
 
-	n = perf_evlist__poll(evlist, timeout);
+	n = poll(evlist->pollfd, evlist->nr_fds, timeout);
 	if (n < 0) {
 		PyErr_SetFromErrno(PyExc_OSError);
 		return NULL;
@@ -753,9 +753,9 @@ static PyObject *pyrf_evlist__get_pollfd(struct pyrf_evlist *pevlist,
         PyObject *list = PyList_New(0);
 	int i;
 
-	for (i = 0; i < evlist->pollfd.nr; ++i) {
+	for (i = 0; i < evlist->nr_fds; ++i) {
 		PyObject *file;
-		FILE *fp = fdopen(evlist->pollfd.entries[i].fd, "r");
+		FILE *fp = fdopen(evlist->pollfd[i].fd, "r");
 
 		if (fp == NULL)
 			goto free_list;
@@ -768,7 +768,7 @@ static PyObject *pyrf_evlist__get_pollfd(struct pyrf_evlist *pevlist,
 			Py_DECREF(file);
 			goto free_list;
 		}
-
+			
 		Py_DECREF(file);
 	}
 

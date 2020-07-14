@@ -187,7 +187,7 @@ static int adf_buffer_import(struct adf_device *dev,
 		buf->dma_bufs[i] = dma_buf_get(user_buf.fd[i]);
 		if (IS_ERR(buf->dma_bufs[i])) {
 			ret = PTR_ERR(buf->dma_bufs[i]);
-			dev_err(&dev->base.dev, "importing dma_buf fd %d failed: %d\n",
+			dev_err(&dev->base.dev, "importing dma_buf fd %llu failed: %d\n",
 					user_buf.fd[i], ret);
 			buf->dma_bufs[i] = NULL;
 			goto done;
@@ -200,7 +200,7 @@ static int adf_buffer_import(struct adf_device *dev,
 	if (user_buf.acquire_fence >= 0) {
 		buf->acquire_fence = sync_fence_fdget(user_buf.acquire_fence);
 		if (!buf->acquire_fence) {
-			dev_err(&dev->base.dev, "getting fence fd %d failed\n",
+			dev_err(&dev->base.dev, "getting fence fd %lld failed\n",
 					user_buf.acquire_fence);
 			ret = -EINVAL;
 			goto done;
@@ -225,7 +225,7 @@ static int adf_device_post_config(struct adf_device *dev,
 	size_t custom_data_size;
 	int ret = 0;
 
-	complete_fence_fd = get_unused_fd_flags(O_CLOEXEC);
+	complete_fence_fd = get_unused_fd();
 	if (complete_fence_fd < 0)
 		return complete_fence_fd;
 
@@ -347,7 +347,7 @@ static int adf_intf_simple_post_config(struct adf_interface *intf,
 	struct adf_buffer buf;
 	int ret = 0;
 
-	complete_fence_fd = get_unused_fd_flags(O_CLOEXEC);
+	complete_fence_fd = get_unused_fd();
 	if (complete_fence_fd < 0)
 		return complete_fence_fd;
 

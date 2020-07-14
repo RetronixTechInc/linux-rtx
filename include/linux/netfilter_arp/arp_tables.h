@@ -54,7 +54,8 @@ extern struct xt_table *arpt_register_table(struct net *net,
 extern void arpt_unregister_table(struct xt_table *table);
 extern unsigned int arpt_do_table(struct sk_buff *skb,
 				  unsigned int hook,
-				  const struct nf_hook_state *state,
+				  const struct net_device *in,
+				  const struct net_device *out,
 				  struct xt_table *table);
 
 #ifdef CONFIG_COMPAT

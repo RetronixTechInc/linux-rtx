@@ -1,7 +1,7 @@
 /*
  * OTG Finite State Machine from OTG spec
  *
- * Copyright (C) 2007-2015 Freescale Semiconductor, Inc.
+ * Copyright (C) 2007-2016 Freescale Semiconductor, Inc.
  *
  * Author:	Li Yang <LeoLi@freescale.com>
  *		Jerry Huang <Chang-Ming.Huang@freescale.com>
@@ -70,9 +70,12 @@ static void otg_leave_state(struct otg_fsm *fsm, enum usb_otg_state old_state)
 	case OTG_STATE_B_IDLE:
 		otg_del_timer(fsm, B_SE0_SRP);
 		otg_del_timer(fsm, B_SRP_FAIL);
+		otg_del_timer(fsm, B_ADP_PRB);
+		otg_del_timer(fsm, B_ADP_SNS);
 		fsm->b_se0_srp = 0;
 		fsm->adp_sns = 0;
 		fsm->adp_prb = 0;
+		fsm->adp_change = 0;
 		break;
 	case OTG_STATE_B_SRP_INIT:
 		fsm->data_pulse = 0;
@@ -95,6 +98,8 @@ static void otg_leave_state(struct otg_fsm *fsm, enum usb_otg_state old_state)
 		break;
 	case OTG_STATE_A_IDLE:
 		fsm->adp_prb = 0;
+		fsm->adp_change = 0;
+		otg_del_timer(fsm, A_ADP_PRB);
 		break;
 	case OTG_STATE_A_WAIT_VRISE:
 		otg_del_timer(fsm, A_WAIT_VRISE);
@@ -329,7 +334,7 @@ int otg_statemachine(struct otg_fsm *fsm)
 			otg_set_state(fsm, OTG_STATE_A_VBUS_ERR);
 		else if (fsm->b_conn)
 			otg_set_state(fsm, OTG_STATE_A_HOST);
-		else if (fsm->id || fsm->a_bus_drop || fsm->a_wait_bcon_tmout)
+		else if (fsm->id | fsm->a_bus_drop | fsm->a_wait_bcon_tmout)
 			otg_set_state(fsm, OTG_STATE_A_WAIT_VFALL);
 		break;
 	case OTG_STATE_A_HOST:

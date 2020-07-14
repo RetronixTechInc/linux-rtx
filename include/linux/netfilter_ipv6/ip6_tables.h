@@ -31,7 +31,8 @@ extern struct xt_table *ip6t_register_table(struct net *net,
 extern void ip6t_unregister_table(struct net *net, struct xt_table *table);
 extern unsigned int ip6t_do_table(struct sk_buff *skb,
 				  unsigned int hook,
-				  const struct nf_hook_state *state,
+				  const struct net_device *in,
+				  const struct net_device *out,
 				  struct xt_table *table);
 
 /* Check for an extension */

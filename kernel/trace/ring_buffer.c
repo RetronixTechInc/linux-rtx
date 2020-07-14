@@ -9,6 +9,7 @@
 #include <linux/trace_seq.h>
 #include <linux/spinlock.h>
 #include <linux/irq_work.h>
+#include <linux/debugfs.h>
 #include <linux/uaccess.h>
 #include <linux/hardirq.h>
 #include <linux/kthread.h>	/* for self test */
@@ -22,6 +23,7 @@
 #include <linux/hash.h>
 #include <linux/list.h>
 #include <linux/cpu.h>
+#include <linux/fs.h>
 
 #include <asm/local.h>
 
@@ -32,19 +34,21 @@ static void update_pages_handler(struct work_struct *work);
  */
 int ring_buffer_print_entry_header(struct trace_seq *s)
 {
-	trace_seq_puts(s, "# compressed entry header\n");
-	trace_seq_puts(s, "\ttype_len    :    5 bits\n");
-	trace_seq_puts(s, "\ttime_delta  :   27 bits\n");
-	trace_seq_puts(s, "\tarray       :   32 bits\n");
-	trace_seq_putc(s, '\n');
-	trace_seq_printf(s, "\tpadding     : type == %d\n",
-			 RINGBUF_TYPE_PADDING);
-	trace_seq_printf(s, "\ttime_extend : type == %d\n",
-			 RINGBUF_TYPE_TIME_EXTEND);
-	trace_seq_printf(s, "\tdata max type_len  == %d\n",
-			 RINGBUF_TYPE_DATA_TYPE_LEN_MAX);
+	int ret;
 
-	return !trace_seq_has_overflowed(s);
+	ret = trace_seq_puts(s, "# compressed entry header\n");
+	ret = trace_seq_puts(s, "\ttype_len    :    5 bits\n");
+	ret = trace_seq_puts(s, "\ttime_delta  :   27 bits\n");
+	ret = trace_seq_puts(s, "\tarray       :   32 bits\n");
+	ret = trace_seq_putc(s, '\n');
+	ret = trace_seq_printf(s, "\tpadding     : type == %d\n",
+			       RINGBUF_TYPE_PADDING);
+	ret = trace_seq_printf(s, "\ttime_extend : type == %d\n",
+			       RINGBUF_TYPE_TIME_EXTEND);
+	ret = trace_seq_printf(s, "\tdata max type_len  == %d\n",
+			       RINGBUF_TYPE_DATA_TYPE_LEN_MAX);
+
+	return ret;
 }
 
 /*
@@ -415,40 +419,38 @@ static inline int test_time_stamp(u64 delta)
 int ring_buffer_print_page_header(struct trace_seq *s)
 {
 	struct buffer_data_page field;
+	int ret;
 
-	trace_seq_printf(s, "\tfield: u64 timestamp;\t"
-			 "offset:0;\tsize:%u;\tsigned:%u;\n",
-			 (unsigned int)sizeof(field.time_stamp),
-			 (unsigned int)is_signed_type(u64));
+	ret = trace_seq_printf(s, "\tfield: u64 timestamp;\t"
+			       "offset:0;\tsize:%u;\tsigned:%u;\n",
+			       (unsigned int)sizeof(field.time_stamp),
+			       (unsigned int)is_signed_type(u64));
 
-	trace_seq_printf(s, "\tfield: local_t commit;\t"
-			 "offset:%u;\tsize:%u;\tsigned:%u;\n",
-			 (unsigned int)offsetof(typeof(field), commit),
-			 (unsigned int)sizeof(field.commit),
-			 (unsigned int)is_signed_type(long));
+	ret = trace_seq_printf(s, "\tfield: local_t commit;\t"
+			       "offset:%u;\tsize:%u;\tsigned:%u;\n",
+			       (unsigned int)offsetof(typeof(field), commit),
+			       (unsigned int)sizeof(field.commit),
+			       (unsigned int)is_signed_type(long));
 
-	trace_seq_printf(s, "\tfield: int overwrite;\t"
-			 "offset:%u;\tsize:%u;\tsigned:%u;\n",
-			 (unsigned int)offsetof(typeof(field), commit),
-			 1,
-			 (unsigned int)is_signed_type(long));
+	ret = trace_seq_printf(s, "\tfield: int overwrite;\t"
+			       "offset:%u;\tsize:%u;\tsigned:%u;\n",
+			       (unsigned int)offsetof(typeof(field), commit),
+			       1,
+			       (unsigned int)is_signed_type(long));
 
-	trace_seq_printf(s, "\tfield: char data;\t"
-			 "offset:%u;\tsize:%u;\tsigned:%u;\n",
-			 (unsigned int)offsetof(typeof(field), data),
-			 (unsigned int)BUF_PAGE_SIZE,
-			 (unsigned int)is_signed_type(char));
+	ret = trace_seq_printf(s, "\tfield: char data;\t"
+			       "offset:%u;\tsize:%u;\tsigned:%u;\n",
+			       (unsigned int)offsetof(typeof(field), data),
+			       (unsigned int)BUF_PAGE_SIZE,
+			       (unsigned int)is_signed_type(char));
 
-	return !trace_seq_has_overflowed(s);
+	return ret;
 }
 
 struct rb_irq_work {
 	struct irq_work			work;
 	wait_queue_head_t		waiters;
-	wait_queue_head_t		full_waiters;
 	bool				waiters_pending;
-	bool				full_waiters_pending;
-	bool				wakeup_full;
 };
 
 /*
@@ -530,39 +532,31 @@ static void rb_wake_up_waiters(struct irq_work *work)
 	struct rb_irq_work *rbwork = container_of(work, struct rb_irq_work, work);
 
 	wake_up_all(&rbwork->waiters);
-	if (rbwork->wakeup_full) {
-		rbwork->wakeup_full = false;
-		wake_up_all(&rbwork->full_waiters);
-	}
 }
 
 /**
  * ring_buffer_wait - wait for input to the ring buffer
  * @buffer: buffer to wait on
  * @cpu: the cpu buffer to wait on
- * @full: wait until a full page is available, if @cpu != RING_BUFFER_ALL_CPUS
  *
  * If @cpu == RING_BUFFER_ALL_CPUS then the task will wake up as soon
  * as data is added to any of the @buffer's cpu buffers. Otherwise
  * it will wait for data to be added to a specific cpu buffer.
  */
-int ring_buffer_wait(struct ring_buffer *buffer, int cpu, bool full)
+int ring_buffer_wait(struct ring_buffer *buffer, int cpu)
 {
-	struct ring_buffer_per_cpu *uninitialized_var(cpu_buffer);
+	struct ring_buffer_per_cpu *cpu_buffer;
 	DEFINE_WAIT(wait);
 	struct rb_irq_work *work;
-	int ret = 0;
 
 	/*
 	 * Depending on what the caller is waiting for, either any
 	 * data in any cpu buffer, or a specific buffer, put the
 	 * caller on the appropriate wait queue.
 	 */
-	if (cpu == RING_BUFFER_ALL_CPUS) {
+	if (cpu == RING_BUFFER_ALL_CPUS)
 		work = &buffer->irq_work;
-		/* Full only makes sense on per cpu reads */
-		full = false;
-	} else {
+	else {
 		if (!cpumask_test_cpu(cpu, buffer->cpumask))
 			return -ENODEV;
 		cpu_buffer = buffer->buffers[cpu];
@@ -570,70 +564,36 @@ int ring_buffer_wait(struct ring_buffer *buffer, int cpu, bool full)
 	}
 
 
-	while (true) {
-		if (full)
-			prepare_to_wait(&work->full_waiters, &wait, TASK_INTERRUPTIBLE);
-		else
-			prepare_to_wait(&work->waiters, &wait, TASK_INTERRUPTIBLE);
+	prepare_to_wait(&work->waiters, &wait, TASK_INTERRUPTIBLE);
 
-		/*
-		 * The events can happen in critical sections where
-		 * checking a work queue can cause deadlocks.
-		 * After adding a task to the queue, this flag is set
-		 * only to notify events to try to wake up the queue
-		 * using irq_work.
-		 *
-		 * We don't clear it even if the buffer is no longer
-		 * empty. The flag only causes the next event to run
-		 * irq_work to do the work queue wake up. The worse
-		 * that can happen if we race with !trace_empty() is that
-		 * an event will cause an irq_work to try to wake up
-		 * an empty queue.
-		 *
-		 * There's no reason to protect this flag either, as
-		 * the work queue and irq_work logic will do the necessary
-		 * synchronization for the wake ups. The only thing
-		 * that is necessary is that the wake up happens after
-		 * a task has been queued. It's OK for spurious wake ups.
-		 */
-		if (full)
-			work->full_waiters_pending = true;
-		else
-			work->waiters_pending = true;
+	/*
+	 * The events can happen in critical sections where
+	 * checking a work queue can cause deadlocks.
+	 * After adding a task to the queue, this flag is set
+	 * only to notify events to try to wake up the queue
+	 * using irq_work.
+	 *
+	 * We don't clear it even if the buffer is no longer
+	 * empty. The flag only causes the next event to run
+	 * irq_work to do the work queue wake up. The worse
+	 * that can happen if we race with !trace_empty() is that
+	 * an event will cause an irq_work to try to wake up
+	 * an empty queue.
+	 *
+	 * There's no reason to protect this flag either, as
+	 * the work queue and irq_work logic will do the necessary
+	 * synchronization for the wake ups. The only thing
+	 * that is necessary is that the wake up happens after
+	 * a task has been queued. It's OK for spurious wake ups.
+	 */
+	work->waiters_pending = true;
 
-		if (signal_pending(current)) {
-			ret = -EINTR;
-			break;
-		}
-
-		if (cpu == RING_BUFFER_ALL_CPUS && !ring_buffer_empty(buffer))
-			break;
-
-		if (cpu != RING_BUFFER_ALL_CPUS &&
-		    !ring_buffer_empty_cpu(buffer, cpu)) {
-			unsigned long flags;
-			bool pagebusy;
-
-			if (!full)
-				break;
-
-			raw_spin_lock_irqsave(&cpu_buffer->reader_lock, flags);
-			pagebusy = cpu_buffer->reader_page == cpu_buffer->commit_page;
-			raw_spin_unlock_irqrestore(&cpu_buffer->reader_lock, flags);
-
-			if (!pagebusy)
-				break;
-		}
-
+	if ((cpu == RING_BUFFER_ALL_CPUS && ring_buffer_empty(buffer)) ||
+	    (cpu != RING_BUFFER_ALL_CPUS && ring_buffer_empty_cpu(buffer, cpu)))
 		schedule();
-	}
 
-	if (full)
-		finish_wait(&work->full_waiters, &wait);
-	else
-		finish_wait(&work->waiters, &wait);
-
-	return ret;
+	finish_wait(&work->waiters, &wait);
+	return 0;
 }
 
 /**
@@ -1246,7 +1206,6 @@ rb_allocate_cpu_buffer(struct ring_buffer *buffer, int nr_pages, int cpu)
 	init_completion(&cpu_buffer->update_done);
 	init_irq_work(&cpu_buffer->irq_work.work, rb_wake_up_waiters);
 	init_waitqueue_head(&cpu_buffer->irq_work.waiters);
-	init_waitqueue_head(&cpu_buffer->irq_work.full_waiters);
 
 	bpage = kzalloc_node(ALIGN(sizeof(*bpage), cache_line_size()),
 			    GFP_KERNEL, cpu_to_node(cpu));
@@ -1355,7 +1314,7 @@ struct ring_buffer *__ring_buffer_alloc(unsigned long size, unsigned flags,
 	 * In that off case, we need to allocate for all possible cpus.
 	 */
 #ifdef CONFIG_HOTPLUG_CPU
-	cpu_notifier_register_begin();
+	get_online_cpus();
 	cpumask_copy(buffer->cpumask, cpu_online_mask);
 #else
 	cpumask_copy(buffer->cpumask, cpu_possible_mask);
@@ -1378,10 +1337,10 @@ struct ring_buffer *__ring_buffer_alloc(unsigned long size, unsigned flags,
 #ifdef CONFIG_HOTPLUG_CPU
 	buffer->cpu_notify.notifier_call = rb_cpu_notify;
 	buffer->cpu_notify.priority = 0;
-	__register_cpu_notifier(&buffer->cpu_notify);
-	cpu_notifier_register_done();
+	register_cpu_notifier(&buffer->cpu_notify);
 #endif
 
+	put_online_cpus();
 	mutex_init(&buffer->mutex);
 
 	return buffer;
@@ -1395,9 +1354,7 @@ struct ring_buffer *__ring_buffer_alloc(unsigned long size, unsigned flags,
 
  fail_free_cpumask:
 	free_cpumask_var(buffer->cpumask);
-#ifdef CONFIG_HOTPLUG_CPU
-	cpu_notifier_register_done();
-#endif
+	put_online_cpus();
 
  fail_free_buffer:
 	kfree(buffer);
@@ -1414,17 +1371,16 @@ ring_buffer_free(struct ring_buffer *buffer)
 {
 	int cpu;
 
+	get_online_cpus();
+
 #ifdef CONFIG_HOTPLUG_CPU
-	cpu_notifier_register_begin();
-	__unregister_cpu_notifier(&buffer->cpu_notify);
+	unregister_cpu_notifier(&buffer->cpu_notify);
 #endif
 
 	for_each_buffer_cpu(buffer, cpu)
 		rb_free_cpu_buffer(buffer->buffers[cpu]);
 
-#ifdef CONFIG_HOTPLUG_CPU
-	cpu_notifier_register_done();
-#endif
+	put_online_cpus();
 
 	kfree(buffer->buffers);
 	free_cpumask_var(buffer->cpumask);
@@ -1744,14 +1700,22 @@ int ring_buffer_resize(struct ring_buffer *buffer, unsigned long size,
 			if (!cpu_buffer->nr_pages_to_update)
 				continue;
 
-			/* Can't run something on an offline CPU. */
-			if (!cpu_online(cpu)) {
+			/* The update must run on the CPU that is being updated. */
+			preempt_disable();
+			if (cpu == smp_processor_id() || !cpu_online(cpu)) {
 				rb_update_pages(cpu_buffer);
 				cpu_buffer->nr_pages_to_update = 0;
 			} else {
+				/*
+				 * Can not disable preemption for schedule_work_on()
+				 * on PREEMPT_RT.
+				 */
+				preempt_enable();
 				schedule_work_on(cpu,
 						&cpu_buffer->update_pages_work);
+				preempt_disable();
 			}
+			preempt_enable();
 		}
 
 		/* wait for all the updates to complete */
@@ -1789,14 +1753,22 @@ int ring_buffer_resize(struct ring_buffer *buffer, unsigned long size,
 
 		get_online_cpus();
 
-		/* Can't run something on an offline CPU. */
-		if (!cpu_online(cpu_id))
+		preempt_disable();
+		/* The update must run on the CPU that is being updated. */
+		if (cpu_id == smp_processor_id() || !cpu_online(cpu_id))
 			rb_update_pages(cpu_buffer);
 		else {
+			/*
+			 * Can not disable preemption for schedule_work_on()
+			 * on PREEMPT_RT.
+			 */
+			preempt_enable();
 			schedule_work_on(cpu_id,
 					 &cpu_buffer->update_pages_work);
 			wait_for_completion(&cpu_buffer->update_done);
+			preempt_disable();
 		}
+		preempt_enable();
 
 		cpu_buffer->nr_pages_to_update = 0;
 		put_online_cpus();
@@ -2703,7 +2675,10 @@ static __always_inline int trace_recursive_lock(void)
 
 static __always_inline void trace_recursive_unlock(void)
 {
-	__this_cpu_and(current_context, __this_cpu_read(current_context) - 1);
+	unsigned int val = __this_cpu_read(current_context);
+
+	val &= val & (val - 1);
+	__this_cpu_write(current_context, val);
 }
 
 #else
@@ -2814,8 +2789,6 @@ static void rb_commit(struct ring_buffer_per_cpu *cpu_buffer,
 static __always_inline void
 rb_wakeups(struct ring_buffer *buffer, struct ring_buffer_per_cpu *cpu_buffer)
 {
-	bool pagebusy;
-
 	if (buffer->irq_work.waiters_pending) {
 		buffer->irq_work.waiters_pending = false;
 		/* irq_work_queue() supplies it's own memory barriers */
@@ -2824,15 +2797,6 @@ rb_wakeups(struct ring_buffer *buffer, struct ring_buffer_per_cpu *cpu_buffer)
 
 	if (cpu_buffer->irq_work.waiters_pending) {
 		cpu_buffer->irq_work.waiters_pending = false;
-		/* irq_work_queue() supplies it's own memory barriers */
-		irq_work_queue(&cpu_buffer->irq_work.work);
-	}
-
-	pagebusy = cpu_buffer->reader_page == cpu_buffer->commit_page;
-
-	if (!pagebusy && cpu_buffer->irq_work.full_waiters_pending) {
-		cpu_buffer->irq_work.wakeup_full = true;
-		cpu_buffer->irq_work.full_waiters_pending = false;
 		/* irq_work_queue() supplies it's own memory barriers */
 		irq_work_queue(&cpu_buffer->irq_work.work);
 	}
@@ -3818,7 +3782,7 @@ rb_iter_peek(struct ring_buffer_iter *iter, u64 *ts)
 	if (rb_per_cpu_empty(cpu_buffer))
 		return NULL;
 
-	if (iter->head >= rb_page_size(iter->head_page)) {
+	if (iter->head >= local_read(&iter->head_page->page->commit)) {
 		rb_inc_iter(iter);
 		goto again;
 	}

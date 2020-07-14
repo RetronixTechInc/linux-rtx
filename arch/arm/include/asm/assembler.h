@@ -23,9 +23,6 @@
 #include <asm/ptrace.h>
 #include <asm/domain.h>
 #include <asm/opcodes-virt.h>
-#include <asm/asm-offsets.h>
-#include <asm/page.h>
-#include <asm/thread_info.h>
 
 #define IOMEM(x)	(x)
 
@@ -177,47 +174,6 @@
 	restore_irqs_notrace \oldcpsr
 	.endm
 
-/*
- * Get current thread_info.
- */
-	.macro	get_thread_info, rd
- ARM(	mov	\rd, sp, lsr #THREAD_SIZE_ORDER + PAGE_SHIFT	)
- THUMB(	mov	\rd, sp			)
- THUMB(	lsr	\rd, \rd, #THREAD_SIZE_ORDER + PAGE_SHIFT	)
-	mov	\rd, \rd, lsl #THREAD_SIZE_ORDER + PAGE_SHIFT
-	.endm
-
-/*
- * Increment/decrement the preempt count.
- */
-#ifdef CONFIG_PREEMPT_COUNT
-	.macro	inc_preempt_count, ti, tmp
-	ldr	\tmp, [\ti, #TI_PREEMPT]	@ get preempt count
-	add	\tmp, \tmp, #1			@ increment it
-	str	\tmp, [\ti, #TI_PREEMPT]
-	.endm
-
-	.macro	dec_preempt_count, ti, tmp
-	ldr	\tmp, [\ti, #TI_PREEMPT]	@ get preempt count
-	sub	\tmp, \tmp, #1			@ decrement it
-	str	\tmp, [\ti, #TI_PREEMPT]
-	.endm
-
-	.macro	dec_preempt_count_ti, ti, tmp
-	get_thread_info \ti
-	dec_preempt_count \ti, \tmp
-	.endm
-#else
-	.macro	inc_preempt_count, ti, tmp
-	.endm
-
-	.macro	dec_preempt_count, ti, tmp
-	.endm
-
-	.macro	dec_preempt_count_ti, ti, tmp
-	.endm
-#endif
-
 #define USER(x...)				\
 9999:	x;					\
 	.pushsection __ex_table,"a";		\
@@ -237,9 +193,6 @@
 	.pushsection ".alt.smp.init", "a"			;\
 	.long	9998b						;\
 9997:	instr							;\
-	.if . - 9997b == 2					;\
-		nop						;\
-	.endif							;\
 	.if . - 9997b != 4					;\
 		.error "ALT_UP() content must assemble to exactly 4 bytes";\
 	.endif							;\
@@ -317,7 +270,7 @@
  * you cannot return to the original mode.
  */
 .macro safe_svcmode_maskall reg:req
-#if __LINUX_ARM_ARCH__ >= 6 && !defined(CONFIG_CPU_V7M)
+#if __LINUX_ARM_ARCH__ >= 6
 	mrs	\reg , cpsr
 	eor	\reg, \reg, #HYP_MODE
 	tst	\reg, #MODE_MASK
@@ -427,27 +380,6 @@ THUMB(	orr	\reg , \reg , #PSR_T_BIT	)
 	adds	\tmp, \addr, #\size - 1
 	sbcccs	\tmp, \tmp, \limit
 	bcs	\bad
-#endif
-	.endm
-
-	.irp	c,,eq,ne,cs,cc,mi,pl,vs,vc,hi,ls,ge,lt,gt,le,hs,lo
-	.macro	ret\c, reg
-#if __LINUX_ARM_ARCH__ < 6
-	mov\c	pc, \reg
-#else
-	.ifeqs	"\reg", "lr"
-	bx\c	\reg
-	.else
-	mov\c	pc, \reg
-	.endif
-#endif
-	.endm
-	.endr
-
-	.macro	ret.w, reg
-	ret	\reg
-#ifdef CONFIG_THUMB2_KERNEL
-	nop
 #endif
 	.endm
 

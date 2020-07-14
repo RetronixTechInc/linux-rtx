@@ -76,9 +76,10 @@ static int i2c_mux_gpio_probe_dt(struct gpiomux *mux,
 		return -ENODEV;
 	}
 	adapter = of_find_i2c_adapter_by_node(adapter_np);
-	if (!adapter)
+	if (!adapter) {
+		dev_err(&pdev->dev, "Cannot find parent bus\n");
 		return -EPROBE_DEFER;
-
+	}
 	mux->data.parent = i2c_adapter_id(adapter);
 	put_device(&adapter->dev);
 
@@ -176,8 +177,11 @@ static int i2c_mux_gpio_probe(struct platform_device *pdev)
 	}
 
 	parent = i2c_get_adapter(mux->data.parent);
-	if (!parent)
+	if (!parent) {
+		dev_err(&pdev->dev, "Parent adapter (%d) not found\n",
+			mux->data.parent);
 		return -EPROBE_DEFER;
+	}
 
 	mux->parent = parent;
 	mux->gpio_base = gpio_base;
@@ -273,15 +277,26 @@ static const struct of_device_id i2c_mux_gpio_of_match[] = {
 MODULE_DEVICE_TABLE(of, i2c_mux_gpio_of_match);
 
 static struct platform_driver i2c_mux_gpio_driver = {
-	.probe	= i2c_mux_gpio_probe,
+//	.probe	= i2c_mux_gpio_probe,
 	.remove	= i2c_mux_gpio_remove,
 	.driver	= {
+		.owner	= THIS_MODULE,
 		.name	= "i2c-mux-gpio",
 		.of_match_table = i2c_mux_gpio_of_match,
 	},
 };
 
-module_platform_driver(i2c_mux_gpio_driver);
+static int __init i2c_mux_gpio_init(void)
+{
+	return platform_driver_probe(&i2c_mux_gpio_driver, i2c_mux_gpio_probe);
+}
+subsys_initcall(i2c_mux_gpio_init);
+
+static void __exit i2c_mux_gpio_exit(void)
+{
+	platform_driver_unregister(&i2c_mux_gpio_driver);
+}
+module_exit(i2c_mux_gpio_exit);
 
 MODULE_DESCRIPTION("GPIO-based I2C multiplexer driver");
 MODULE_AUTHOR("Peter Korsgaard <peter.korsgaard@barco.com>");

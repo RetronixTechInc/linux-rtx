@@ -22,7 +22,6 @@
 #include <linux/interrupt.h>
 #include <linux/irq.h>
 #include <linux/slab.h>
-#include <linux/delay.h>
 #include <linux/hid-sensor-hub.h>
 #include <linux/iio/iio.h>
 #include <linux/iio/sysfs.h>
@@ -43,10 +42,6 @@ struct accel_3d_state {
 	struct hid_sensor_common common_attributes;
 	struct hid_sensor_hub_attribute_info accel[ACCEL_3D_CHANNEL_MAX];
 	u32 accel_val[ACCEL_3D_CHANNEL_MAX];
-	int scale_pre_decml;
-	int scale_post_decml;
-	int scale_precision;
-	int value_offset;
 };
 
 static const u32 accel_3d_addresses[ACCEL_3D_CHANNEL_MAX] = {
@@ -61,7 +56,6 @@ static const struct iio_chan_spec accel_3d_channels[] = {
 		.type = IIO_ACCEL,
 		.modified = 1,
 		.channel2 = IIO_MOD_X,
-		.info_mask_separate = BIT(IIO_CHAN_INFO_RAW),
 		.info_mask_shared_by_type = BIT(IIO_CHAN_INFO_OFFSET) |
 		BIT(IIO_CHAN_INFO_SCALE) |
 		BIT(IIO_CHAN_INFO_SAMP_FREQ) |
@@ -71,7 +65,6 @@ static const struct iio_chan_spec accel_3d_channels[] = {
 		.type = IIO_ACCEL,
 		.modified = 1,
 		.channel2 = IIO_MOD_Y,
-		.info_mask_separate = BIT(IIO_CHAN_INFO_RAW),
 		.info_mask_shared_by_type = BIT(IIO_CHAN_INFO_OFFSET) |
 		BIT(IIO_CHAN_INFO_SCALE) |
 		BIT(IIO_CHAN_INFO_SAMP_FREQ) |
@@ -81,7 +74,6 @@ static const struct iio_chan_spec accel_3d_channels[] = {
 		.type = IIO_ACCEL,
 		.modified = 1,
 		.channel2 = IIO_MOD_Z,
-		.info_mask_separate = BIT(IIO_CHAN_INFO_RAW),
 		.info_mask_shared_by_type = BIT(IIO_CHAN_INFO_OFFSET) |
 		BIT(IIO_CHAN_INFO_SCALE) |
 		BIT(IIO_CHAN_INFO_SAMP_FREQ) |
@@ -110,46 +102,44 @@ static int accel_3d_read_raw(struct iio_dev *indio_dev,
 	struct accel_3d_state *accel_state = iio_priv(indio_dev);
 	int report_id = -1;
 	u32 address;
+	int ret;
 	int ret_type;
 
 	*val = 0;
 	*val2 = 0;
 	switch (mask) {
 	case 0:
-		hid_sensor_power_state(&accel_state->common_attributes, true);
 		report_id = accel_state->accel[chan->scan_index].report_id;
 		address = accel_3d_addresses[chan->scan_index];
 		if (report_id >= 0)
 			*val = sensor_hub_input_attr_get_raw_value(
-					accel_state->common_attributes.hsdev,
-					HID_USAGE_SENSOR_ACCEL_3D, address,
-					report_id,
-					SENSOR_HUB_SYNC);
+				accel_state->common_attributes.hsdev,
+				HID_USAGE_SENSOR_ACCEL_3D, address,
+				report_id);
 		else {
 			*val = 0;
-			hid_sensor_power_state(&accel_state->common_attributes,
-						 false);
 			return -EINVAL;
 		}
-		hid_sensor_power_state(&accel_state->common_attributes, false);
 		ret_type = IIO_VAL_INT;
 		break;
 	case IIO_CHAN_INFO_SCALE:
-		*val = accel_state->scale_pre_decml;
-		*val2 = accel_state->scale_post_decml;
-		ret_type = accel_state->scale_precision;
+		*val = accel_state->accel[CHANNEL_SCAN_INDEX_X].units;
+		ret_type = IIO_VAL_INT;
 		break;
 	case IIO_CHAN_INFO_OFFSET:
-		*val = accel_state->value_offset;
+		*val = hid_sensor_convert_exponent(
+			accel_state->accel[CHANNEL_SCAN_INDEX_X].unit_expo);
 		ret_type = IIO_VAL_INT;
 		break;
 	case IIO_CHAN_INFO_SAMP_FREQ:
-		ret_type = hid_sensor_read_samp_freq_value(
+		ret = hid_sensor_read_samp_freq_value(
 			&accel_state->common_attributes, val, val2);
+		ret_type = IIO_VAL_INT_PLUS_MICRO;
 		break;
 	case IIO_CHAN_INFO_HYSTERESIS:
-		ret_type = hid_sensor_read_raw_hyst_value(
+		ret = hid_sensor_read_raw_hyst_value(
 			&accel_state->common_attributes, val, val2);
+		ret_type = IIO_VAL_INT_PLUS_MICRO;
 		break;
 	default:
 		ret_type = -EINVAL;
@@ -207,8 +197,9 @@ static int accel_3d_proc_event(struct hid_sensor_hub_device *hsdev,
 	struct iio_dev *indio_dev = platform_get_drvdata(priv);
 	struct accel_3d_state *accel_state = iio_priv(indio_dev);
 
-	dev_dbg(&indio_dev->dev, "accel_3d_proc_event\n");
-	if (atomic_read(&accel_state->common_attributes.data_ready))
+	dev_dbg(&indio_dev->dev, "accel_3d_proc_event [%d]\n",
+				accel_state->common_attributes.data_ready);
+	if (accel_state->common_attributes.data_ready)
 		hid_sensor_push_data(indio_dev,
 				accel_state->accel_val,
 				sizeof(accel_state->accel_val));
@@ -270,11 +261,6 @@ static int accel_3d_parse_report(struct platform_device *pdev,
 			st->accel[0].report_id,
 			st->accel[1].index, st->accel[1].report_id,
 			st->accel[2].index, st->accel[2].report_id);
-
-	st->scale_precision = hid_sensor_format_scale(
-				HID_USAGE_SENSOR_ACCEL_3D,
-				&st->accel[CHANNEL_SCAN_INDEX_X],
-				&st->scale_pre_decml, &st->scale_post_decml);
 
 	/* Set Sensitivity field ids, when there is no individual modifier */
 	if (st->common_attributes.sensitivity.index < 0) {
@@ -347,7 +333,7 @@ static int hid_accel_3d_probe(struct platform_device *pdev)
 		dev_err(&pdev->dev, "failed to initialize trigger buffer\n");
 		goto error_free_dev_mem;
 	}
-	atomic_set(&accel_state->common_attributes.data_ready, 0);
+	accel_state->common_attributes.data_ready = false;
 	ret = hid_sensor_setup_trigger(indio_dev, name,
 					&accel_state->common_attributes);
 	if (ret < 0) {
@@ -413,7 +399,7 @@ static struct platform_driver hid_accel_3d_platform_driver = {
 	.id_table = hid_accel_3d_ids,
 	.driver = {
 		.name	= KBUILD_MODNAME,
-		.pm	= &hid_sensor_pm_ops,
+		.owner	= THIS_MODULE,
 	},
 	.probe		= hid_accel_3d_probe,
 	.remove		= hid_accel_3d_remove,

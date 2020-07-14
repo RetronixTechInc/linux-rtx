@@ -161,14 +161,15 @@ int copy_siginfo_from_user32(siginfo_t *to, compat_siginfo_t __user *from)
 }
 
 static int ia32_restore_sigcontext(struct pt_regs *regs,
-				   struct sigcontext_ia32 __user *sc)
+				   struct sigcontext_ia32 __user *sc,
+				   unsigned int *pax)
 {
 	unsigned int tmpflags, err = 0;
 	void __user *buf;
 	u32 tmp;
 
 	/* Always make any pending restarted system calls return -EINTR */
-	current->restart_block.fn = do_no_restart_syscall;
+	current_thread_info()->restart_block.fn = do_no_restart_syscall;
 
 	get_user_try {
 		/*
@@ -183,7 +184,7 @@ static int ia32_restore_sigcontext(struct pt_regs *regs,
 		RELOAD_SEG(es);
 
 		COPY(di); COPY(si); COPY(bp); COPY(sp); COPY(bx);
-		COPY(dx); COPY(cx); COPY(ip); COPY(ax);
+		COPY(dx); COPY(cx); COPY(ip);
 		/* Don't touch extended registers */
 
 		COPY_SEG_CPL3(cs);
@@ -196,11 +197,11 @@ static int ia32_restore_sigcontext(struct pt_regs *regs,
 
 		get_user_ex(tmp, &sc->fpstate);
 		buf = compat_ptr(tmp);
+
+		get_user_ex(*pax, &sc->ax);
 	} get_user_catch(err);
 
 	err |= restore_xstate_sig(buf, 1);
-
-	force_iret();
 
 	return err;
 }
@@ -210,6 +211,7 @@ asmlinkage long sys32_sigreturn(void)
 	struct pt_regs *regs = current_pt_regs();
 	struct sigframe_ia32 __user *frame = (struct sigframe_ia32 __user *)(regs->sp-8);
 	sigset_t set;
+	unsigned int ax;
 
 	if (!access_ok(VERIFY_READ, frame, sizeof(*frame)))
 		goto badframe;
@@ -222,9 +224,9 @@ asmlinkage long sys32_sigreturn(void)
 
 	set_current_blocked(&set);
 
-	if (ia32_restore_sigcontext(regs, &frame->sc))
+	if (ia32_restore_sigcontext(regs, &frame->sc, &ax))
 		goto badframe;
-	return regs->ax;
+	return ax;
 
 badframe:
 	signal_fault(regs, frame, "32bit sigreturn");
@@ -236,6 +238,7 @@ asmlinkage long sys32_rt_sigreturn(void)
 	struct pt_regs *regs = current_pt_regs();
 	struct rt_sigframe_ia32 __user *frame;
 	sigset_t set;
+	unsigned int ax;
 
 	frame = (struct rt_sigframe_ia32 __user *)(regs->sp - 4);
 
@@ -246,13 +249,13 @@ asmlinkage long sys32_rt_sigreturn(void)
 
 	set_current_blocked(&set);
 
-	if (ia32_restore_sigcontext(regs, &frame->uc.uc_mcontext))
+	if (ia32_restore_sigcontext(regs, &frame->uc.uc_mcontext, &ax))
 		goto badframe;
 
 	if (compat_restore_altstack(&frame->uc.uc_stack))
 		goto badframe;
 
-	return regs->ax;
+	return ax;
 
 badframe:
 	signal_fault(regs, frame, "32bit rt sigreturn");
@@ -380,8 +383,8 @@ int ia32_setup_frame(int sig, struct ksignal *ksig,
 	} else {
 		/* Return stub is in 32bit vsyscall page */
 		if (current->mm->context.vdso)
-			restorer = current->mm->context.vdso +
-				selected_vdso32->sym___kernel_sigreturn;
+			restorer = VDSO32_SYMBOL(current->mm->context.vdso,
+						 sigreturn);
 		else
 			restorer = &frame->retcode;
 	}
@@ -459,8 +462,8 @@ int ia32_setup_rt_frame(int sig, struct ksignal *ksig,
 		if (ksig->ka.sa.sa_flags & SA_RESTORER)
 			restorer = ksig->ka.sa.sa_restorer;
 		else
-			restorer = current->mm->context.vdso +
-				selected_vdso32->sym___kernel_rt_sigreturn;
+			restorer = VDSO32_SYMBOL(current->mm->context.vdso,
+						 rt_sigreturn);
 		put_user_ex(ptr_to_compat(restorer), &frame->pretcode);
 
 		/*

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2008-2016 Freescale Semiconductor, Inc. All Rights Reserved.
+ * Copyright (C) 2008-2015 Freescale Semiconductor, Inc. All Rights Reserved.
  */
 
 /*
@@ -68,8 +68,8 @@ static int imx_si476x_hw_params(struct snd_pcm_substream *substream,
 	}
 
 	ret = snd_soc_dai_set_tdm_slot(cpu_dai,
-			channels == 1 ? 1 : 0x3,
-			channels == 1 ? 1 : 0x3,
+			channels == 1 ? 0xfffffffe : 0xfffffffc,
+			channels == 1 ? 0xfffffffe : 0xfffffffc,
 			2, 32);
 	if (ret) {
 		dev_err(cpu_dai->dev, "failed to set dai tdm slot\n");
@@ -98,7 +98,6 @@ static struct snd_soc_card snd_soc_card_imx_3stack = {
 	.name = "imx-audio-si476x",
 	.dai_link = &imx_dai,
 	.num_links = 1,
-	.owner = THIS_MODULE,
 };
 
 static int imx_si476x_probe(struct platform_device *pdev)
@@ -189,6 +188,7 @@ MODULE_DEVICE_TABLE(of, imx_si476x_dt_ids);
 static struct platform_driver imx_si476x_driver = {
 	.driver = {
 		.name = "imx-tuner-si476x",
+		.owner = THIS_MODULE,
 		.pm = &snd_soc_pm_ops,
 		.of_match_table = imx_si476x_dt_ids,
 	},

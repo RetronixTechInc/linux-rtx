@@ -151,7 +151,6 @@ int __init main(int argc, char **argv, char **envp)
 #endif
 
 	do_uml_initcalls();
-	change_sig(SIGPIPE, 0);
 	ret = linux_main(argc, argv);
 
 	/*

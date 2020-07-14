@@ -31,7 +31,7 @@
 /*
  * Final freeing of a group
  */
-static void fsnotify_final_destroy_group(struct fsnotify_group *group)
+void fsnotify_final_destroy_group(struct fsnotify_group *group)
 {
 	if (group->ops->free_group_priv)
 		group->ops->free_group_priv(group);

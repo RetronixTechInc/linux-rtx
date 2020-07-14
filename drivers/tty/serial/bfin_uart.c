@@ -108,23 +108,22 @@ static void bfin_serial_set_mctrl(struct uart_port *port, unsigned int mctrl)
 static irqreturn_t bfin_serial_mctrl_cts_int(int irq, void *dev_id)
 {
 	struct bfin_serial_port *uart = dev_id;
-	struct uart_port *uport = &uart->port;
-	unsigned int status = bfin_serial_get_mctrl(uport);
+	unsigned int status = bfin_serial_get_mctrl(&uart->port);
 #ifdef CONFIG_SERIAL_BFIN_HARD_CTSRTS
+	struct tty_struct *tty = uart->port.state->port.tty;
 
 	UART_CLEAR_SCTS(uart);
-	if (uport->hw_stopped) {
+	if (tty->hw_stopped) {
 		if (status) {
-			uport->hw_stopped = 0;
-			uart_write_wakeup(uport);
+			tty->hw_stopped = 0;
+			uart_write_wakeup(&uart->port);
 		}
 	} else {
 		if (!status)
-			uport->hw_stopped = 1;
+			tty->hw_stopped = 1;
 	}
-#else
-	uart_handle_cts_change(uport, status & TIOCM_CTS);
 #endif
+	uart_handle_cts_change(&uart->port, status & TIOCM_CTS);
 
 	return IRQ_HANDLED;
 }
@@ -200,6 +199,14 @@ static void bfin_serial_stop_rx(struct uart_port *port)
 
 	UART_CLEAR_IER(uart, ERBFI);
 }
+
+/*
+ * Set the modem control timer to fire immediately.
+ */
+static void bfin_serial_enable_ms(struct uart_port *port)
+{
+}
+
 
 #if ANOMALY_05000363 && defined(CONFIG_SERIAL_BFIN_PIO)
 # define UART_GET_ANOMALY_THRESHOLD(uart)    ((uart)->anomaly_threshold)
@@ -464,7 +471,6 @@ void bfin_serial_rx_dma_timeout(struct bfin_serial_port *uart)
 	int x_pos, pos;
 	unsigned long flags;
 
-	dma_disable_irq_nosync(uart->rx_dma_channel);
 	spin_lock_irqsave(&uart->rx_lock, flags);
 
 	/* 2D DMA RX buffer ring is used. Because curr_y_count and
@@ -497,7 +503,6 @@ void bfin_serial_rx_dma_timeout(struct bfin_serial_port *uart)
 	}
 
 	spin_unlock_irqrestore(&uart->rx_lock, flags);
-	dma_enable_irq(uart->rx_dma_channel);
 
 	mod_timer(&(uart->rx_dma_timer), jiffies + DMA_RX_FLUSH_JIFFIES);
 }
@@ -788,13 +793,6 @@ bfin_serial_set_termios(struct uart_port *port, struct ktermios *termios,
 	unsigned int ier, lcr = 0;
 	unsigned long timeout;
 
-#ifdef CONFIG_SERIAL_BFIN_CTSRTS
-	if (old == NULL && uart->cts_pin != -1)
-		termios->c_cflag |= CRTSCTS;
-	else if (uart->cts_pin == -1)
-		termios->c_cflag &= ~CRTSCTS;
-#endif
-
 	switch (termios->c_cflag & CSIZE) {
 	case CS8:
 		lcr = WLS(8);
@@ -946,13 +944,12 @@ bfin_serial_verify_port(struct uart_port *port, struct serial_struct *ser)
  * Enable the IrDA function if tty->ldisc.num is N_IRDA.
  * In other cases, disable IrDA function.
  */
-static void bfin_serial_set_ldisc(struct uart_port *port,
-				  struct ktermios *termios)
+static void bfin_serial_set_ldisc(struct uart_port *port, int ld)
 {
 	struct bfin_serial_port *uart = (struct bfin_serial_port *)port;
 	unsigned int val;
 
-	switch (termios->c_line) {
+	switch (ld) {
 	case N_IRDA:
 		val = UART_GET_GCTL(uart);
 		val |= (UMOD_IRDA | RPOLC);
@@ -1017,6 +1014,7 @@ static struct uart_ops bfin_serial_pops = {
 	.stop_tx	= bfin_serial_stop_tx,
 	.start_tx	= bfin_serial_start_tx,
 	.stop_rx	= bfin_serial_stop_rx,
+	.enable_ms	= bfin_serial_enable_ms,
 	.break_ctl	= bfin_serial_break_ctl,
 	.startup	= bfin_serial_startup,
 	.shutdown	= bfin_serial_shutdown,
@@ -1327,8 +1325,12 @@ static int bfin_serial_probe(struct platform_device *pdev)
 		res = platform_get_resource(pdev, IORESOURCE_IO, 0);
 		if (res == NULL)
 			uart->cts_pin = -1;
-		else
+		else {
 			uart->cts_pin = res->start;
+#ifdef CONFIG_SERIAL_BFIN_CTSRTS
+			uart->port.flags |= ASYNC_CTS_FLOW;
+#endif
+		}
 
 		res = platform_get_resource(pdev, IORESOURCE_IO, 1);
 		if (res == NULL)

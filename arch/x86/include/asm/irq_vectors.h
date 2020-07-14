@@ -126,12 +126,6 @@
 
 #define NR_VECTORS			 256
 
-#ifdef CONFIG_X86_LOCAL_APIC
-#define FIRST_SYSTEM_VECTOR		LOCAL_TIMER_VECTOR
-#else
-#define FIRST_SYSTEM_VECTOR		NR_VECTORS
-#endif
-
 #define FPU_IRQ				  13
 
 #define	FIRST_VM86_IRQ			   3

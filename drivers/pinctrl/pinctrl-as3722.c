@@ -230,7 +230,7 @@ static int as3722_pinctrl_get_func_groups(struct pinctrl_dev *pctldev,
 	return 0;
 }
 
-static int as3722_pinctrl_set(struct pinctrl_dev *pctldev, unsigned function,
+static int as3722_pinctrl_enable(struct pinctrl_dev *pctldev, unsigned function,
 		unsigned group)
 {
 	struct as3722_pctrl_info *as_pci = pinctrl_dev_get_drvdata(pctldev);
@@ -327,7 +327,7 @@ static const struct pinmux_ops as3722_pinmux_ops = {
 	.get_functions_count	= as3722_pinctrl_get_funcs_count,
 	.get_function_name	= as3722_pinctrl_get_func_name,
 	.get_function_groups	= as3722_pinctrl_get_func_groups,
-	.set_mux		= as3722_pinctrl_set,
+	.enable			= as3722_pinctrl_enable,
 	.gpio_request_enable	= as3722_pinctrl_gpio_request_enable,
 	.gpio_set_direction	= as3722_pinctrl_gpio_set_direction,
 };
@@ -565,6 +565,7 @@ static int as3722_pinctrl_probe(struct platform_device *pdev)
 {
 	struct as3722_pctrl_info *as_pci;
 	int ret;
+	int tret;
 
 	as_pci = devm_kzalloc(&pdev->dev, sizeof(*as_pci), GFP_KERNEL);
 	if (!as_pci)
@@ -610,7 +611,10 @@ static int as3722_pinctrl_probe(struct platform_device *pdev)
 	return 0;
 
 fail_range_add:
-	gpiochip_remove(&as_pci->gpio_chip);
+	tret = gpiochip_remove(&as_pci->gpio_chip);
+	if (tret < 0)
+		dev_warn(&pdev->dev, "Couldn't remove gpio chip, %d\n", tret);
+
 fail_chip_add:
 	pinctrl_unregister(as_pci->pctl);
 	return ret;
@@ -619,13 +623,16 @@ fail_chip_add:
 static int as3722_pinctrl_remove(struct platform_device *pdev)
 {
 	struct as3722_pctrl_info *as_pci = platform_get_drvdata(pdev);
+	int ret;
 
-	gpiochip_remove(&as_pci->gpio_chip);
+	ret = gpiochip_remove(&as_pci->gpio_chip);
+	if (ret < 0)
+		return ret;
 	pinctrl_unregister(as_pci->pctl);
 	return 0;
 }
 
-static const struct of_device_id as3722_pinctrl_of_match[] = {
+static struct of_device_id as3722_pinctrl_of_match[] = {
 	{ .compatible = "ams,as3722-pinctrl", },
 	{ },
 };
@@ -634,6 +641,7 @@ MODULE_DEVICE_TABLE(of, as3722_pinctrl_of_match);
 static struct platform_driver as3722_pinctrl_driver = {
 	.driver = {
 		.name = "as3722-pinctrl",
+		.owner = THIS_MODULE,
 		.of_match_table = as3722_pinctrl_of_match,
 	},
 	.probe = as3722_pinctrl_probe,

@@ -18,6 +18,7 @@
 #include <linux/fsl_devices.h>
 
 #include <asm/io.h>
+#include <asm/mpc8xx.h>
 #include <asm/8xx_immap.h>
 #include <asm/prom.h>
 #include <asm/fs_pd.h>
@@ -26,6 +27,8 @@
 #include <sysdev/mpc8xx_pic.h>
 
 #include "mpc8xx.h"
+
+struct mpc8xx_pcmcia_ops m8xx_pcmcia_ops;
 
 extern int cpm_pic_init(void);
 extern int cpm_get_irq(void);

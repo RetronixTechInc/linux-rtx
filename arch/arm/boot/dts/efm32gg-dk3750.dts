@@ -26,7 +26,7 @@
 		};
 
 		i2c@4000a000 {
-			efm32,location = <3>;
+			location = <3>;
 			status = "ok";
 
 			temp@48 {

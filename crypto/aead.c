@@ -448,8 +448,7 @@ static int crypto_nivaead_default(struct crypto_alg *alg, u32 type, u32 mask)
 	if (IS_ERR(inst))
 		goto put_tmpl;
 
-	err = crypto_register_instance(tmpl, inst);
-	if (err) {
+	if ((err = crypto_register_instance(tmpl, inst))) {
 		tmpl->free(inst);
 		goto put_tmpl;
 	}

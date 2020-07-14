@@ -13,8 +13,8 @@
  * http://www.gnu.org/copyleft/gpl.html
  */
 
-#ifndef _MXC_MLB_UAPI_H
-#define _MXC_MLB_UAPI_H
+#ifndef _MXC_MLB_H
+#define _MXC_MLB_H
 
 /* define IOCTL command */
 #define MLB_DBG_RUNTIME		_IO('S', 0x09)

@@ -384,9 +384,7 @@ static void print_lockdep_off(const char *bug_msg)
 {
 	printk(KERN_DEBUG "%s\n", bug_msg);
 	printk(KERN_DEBUG "turning off the locking correctness validator.\n");
-#ifdef CONFIG_LOCK_STAT
 	printk(KERN_DEBUG "Please attach the output of /proc/lock_stat to the bug report\n");
-#endif
 }
 
 static int save_trace(struct stack_trace *trace)
@@ -551,21 +549,7 @@ static void print_lockdep_cache(struct lockdep_map *lock)
 
 static void print_lock(struct held_lock *hlock)
 {
-	/*
-	 * We can be called locklessly through debug_show_all_locks() so be
-	 * extra careful, the hlock might have been released and cleared.
-	 */
-	unsigned int class_idx = hlock->class_idx;
-
-	/* Don't re-read hlock->class_idx, can't use READ_ONCE() on bitfields: */
-	barrier();
-
-	if (!class_idx || (class_idx - 1) >= MAX_LOCKDEP_KEYS) {
-		printk("<RELEASED>\n");
-		return;
-	}
-
-	print_lock_name(lock_classes + class_idx - 1);
+	print_lock_name(hlock_class(hlock));
 	printk(", at: ");
 	print_ip_sym(hlock->acquire_ip);
 }
@@ -647,7 +631,7 @@ static int count_matching_names(struct lock_class *new_class)
 	if (!new_class->name)
 		return 0;
 
-	list_for_each_entry_rcu(class, &all_lock_classes, lock_entry) {
+	list_for_each_entry(class, &all_lock_classes, lock_entry) {
 		if (new_class->key - new_class->subclass == class->key)
 			return class->name_version;
 		if (class->name && !strcmp(class->name, new_class->name))
@@ -714,12 +698,10 @@ look_up_lock_class(struct lockdep_map *lock, unsigned int subclass)
 	hash_head = classhashentry(key);
 
 	/*
-	 * We do an RCU walk of the hash, see lockdep_free_key_range().
+	 * We can walk the hash lockfree, because the hash only
+	 * grows, and we are careful when adding entries to the end:
 	 */
-	if (DEBUG_LOCKS_WARN_ON(!irqs_disabled()))
-		return NULL;
-
-	list_for_each_entry_rcu(class, hash_head, hash_entry) {
+	list_for_each_entry(class, hash_head, hash_entry) {
 		if (class->key == key) {
 			/*
 			 * Huh! same key, different name? Did someone trample
@@ -744,8 +726,7 @@ register_lock_class(struct lockdep_map *lock, unsigned int subclass, int force)
 	struct lockdep_subclass_key *key;
 	struct list_head *hash_head;
 	struct lock_class *class;
-
-	DEBUG_LOCKS_WARN_ON(!irqs_disabled());
+	unsigned long flags;
 
 	class = look_up_lock_class(lock, subclass);
 	if (likely(class))
@@ -767,26 +748,28 @@ register_lock_class(struct lockdep_map *lock, unsigned int subclass, int force)
 	key = lock->key->subkeys + subclass;
 	hash_head = classhashentry(key);
 
+	raw_local_irq_save(flags);
 	if (!graph_lock()) {
+		raw_local_irq_restore(flags);
 		return NULL;
 	}
 	/*
 	 * We have to do the hash-walk again, to avoid races
 	 * with another CPU:
 	 */
-	list_for_each_entry_rcu(class, hash_head, hash_entry) {
+	list_for_each_entry(class, hash_head, hash_entry)
 		if (class->key == key)
 			goto out_unlock_set;
-	}
-
 	/*
 	 * Allocate a new key from the static array, and add it to
 	 * the hash:
 	 */
 	if (nr_lock_classes >= MAX_LOCKDEP_KEYS) {
 		if (!debug_locks_off_graph_unlock()) {
+			raw_local_irq_restore(flags);
 			return NULL;
 		}
+		raw_local_irq_restore(flags);
 
 		print_lockdep_off("BUG: MAX_LOCKDEP_KEYS too low!");
 		dump_stack();
@@ -813,6 +796,7 @@ register_lock_class(struct lockdep_map *lock, unsigned int subclass, int force)
 
 	if (verbose(class)) {
 		graph_unlock();
+		raw_local_irq_restore(flags);
 
 		printk("\nnew class %p: %s", class->key, class->name);
 		if (class->name_version > 1)
@@ -820,12 +804,15 @@ register_lock_class(struct lockdep_map *lock, unsigned int subclass, int force)
 		printk("\n");
 		dump_stack();
 
+		raw_local_irq_save(flags);
 		if (!graph_lock()) {
+			raw_local_irq_restore(flags);
 			return NULL;
 		}
 	}
 out_unlock_set:
 	graph_unlock();
+	raw_local_irq_restore(flags);
 
 out_set_class_cache:
 	if (!subclass || force)
@@ -881,9 +868,11 @@ static int add_lock_to_list(struct lock_class *class, struct lock_class *this,
 	entry->distance = distance;
 	entry->trace = *trace;
 	/*
-	 * Both allocation and removal are done under the graph lock; but
-	 * iteration is under RCU-sched; see look_up_lock_class() and
-	 * lockdep_free_key_range().
+	 * Since we never remove from the dependency list, the list can
+	 * be walked lockless by other CPUs, it's only allocation
+	 * that must be protected by the spinlock. But this also means
+	 * we must make new entries visible only once writes to the
+	 * entry become visible - hence the RCU op:
 	 */
 	list_add_tail_rcu(&entry->entry, head);
 
@@ -1034,9 +1023,7 @@ static int __bfs(struct lock_list *source_entry,
 		else
 			head = &lock->class->locks_before;
 
-		DEBUG_LOCKS_WARN_ON(!irqs_disabled());
-
-		list_for_each_entry_rcu(entry, head, entry) {
+		list_for_each_entry(entry, head, entry) {
 			if (!lock_accessed(entry)) {
 				unsigned int cq_depth;
 				mark_lock_accessed(entry, lock);
@@ -1949,12 +1936,12 @@ check_prevs_add(struct task_struct *curr, struct held_lock *next)
 
 	for (;;) {
 		int distance = curr->lockdep_depth - depth + 1;
-		hlock = curr->held_locks + depth - 1;
+		hlock = curr->held_locks + depth-1;
 		/*
 		 * Only non-recursive-read entries get new dependencies
 		 * added:
 		 */
-		if (hlock->read != 2 && hlock->check) {
+		if (hlock->read != 2) {
 			if (!check_prev_add(curr, hlock, next,
 						distance, trylock_loop))
 				return 0;
@@ -2033,7 +2020,7 @@ static inline int lookup_chain_cache(struct task_struct *curr,
 	 * We can walk it lock-free, because entries only get added
 	 * to the hash:
 	 */
-	list_for_each_entry_rcu(chain, hash_head, entry) {
+	list_for_each_entry(chain, hash_head, entry) {
 		if (chain->chain_key == chain_key) {
 cache_hit:
 			debug_atomic_inc(chain_lookup_hits);
@@ -2111,7 +2098,7 @@ static int validate_chain(struct task_struct *curr, struct lockdep_map *lock,
 	 * (If lookup_chain_cache() returns with 1 it acquires
 	 * graph_lock for us)
 	 */
-	if (!hlock->trylock && hlock->check &&
+	if (!hlock->trylock && (hlock->check == 2) &&
 	    lookup_chain_cache(curr, hlock, chain_key)) {
 		/*
 		 * Check whether last held lock:
@@ -2530,7 +2517,7 @@ mark_held_locks(struct task_struct *curr, enum mark_type mark)
 
 		BUG_ON(usage_bit >= LOCK_USAGE_STATES);
 
-		if (!hlock->check)
+		if (hlock_class(hlock)->key == __lockdep_no_validate__.subkeys)
 			continue;
 
 		if (!mark_lock(curr, hlock, usage_bit))
@@ -2570,7 +2557,7 @@ static void __trace_hardirqs_on_caller(unsigned long ip)
 	debug_atomic_inc(hardirqs_on_events);
 }
 
-__visible void trace_hardirqs_on_caller(unsigned long ip)
+void trace_hardirqs_on_caller(unsigned long ip)
 {
 	time_hardirqs_on(CALLER_ADDR0, ip);
 
@@ -2623,7 +2610,7 @@ EXPORT_SYMBOL(trace_hardirqs_on);
 /*
  * Hardirqs were disabled:
  */
-__visible void trace_hardirqs_off_caller(unsigned long ip)
+void trace_hardirqs_off_caller(unsigned long ip)
 {
 	struct task_struct *curr = current;
 
@@ -3007,18 +2994,8 @@ void lockdep_init_map(struct lockdep_map *lock, const char *name,
 	if (unlikely(!debug_locks))
 		return;
 
-	if (subclass) {
-		unsigned long flags;
-
-		if (DEBUG_LOCKS_WARN_ON(current->lockdep_recursion))
-			return;
-
-		raw_local_irq_save(flags);
-		current->lockdep_recursion = 1;
+	if (subclass)
 		register_lock_class(lock, subclass, 1);
-		current->lockdep_recursion = 0;
-		raw_local_irq_restore(flags);
-	}
 }
 EXPORT_SYMBOL_GPL(lockdep_init_map);
 
@@ -3078,6 +3055,9 @@ static int __lock_acquire(struct lockdep_map *lock, unsigned int subclass,
 	int class_idx;
 	u64 chain_key;
 
+	if (!prove_locking)
+		check = 1;
+
 	if (unlikely(!debug_locks))
 		return 0;
 
@@ -3089,8 +3069,8 @@ static int __lock_acquire(struct lockdep_map *lock, unsigned int subclass,
 	if (DEBUG_LOCKS_WARN_ON(!irqs_disabled()))
 		return 0;
 
-	if (!prove_locking || lock->key == &__lockdep_no_validate__)
-		check = 0;
+	if (lock->key == &__lockdep_no_validate__)
+		check = 1;
 
 	if (subclass < NR_LOCKDEP_CACHING_CLASSES)
 		class = lock->class_cache[subclass];
@@ -3158,7 +3138,7 @@ static int __lock_acquire(struct lockdep_map *lock, unsigned int subclass,
 	hlock->holdtime_stamp = lockstat_clock();
 #endif
 
-	if (check && !mark_irqflags(curr, hlock))
+	if (check == 2 && !mark_irqflags(curr, hlock))
 		return 0;
 
 	/* mark it as used: */
@@ -3900,8 +3880,7 @@ static void zap_class(struct lock_class *class)
 	list_del_rcu(&class->hash_entry);
 	list_del_rcu(&class->lock_entry);
 
-	RCU_INIT_POINTER(class->key, NULL);
-	RCU_INIT_POINTER(class->name, NULL);
+	class->key = NULL;
 }
 
 static inline int within(const void *addr, void *start, unsigned long size)
@@ -3909,17 +3888,9 @@ static inline int within(const void *addr, void *start, unsigned long size)
 	return addr >= start && addr < start + size;
 }
 
-/*
- * Used in module.c to remove lock classes from memory that is going to be
- * freed; and possibly re-used by other modules.
- *
- * We will have had one sync_sched() before getting here, so we're guaranteed
- * nobody will look up these exact classes -- they're properly dead but still
- * allocated.
- */
 void lockdep_free_key_range(void *start, unsigned long size)
 {
-	struct lock_class *class;
+	struct lock_class *class, *next;
 	struct list_head *head;
 	unsigned long flags;
 	int i;
@@ -3935,7 +3906,7 @@ void lockdep_free_key_range(void *start, unsigned long size)
 		head = classhash_table + i;
 		if (list_empty(head))
 			continue;
-		list_for_each_entry_rcu(class, head, hash_entry) {
+		list_for_each_entry_safe(class, next, head, hash_entry) {
 			if (within(class->key, start, size))
 				zap_class(class);
 			else if (within(class->name, start, size))
@@ -3946,25 +3917,11 @@ void lockdep_free_key_range(void *start, unsigned long size)
 	if (locked)
 		graph_unlock();
 	raw_local_irq_restore(flags);
-
-	/*
-	 * Wait for any possible iterators from look_up_lock_class() to pass
-	 * before continuing to free the memory they refer to.
-	 *
-	 * sync_sched() is sufficient because the read-side is IRQ disable.
-	 */
-	synchronize_sched();
-
-	/*
-	 * XXX at this point we could return the resources to the pool;
-	 * instead we leak them. We would need to change to bitmap allocators
-	 * instead of the linear allocators we have now.
-	 */
 }
 
 void lockdep_reset_lock(struct lockdep_map *lock)
 {
-	struct lock_class *class;
+	struct lock_class *class, *next;
 	struct list_head *head;
 	unsigned long flags;
 	int i, j;
@@ -3992,7 +3949,7 @@ void lockdep_reset_lock(struct lockdep_map *lock)
 		head = classhash_table + i;
 		if (list_empty(head))
 			continue;
-		list_for_each_entry_rcu(class, head, hash_entry) {
+		list_for_each_entry_safe(class, next, head, hash_entry) {
 			int match = 0;
 
 			for (j = 0; j < NR_LOCKDEP_CACHING_CLASSES; j++)
@@ -4234,7 +4191,7 @@ void debug_show_held_locks(struct task_struct *task)
 }
 EXPORT_SYMBOL_GPL(debug_show_held_locks);
 
-asmlinkage __visible void lockdep_sys_exit(void)
+void lockdep_sys_exit(void)
 {
 	struct task_struct *curr = current;
 

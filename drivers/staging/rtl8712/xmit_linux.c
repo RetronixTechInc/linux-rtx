@@ -79,6 +79,7 @@ sint r8712_endofpktfile(struct pkt_file *pfile)
 
 void r8712_set_qos(struct pkt_file *ppktfile, struct pkt_attrib *pattrib)
 {
+	int i;
 	struct ethhdr etherhdr;
 	struct iphdr ip_hdr;
 	u16 UserPriority = 0;
@@ -88,7 +89,8 @@ void r8712_set_qos(struct pkt_file *ppktfile, struct pkt_attrib *pattrib)
 
 	/* get UserPriority from IP hdr*/
 	if (pattrib->ether_type == 0x0800) {
-		_r8712_pktfile_read(ppktfile, (u8 *)&ip_hdr, sizeof(ip_hdr));
+		i = _r8712_pktfile_read(ppktfile, (u8 *)&ip_hdr,
+					sizeof(ip_hdr));
 		/*UserPriority = (ntohs(ip_hdr.tos) >> 5) & 0x3 ;*/
 		UserPriority = ip_hdr.tos >> 5;
 	} else {
@@ -162,7 +164,7 @@ void r8712_xmit_complete(struct _adapter *padapter, struct xmit_frame *pxframe)
 int r8712_xmit_entry(_pkt *pkt, struct  net_device *pnetdev)
 {
 	struct xmit_frame *pxmitframe = NULL;
-	struct _adapter *padapter = netdev_priv(pnetdev);
+	struct _adapter *padapter = (struct _adapter *)netdev_priv(pnetdev);
 	struct xmit_priv *pxmitpriv = &(padapter->xmitpriv);
 	int ret = 0;
 

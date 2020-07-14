@@ -352,6 +352,7 @@ static int pm80x_rtc_remove(struct platform_device *pdev)
 static struct platform_driver pm80x_rtc_driver = {
 	.driver = {
 		   .name = "88pm80x-rtc",
+		   .owner = THIS_MODULE,
 		   .pm = &pm80x_rtc_pm_ops,
 		   },
 	.probe = pm80x_rtc_probe,

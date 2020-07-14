@@ -188,10 +188,8 @@ static int ux500_musb_exit(struct musb *musb)
 }
 
 static const struct musb_platform_ops ux500_ops = {
-	.quirks		= MUSB_INDEXED_EP,
 	.init		= ux500_musb_init,
 	.exit		= ux500_musb_exit,
-	.fifo_mode	= 5,
 
 	.set_vbus	= ux500_musb_set_vbus,
 };
@@ -248,27 +246,29 @@ static int ux500_probe(struct platform_device *pdev)
 		}
 	}
 
-	glue = devm_kzalloc(&pdev->dev, sizeof(*glue), GFP_KERNEL);
-	if (!glue)
+	glue = kzalloc(sizeof(*glue), GFP_KERNEL);
+	if (!glue) {
+		dev_err(&pdev->dev, "failed to allocate glue context\n");
 		goto err0;
+	}
 
 	musb = platform_device_alloc("musb-hdrc", PLATFORM_DEVID_AUTO);
 	if (!musb) {
 		dev_err(&pdev->dev, "failed to allocate musb device\n");
-		goto err0;
+		goto err1;
 	}
 
-	clk = devm_clk_get(&pdev->dev, NULL);
+	clk = clk_get(&pdev->dev, NULL);
 	if (IS_ERR(clk)) {
 		dev_err(&pdev->dev, "failed to get clock\n");
 		ret = PTR_ERR(clk);
-		goto err1;
+		goto err3;
 	}
 
 	ret = clk_prepare_enable(clk);
 	if (ret) {
 		dev_err(&pdev->dev, "failed to enable clock\n");
-		goto err1;
+		goto err4;
 	}
 
 	musb->dev.parent		= &pdev->dev;
@@ -301,28 +301,34 @@ static int ux500_probe(struct platform_device *pdev)
 			ARRAY_SIZE(musb_resources));
 	if (ret) {
 		dev_err(&pdev->dev, "failed to add resources\n");
-		goto err2;
+		goto err5;
 	}
 
 	ret = platform_device_add_data(musb, pdata, sizeof(*pdata));
 	if (ret) {
 		dev_err(&pdev->dev, "failed to add platform_data\n");
-		goto err2;
+		goto err5;
 	}
 
 	ret = platform_device_add(musb);
 	if (ret) {
 		dev_err(&pdev->dev, "failed to register musb device\n");
-		goto err2;
+		goto err5;
 	}
 
 	return 0;
 
-err2:
+err5:
 	clk_disable_unprepare(clk);
 
-err1:
+err4:
+	clk_put(clk);
+
+err3:
 	platform_device_put(musb);
+
+err1:
+	kfree(glue);
 
 err0:
 	return ret;
@@ -334,6 +340,8 @@ static int ux500_remove(struct platform_device *pdev)
 
 	platform_device_unregister(glue->musb);
 	clk_disable_unprepare(glue->clk);
+	clk_put(glue->clk);
+	kfree(glue);
 
 	return 0;
 }

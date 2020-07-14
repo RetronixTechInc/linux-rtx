@@ -38,8 +38,8 @@
 #ifndef __LNET_LNET_SOCKLND_H__
 #define __LNET_LNET_SOCKLND_H__
 
-#include "types.h"
-#include "lib-types.h"
+#include <linux/lnet/types.h>
+#include <linux/lnet/lib-types.h>
 
 #define SOCKLND_CONN_NONE     (-1)
 #define SOCKLND_CONN_ANY	0

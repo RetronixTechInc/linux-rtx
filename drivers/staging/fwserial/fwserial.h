@@ -91,7 +91,6 @@ struct fwtty_peer {
 	struct rcu_head		rcu;
 
 	spinlock_t		lock;
-	work_func_t		workfn;
 	struct work_struct	work;
 	struct peer_work_params work_params;
 	struct timer_list	timer;

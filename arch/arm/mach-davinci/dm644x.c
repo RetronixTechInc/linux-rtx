@@ -499,6 +499,14 @@ static u8 dm644x_default_priorities[DAVINCI_N_AINTC_IRQ] = {
 /*----------------------------------------------------------------------*/
 
 static s8
+queue_tc_mapping[][2] = {
+	/* {event queue no, TC no} */
+	{0, 0},
+	{1, 1},
+	{-1, -1},
+};
+
+static s8
 queue_priority_mapping[][2] = {
 	/* {event queue no, Priority} */
 	{0, 3},
@@ -507,6 +515,12 @@ queue_priority_mapping[][2] = {
 };
 
 static struct edma_soc_info edma_cc0_info = {
+	.n_channel		= 64,
+	.n_region		= 4,
+	.n_slot			= 128,
+	.n_tc			= 2,
+	.n_cc			= 1,
+	.queue_tc_mapping	= queue_tc_mapping,
 	.queue_priority_mapping	= queue_priority_mapping,
 	.default_queue		= EVENTQ_1,
 };
@@ -950,8 +964,6 @@ int __init dm644x_init_video(struct vpfe_config *vpfe_cfg,
 
 static int __init dm644x_init_devices(void)
 {
-	int ret = 0;
-
 	if (!cpu_is_davinci_dm644x())
 		return 0;
 
@@ -960,10 +972,6 @@ static int __init dm644x_init_devices(void)
 	platform_device_register(&dm644x_mdio_device);
 	platform_device_register(&dm644x_emac_device);
 
-	ret = davinci_init_wdt();
-	if (ret)
-		pr_warn("%s: watchdog init failed: %d\n", __func__, ret);
-
-	return ret;
+	return 0;
 }
 postcore_initcall(dm644x_init_devices);

@@ -2584,21 +2584,21 @@ static int u132_roothub_descriptor(struct u132 *u132,
 	retval = u132_read_pcimem(u132, roothub.a, &rh_a);
 	if (retval)
 		return retval;
-	desc->bDescriptorType = USB_DT_HUB;
+	desc->bDescriptorType = 0x29;
 	desc->bPwrOn2PwrGood = (rh_a & RH_A_POTPGT) >> 24;
 	desc->bHubContrCurrent = 0;
 	desc->bNbrPorts = u132->num_ports;
 	temp = 1 + (u132->num_ports / 8);
 	desc->bDescLength = 7 + 2 * temp;
-	temp = HUB_CHAR_COMMON_LPSM | HUB_CHAR_COMMON_OCPM;
+	temp = 0;
 	if (rh_a & RH_A_NPS)
-		temp |= HUB_CHAR_NO_LPSM;
+		temp |= 0x0002;
 	if (rh_a & RH_A_PSM)
-		temp |= HUB_CHAR_INDV_PORT_LPSM;
+		temp |= 0x0001;
 	if (rh_a & RH_A_NOCP)
-		temp |= HUB_CHAR_NO_OCPM;
+		temp |= 0x0010;
 	else if (rh_a & RH_A_OCPM)
-		temp |= HUB_CHAR_INDV_PORT_OCPM;
+		temp |= 0x0008;
 	desc->wHubCharacteristics = cpu_to_le16(temp);
 	retval = u132_read_pcimem(u132, roothub.b, &rh_b);
 	if (retval)
@@ -3144,7 +3144,8 @@ static int u132_probe(struct platform_device *pdev)
 #ifdef CONFIG_PM
 /*
  * for this device there's no useful distinction between the controller
- * and its root hub.
+ * and its root hub, except that the root hub only gets direct PM calls
+ * when CONFIG_PM_RUNTIME is enabled.
  */
 static int u132_suspend(struct platform_device *pdev, pm_message_t state)
 {
@@ -3218,6 +3219,7 @@ static struct platform_driver u132_platform_driver = {
 	.resume = u132_resume,
 	.driver = {
 		   .name = hcd_name,
+		   .owner = THIS_MODULE,
 		   },
 };
 static int __init u132_hcd_init(void)

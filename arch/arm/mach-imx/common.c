@@ -14,8 +14,6 @@
 #include <linux/of_net.h>
 #include <linux/slab.h>
 
-#include "hardware.h"
-
 unsigned long iram_tlb_base_addr;
 unsigned long iram_tlb_phys_addr;
 
@@ -39,9 +37,9 @@ void restore_ttbr1(unsigned long ttbr1)
 	);
 }
 
-#define OCOTP_MAC_OFF	(cpu_is_imx7d() ? 0x640 : 0x620)
-#define OCOTP_MACn(n)	(OCOTP_MAC_OFF + (n) * 0x10)
-void __init imx6_enet_mac_init(const char *enet_compat, const char *ocotp_compat)
+#define OCOTP_MACn(n)	(0x00000620 + (n) * 0x10)
+
+void __init imx6_enet_mac_init(const char *compatible)
 {
 	struct device_node *ocotp_np, *enet_np, *from = NULL;
 	void __iomem *base;
@@ -50,10 +48,10 @@ void __init imx6_enet_mac_init(const char *enet_compat, const char *ocotp_compat
 	u32 macaddr_high = 0;
 	u32 macaddr1_high = 0;
 	u8 *macaddr;
-	int i, id;
+	int i;
 
 	for (i = 0; i < 2; i++) {
-		enet_np = of_find_compatible_node(from, NULL, enet_compat);
+		enet_np = of_find_compatible_node(from, NULL, compatible);
 		if (!enet_np)
 			return;
 
@@ -62,11 +60,8 @@ void __init imx6_enet_mac_init(const char *enet_compat, const char *ocotp_compat
 		if (of_get_mac_address(enet_np))
 			goto put_enet_node;
 
-		id = of_alias_get_id(enet_np, "ethernet");
-		if (id < 0)
-			id = i;
-
-		ocotp_np = of_find_compatible_node(NULL, NULL, ocotp_compat);
+		ocotp_np = of_find_compatible_node(NULL,
+			NULL, "fsl,imx6q-ocotp");
 		if (!ocotp_np) {
 			pr_warn("failed to find ocotp node\n");
 			goto put_enet_node;
@@ -79,7 +74,7 @@ void __init imx6_enet_mac_init(const char *enet_compat, const char *ocotp_compat
 		}
 
 		macaddr_low = readl_relaxed(base + OCOTP_MACn(1));
-		if (id)
+		if (i)
 			macaddr1_high = readl_relaxed(base + OCOTP_MACn(2));
 		else
 			macaddr_high = readl_relaxed(base + OCOTP_MACn(0));
@@ -97,7 +92,7 @@ void __init imx6_enet_mac_init(const char *enet_compat, const char *ocotp_compat
 		}
 
 		macaddr = newmac->value;
-		if (id) {
+		if (i) {
 			macaddr[5] = (macaddr_low >> 16) & 0xff;
 			macaddr[4] = (macaddr_low >> 24) & 0xff;
 			macaddr[3] = macaddr1_high & 0xff;
@@ -154,4 +149,3 @@ void wfe_smp_freq_change(u32 cpuid, u32 *ddr_freq_change_done) {}
 void imx7_smp_wfe(u32 cpuid, u32 ocram_base) {}
 void imx7d_ddr3_freq_change(u32 freq) {}
 #endif
-

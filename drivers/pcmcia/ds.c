@@ -667,9 +667,6 @@ static void pcmcia_requery(struct pcmcia_socket *s)
 {
 	int has_pfc;
 
-	if (!(s->state & SOCKET_PRESENT))
-		return;
-
 	if (s->functions == 0) {
 		pcmcia_card_add(s);
 		return;

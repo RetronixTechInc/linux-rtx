@@ -26,12 +26,11 @@ enum {
 	MEMORY_HOTPLUG_MAX_BOOTMEM_TYPE = NODE_INFO,
 };
 
-/* Types for control the zone type of onlined and offlined memory */
+/* Types for control the zone type of onlined memory */
 enum {
-	MMOP_OFFLINE = -1,
-	MMOP_ONLINE_KEEP,
-	MMOP_ONLINE_KERNEL,
-	MMOP_ONLINE_MOVABLE,
+	ONLINE_KEEP,
+	ONLINE_KERNEL,
+	ONLINE_MOVABLE,
 };
 
 /*
@@ -84,7 +83,6 @@ extern int zone_grow_waitqueues(struct zone *zone, unsigned long nr_pages);
 extern int add_one_highpage(struct page *page, int pfn, int bad_ppro);
 /* VM interface that may be used by firmware interface */
 extern int online_pages(unsigned long, unsigned long, int);
-extern int test_pages_in_a_zone(unsigned long, unsigned long);
 extern void __offline_isolated_pages(unsigned long, unsigned long);
 
 typedef void (*online_page_callback_t)(struct page *page);
@@ -189,11 +187,14 @@ extern void put_page_bootmem(struct page *page);
 extern void get_page_bootmem(unsigned long ingo, struct page *page,
 			     unsigned long type);
 
-void get_online_mems(void);
-void put_online_mems(void);
+/*
+ * Lock for memory hotplug guarantees 1) all callbacks for memory hotplug
+ * notifier will be called under this. 2) offline/online/add/remove memory
+ * will not run simultaneously.
+ */
 
-void mem_hotplug_begin(void);
-void mem_hotplug_done(void);
+void lock_memory_hotplug(void);
+void unlock_memory_hotplug(void);
 
 #else /* ! CONFIG_MEMORY_HOTPLUG */
 /*
@@ -231,11 +232,8 @@ static inline int try_online_node(int nid)
 	return 0;
 }
 
-static inline void get_online_mems(void) {}
-static inline void put_online_mems(void) {}
-
-static inline void mem_hotplug_begin(void) {}
-static inline void mem_hotplug_done(void) {}
+static inline void lock_memory_hotplug(void) {}
+static inline void unlock_memory_hotplug(void) {}
 
 #endif /* ! CONFIG_MEMORY_HOTPLUG */
 
@@ -266,7 +264,6 @@ static inline void remove_memory(int nid, u64 start, u64 size) {}
 extern int walk_memory_range(unsigned long start_pfn, unsigned long end_pfn,
 		void *arg, int (*func)(struct memory_block *, void *));
 extern int add_memory(int nid, u64 start, u64 size);
-extern int zone_for_memory(int nid, u64 start, u64 size, int zone_default);
 extern int arch_add_memory(int nid, u64 start, u64 size);
 extern int offline_pages(unsigned long start_pfn, unsigned long nr_pages);
 extern bool is_memblock_offlined(struct memory_block *mem);

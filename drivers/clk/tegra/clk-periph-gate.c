@@ -20,8 +20,7 @@
 #include <linux/io.h>
 #include <linux/delay.h>
 #include <linux/err.h>
-
-#include <soc/tegra/fuse.h>
+#include <linux/tegra-soc.h>
 
 #include "clk.h"
 

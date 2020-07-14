@@ -17,8 +17,6 @@
 
 #include "bcma_private.h"
 
-#define BCMA_GPIO_MAX_PINS	32
-
 static inline struct bcma_drv_cc *bcma_gpio_get_cc(struct gpio_chip *chip)
 {
 	return container_of(chip, struct bcma_drv_cc, gpio);
@@ -78,7 +76,7 @@ static void bcma_gpio_free(struct gpio_chip *chip, unsigned gpio)
 	bcma_chipco_gpio_pullup(cc, 1 << gpio, 0);
 }
 
-#if IS_BUILTIN(CONFIG_BCM47XX) || IS_BUILTIN(CONFIG_ARCH_BCM_5301X)
+#if IS_BUILTIN(CONFIG_BCMA_HOST_SOC)
 static int bcma_gpio_to_irq(struct gpio_chip *chip, unsigned gpio)
 {
 	struct bcma_drv_cc *cc = bcma_gpio_get_cc(chip);
@@ -154,7 +152,7 @@ static int bcma_gpio_irq_domain_init(struct bcma_drv_cc *cc)
 					 handle_simple_irq);
 	}
 
-	hwirq = bcma_core_irq(cc->core, 0);
+	hwirq = bcma_core_irq(cc->core);
 	err = request_irq(hwirq, bcma_gpio_irq_handler, IRQF_SHARED, "gpio",
 			  cc);
 	if (err)
@@ -185,7 +183,7 @@ static void bcma_gpio_irq_domain_exit(struct bcma_drv_cc *cc)
 		return;
 
 	bcma_cc_mask32(cc, BCMA_CC_IRQMASK, ~BCMA_CC_IRQ_GPIO);
-	free_irq(bcma_core_irq(cc->core, 0), cc);
+	free_irq(bcma_core_irq(cc->core), cc);
 	for (gpio = 0; gpio < chip->ngpio; gpio++) {
 		int irq = irq_find_mapping(cc->irq_domain, gpio);
 
@@ -206,7 +204,6 @@ static void bcma_gpio_irq_domain_exit(struct bcma_drv_cc *cc)
 
 int bcma_gpio_init(struct bcma_drv_cc *cc)
 {
-	struct bcma_bus *bus = cc->core->bus;
 	struct gpio_chip *chip = &cc->gpio;
 	int err;
 
@@ -218,33 +215,17 @@ int bcma_gpio_init(struct bcma_drv_cc *cc)
 	chip->set		= bcma_gpio_set_value;
 	chip->direction_input	= bcma_gpio_direction_input;
 	chip->direction_output	= bcma_gpio_direction_output;
-#if IS_BUILTIN(CONFIG_BCM47XX) || IS_BUILTIN(CONFIG_ARCH_BCM_5301X)
+#if IS_BUILTIN(CONFIG_BCMA_HOST_SOC)
 	chip->to_irq		= bcma_gpio_to_irq;
 #endif
-#if IS_BUILTIN(CONFIG_OF)
+	chip->ngpio		= 16;
+	/* There is just one SoC in one device and its GPIO addresses should be
+	 * deterministic to address them more easily. The other buses could get
+	 * a random base number. */
 	if (cc->core->bus->hosttype == BCMA_HOSTTYPE_SOC)
-		chip->of_node	= cc->core->dev.of_node;
-#endif
-	switch (bus->chipinfo.id) {
-	case BCMA_CHIP_ID_BCM5357:
-	case BCMA_CHIP_ID_BCM53572:
-		chip->ngpio	= 32;
-		break;
-	default:
-		chip->ngpio	= 16;
-	}
-
-	/*
-	 * On MIPS we register GPIO devices (LEDs, buttons) using absolute GPIO
-	 * pin numbers. We don't have Device Tree there and we can't really use
-	 * relative (per chip) numbers.
-	 * So let's use predictable base for BCM47XX and "random" for all other.
-	 */
-#if IS_BUILTIN(CONFIG_BCM47XX)
-	chip->base		= bus->num * BCMA_GPIO_MAX_PINS;
-#else
-	chip->base		= -1;
-#endif
+		chip->base		= 0;
+	else
+		chip->base		= -1;
 
 	err = bcma_gpio_irq_domain_init(cc);
 	if (err)
@@ -262,6 +243,5 @@ int bcma_gpio_init(struct bcma_drv_cc *cc)
 int bcma_gpio_unregister(struct bcma_drv_cc *cc)
 {
 	bcma_gpio_irq_domain_exit(cc);
-	gpiochip_remove(&cc->gpio);
-	return 0;
+	return gpiochip_remove(&cc->gpio);
 }

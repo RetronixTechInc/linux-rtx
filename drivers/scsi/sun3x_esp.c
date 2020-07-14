@@ -295,6 +295,7 @@ static struct platform_driver esp_sun3x_driver = {
 	.remove         = esp_sun3x_remove,
 	.driver = {
 		.name   = "sun3x_esp",
+		.owner	= THIS_MODULE,
 	},
 };
 

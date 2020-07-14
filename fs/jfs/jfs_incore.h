@@ -94,9 +94,6 @@ struct jfs_inode_info {
 			unchar _inline_ea[128];	/* 128: inline extended attr */
 		} link;
 	} u;
-#ifdef CONFIG_QUOTA
-	struct dquot *i_dquot[MAXQUOTAS];
-#endif
 	u32 dev;	/* will die when we get wide dev_t */
 	struct inode	vfs_inode;
 };

@@ -153,8 +153,6 @@ struct snd_usb_substream {
 		int channel;
 		int byte_idx;
 	} dsd_dop;
-
-	bool trigger_tstamp_pending_update; /* trigger timestamp being updated from initial estimate */
 };
 
 struct snd_usb_stream {

@@ -52,59 +52,29 @@ static unsigned long at91sam9x5_clk_usb_recalc_rate(struct clk_hw *hw,
 
 	tmp = pmc_read(pmc, AT91_PMC_USB);
 	usbdiv = (tmp & AT91_PMC_OHCIUSBDIV) >> SAM9X5_USB_DIV_SHIFT;
-
-	return DIV_ROUND_CLOSEST(parent_rate, (usbdiv + 1));
+	return parent_rate / (usbdiv + 1);
 }
 
-static long at91sam9x5_clk_usb_determine_rate(struct clk_hw *hw,
-					      unsigned long rate,
-					      unsigned long min_rate,
-					      unsigned long max_rate,
-					      unsigned long *best_parent_rate,
-					      struct clk_hw **best_parent_hw)
+static long at91sam9x5_clk_usb_round_rate(struct clk_hw *hw, unsigned long rate,
+					  unsigned long *parent_rate)
 {
-	struct clk *parent = NULL;
-	long best_rate = -EINVAL;
-	unsigned long tmp_rate;
-	int best_diff = -1;
-	int tmp_diff;
-	int i;
+	unsigned long div;
+	unsigned long bestrate;
+	unsigned long tmp;
 
-	for (i = 0; i < __clk_get_num_parents(hw->clk); i++) {
-		int div;
+	if (rate >= *parent_rate)
+		return *parent_rate;
 
-		parent = clk_get_parent_by_index(hw->clk, i);
-		if (!parent)
-			continue;
+	div = *parent_rate / rate;
+	if (div >= SAM9X5_USB_MAX_DIV)
+		return *parent_rate / (SAM9X5_USB_MAX_DIV + 1);
 
-		for (div = 1; div < SAM9X5_USB_MAX_DIV + 2; div++) {
-			unsigned long tmp_parent_rate;
+	bestrate = *parent_rate / div;
+	tmp = *parent_rate / (div + 1);
+	if (bestrate - rate > rate - tmp)
+		bestrate = tmp;
 
-			tmp_parent_rate = rate * div;
-			tmp_parent_rate = __clk_round_rate(parent,
-							   tmp_parent_rate);
-			tmp_rate = DIV_ROUND_CLOSEST(tmp_parent_rate, div);
-			if (tmp_rate < rate)
-				tmp_diff = rate - tmp_rate;
-			else
-				tmp_diff = tmp_rate - rate;
-
-			if (best_diff < 0 || best_diff > tmp_diff) {
-				best_rate = tmp_rate;
-				best_diff = tmp_diff;
-				*best_parent_rate = tmp_parent_rate;
-				*best_parent_hw = __clk_get_hw(parent);
-			}
-
-			if (!best_diff || tmp_rate < rate)
-				break;
-		}
-
-		if (!best_diff)
-			break;
-	}
-
-	return best_rate;
+	return bestrate;
 }
 
 static int at91sam9x5_clk_usb_set_parent(struct clk_hw *hw, u8 index)
@@ -136,13 +106,9 @@ static int at91sam9x5_clk_usb_set_rate(struct clk_hw *hw, unsigned long rate,
 	u32 tmp;
 	struct at91sam9x5_clk_usb *usb = to_at91sam9x5_clk_usb(hw);
 	struct at91_pmc *pmc = usb->pmc;
-	unsigned long div;
+	unsigned long div = parent_rate / rate;
 
-	if (!rate)
-		return -EINVAL;
-
-	div = DIV_ROUND_CLOSEST(parent_rate, rate);
-	if (div > SAM9X5_USB_MAX_DIV + 1 || !div)
+	if (parent_rate % rate || div < 1 || div >= SAM9X5_USB_MAX_DIV)
 		return -EINVAL;
 
 	tmp = pmc_read(pmc, AT91_PMC_USB) & ~AT91_PMC_OHCIUSBDIV;
@@ -154,7 +120,7 @@ static int at91sam9x5_clk_usb_set_rate(struct clk_hw *hw, unsigned long rate,
 
 static const struct clk_ops at91sam9x5_usb_ops = {
 	.recalc_rate = at91sam9x5_clk_usb_recalc_rate,
-	.determine_rate = at91sam9x5_clk_usb_determine_rate,
+	.round_rate = at91sam9x5_clk_usb_round_rate,
 	.get_parent = at91sam9x5_clk_usb_get_parent,
 	.set_parent = at91sam9x5_clk_usb_set_parent,
 	.set_rate = at91sam9x5_clk_usb_set_rate,
@@ -192,7 +158,7 @@ static const struct clk_ops at91sam9n12_usb_ops = {
 	.disable = at91sam9n12_clk_usb_disable,
 	.is_enabled = at91sam9n12_clk_usb_is_enabled,
 	.recalc_rate = at91sam9x5_clk_usb_recalc_rate,
-	.determine_rate = at91sam9x5_clk_usb_determine_rate,
+	.round_rate = at91sam9x5_clk_usb_round_rate,
 	.set_rate = at91sam9x5_clk_usb_set_rate,
 };
 
@@ -212,8 +178,7 @@ at91sam9x5_clk_register_usb(struct at91_pmc *pmc, const char *name,
 	init.ops = &at91sam9x5_usb_ops;
 	init.parent_names = parent_names;
 	init.num_parents = num_parents;
-	init.flags = CLK_SET_RATE_GATE | CLK_SET_PARENT_GATE |
-		     CLK_SET_RATE_PARENT;
+	init.flags = CLK_SET_RATE_GATE | CLK_SET_PARENT_GATE;
 
 	usb->hw.init = &init;
 	usb->pmc = pmc;
@@ -241,7 +206,7 @@ at91sam9n12_clk_register_usb(struct at91_pmc *pmc, const char *name,
 	init.ops = &at91sam9n12_usb_ops;
 	init.parent_names = &parent_name;
 	init.num_parents = 1;
-	init.flags = CLK_SET_RATE_GATE | CLK_SET_RATE_PARENT;
+	init.flags = CLK_SET_RATE_GATE;
 
 	usb->hw.init = &init;
 	usb->pmc = pmc;
@@ -273,22 +238,16 @@ static long at91rm9200_clk_usb_round_rate(struct clk_hw *hw, unsigned long rate,
 					  unsigned long *parent_rate)
 {
 	struct at91rm9200_clk_usb *usb = to_at91rm9200_clk_usb(hw);
-	struct clk *parent = __clk_get_parent(hw->clk);
 	unsigned long bestrate = 0;
 	int bestdiff = -1;
 	unsigned long tmprate;
 	int tmpdiff;
 	int i = 0;
 
-	for (i = 0; i < RM9200_USB_DIV_TAB_SIZE; i++) {
-		unsigned long tmp_parent_rate;
-
+	for (i = 0; i < 4; i++) {
 		if (!usb->divisors[i])
 			continue;
-
-		tmp_parent_rate = rate * usb->divisors[i];
-		tmp_parent_rate = __clk_round_rate(parent, tmp_parent_rate);
-		tmprate = DIV_ROUND_CLOSEST(tmp_parent_rate, usb->divisors[i]);
+		tmprate = *parent_rate / usb->divisors[i];
 		if (tmprate < rate)
 			tmpdiff = rate - tmprate;
 		else
@@ -297,7 +256,6 @@ static long at91rm9200_clk_usb_round_rate(struct clk_hw *hw, unsigned long rate,
 		if (bestdiff < 0 || bestdiff > tmpdiff) {
 			bestrate = tmprate;
 			bestdiff = tmpdiff;
-			*parent_rate = tmp_parent_rate;
 		}
 
 		if (!bestdiff)
@@ -314,13 +272,10 @@ static int at91rm9200_clk_usb_set_rate(struct clk_hw *hw, unsigned long rate,
 	int i;
 	struct at91rm9200_clk_usb *usb = to_at91rm9200_clk_usb(hw);
 	struct at91_pmc *pmc = usb->pmc;
-	unsigned long div;
+	unsigned long div = parent_rate / rate;
 
-	if (!rate)
+	if (parent_rate % rate)
 		return -EINVAL;
-
-	div = DIV_ROUND_CLOSEST(parent_rate, rate);
-
 	for (i = 0; i < RM9200_USB_DIV_TAB_SIZE; i++) {
 		if (usb->divisors[i] == div) {
 			tmp = pmc_read(pmc, AT91_CKGR_PLLBR) &
@@ -356,7 +311,7 @@ at91rm9200_clk_register_usb(struct at91_pmc *pmc, const char *name,
 	init.ops = &at91rm9200_usb_ops;
 	init.parent_names = &parent_name;
 	init.num_parents = 1;
-	init.flags = CLK_SET_RATE_PARENT;
+	init.flags = 0;
 
 	usb->hw.init = &init;
 	usb->pmc = pmc;

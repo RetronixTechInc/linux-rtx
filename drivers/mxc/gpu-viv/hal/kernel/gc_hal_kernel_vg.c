@@ -2,7 +2,7 @@
 *
 *    The MIT License (MIT)
 *
-*    Copyright (c) 2014 - 2016 Vivante Corporation
+*    Copyright (c) 2014 - 2015 Vivante Corporation
 *
 *    Permission is hereby granted, free of charge, to any person obtaining a
 *    copy of this software and associated documentation files (the "Software"),
@@ -26,7 +26,7 @@
 *
 *    The GPL License (GPL)
 *
-*    Copyright (C) 2014 - 2016 Vivante Corporation
+*    Copyright (C) 2014 - 2015 Vivante Corporation
 *
 *    This program is free software; you can redistribute it and/or
 *    modify it under the terms of the GNU General Public License
@@ -575,8 +575,6 @@ gceSTATUS gckVGKERNEL_Dispatch(
         gcmkERR_BREAK(
             gckVIDMEM_HANDLE_Lookup(Kernel, processID,
                                     (gctUINT32)kernelInterface->u.ReleaseVideoMemory.node, &nodeObject));
-
-        gckVIDMEM_HANDLE_Dereference(Kernel, processID,(gctUINT32)Interface->u.ReleaseVideoMemory.node);
 
         gckVIDMEM_NODE_Dereference(Kernel, nodeObject);
     }

@@ -25,10 +25,7 @@
 
 int sysctl_nr_open __read_mostly = 1024*1024;
 int sysctl_nr_open_min = BITS_PER_LONG;
-/* our max() is unusable in constant expressions ;-/ */
-#define __const_max(x, y) ((x) < (y) ? (x) : (y))
-int sysctl_nr_open_max = __const_max(INT_MAX, ~(size_t)0/sizeof(void *)) &
-			 -BITS_PER_LONG;
+int sysctl_nr_open_max = 1024 * 1024; /* raised later */
 
 static void *alloc_fdmem(size_t size)
 {
@@ -44,10 +41,15 @@ static void *alloc_fdmem(size_t size)
 	return vmalloc(size);
 }
 
+static void free_fdmem(void *ptr)
+{
+	is_vmalloc_addr(ptr) ? vfree(ptr) : kfree(ptr);
+}
+
 static void __free_fdtable(struct fdtable *fdt)
 {
-	kvfree(fdt->fd);
-	kvfree(fdt->open_fds);
+	free_fdmem(fdt->fd);
+	free_fdmem(fdt->open_fds);
 	kfree(fdt);
 }
 
@@ -125,7 +127,7 @@ static struct fdtable * alloc_fdtable(unsigned int nr)
 	return fdt;
 
 out_arr:
-	kvfree(fdt->fd);
+	free_fdmem(fdt->fd);
 out_fdt:
 	kfree(fdt);
 out:
@@ -367,7 +369,7 @@ static struct fdtable *close_files(struct files_struct * files)
 				struct file * file = xchg(&fdt->fd[i], NULL);
 				if (file) {
 					filp_close(file, files);
-					cond_resched_rcu_qs();
+					cond_resched();
 				}
 			}
 			i++;
@@ -425,6 +427,12 @@ void exit_files(struct task_struct *tsk)
 		task_unlock(tsk);
 		put_files_struct(files);
 	}
+}
+
+void __init files_defer_init(void)
+{
+	sysctl_nr_open_max = min((size_t)INT_MAX, ~(size_t)0/sizeof(void *)) &
+			     -BITS_PER_LONG;
 }
 
 struct files_struct init_files = {
@@ -489,7 +497,7 @@ repeat:
 	error = fd;
 #if 1
 	/* Sanity check */
-	if (rcu_access_pointer(fdt->fd[fd]) != NULL) {
+	if (rcu_dereference_raw(fdt->fd[fd]) != NULL) {
 		printk(KERN_WARNING "alloc_fd: slot %d not NULL!\n", fd);
 		rcu_assign_pointer(fdt->fd[fd], NULL);
 	}
@@ -638,7 +646,8 @@ static struct file *__fget(unsigned int fd, fmode_t mask)
 	file = fcheck_files(files, fd);
 	if (file) {
 		/* File object ref couldn't be taken */
-		if ((file->f_mode & mask) || !get_file_rcu(file))
+		if ((file->f_mode & mask) ||
+		    !atomic_long_inc_not_zero(&file->f_count))
 			file = NULL;
 	}
 	rcu_read_unlock();
@@ -749,7 +758,6 @@ bool get_close_on_exec(unsigned int fd)
 
 static int do_dup2(struct files_struct *files,
 	struct file *file, unsigned fd, unsigned flags)
-__releases(&files->file_lock)
 {
 	struct file *tofree;
 	struct fdtable *fdt;
@@ -868,7 +876,7 @@ SYSCALL_DEFINE1(dup, unsigned int, fildes)
 	struct file *file = fget_raw(fildes);
 
 	if (file) {
-		ret = get_unused_fd_flags(0);
+		ret = get_unused_fd();
 		if (ret >= 0)
 			fd_install(ret, file);
 		else

@@ -58,7 +58,8 @@ static struct drm_framebuffer *tilcdc_fb_create(struct drm_device *dev,
 static void tilcdc_fb_output_poll_changed(struct drm_device *dev)
 {
 	struct tilcdc_drm_private *priv = dev->dev_private;
-	drm_fbdev_cma_hotplug_event(priv->fbdev);
+	if (priv->fbdev)
+		drm_fbdev_cma_hotplug_event(priv->fbdev);
 }
 
 static const struct drm_mode_config_funcs mode_config_funcs = {
@@ -120,6 +121,7 @@ static int cpufreq_transition(struct notifier_block *nb,
 static int tilcdc_unload(struct drm_device *dev)
 {
 	struct tilcdc_drm_private *priv = dev->dev_private;
+	struct tilcdc_module *mod, *cur;
 
 	drm_fbdev_cma_fini(priv->fbdev);
 	drm_kms_helper_poll_fini(dev);
@@ -147,6 +149,11 @@ static int tilcdc_unload(struct drm_device *dev)
 	dev->dev_private = NULL;
 
 	pm_runtime_disable(dev->dev);
+
+	list_for_each_entry_safe(mod, cur, &module_list, list) {
+		DBG("destroying module: %s", mod->name);
+		mod->funcs->destroy(mod);
+	}
 
 	kfree(priv);
 
@@ -267,7 +274,7 @@ static int tilcdc_load(struct drm_device *dev, unsigned long flags)
 	}
 
 	pm_runtime_get_sync(dev->dev);
-	ret = drm_irq_install(dev, platform_get_irq(dev->platformdev, 0));
+	ret = drm_irq_install(dev);
 	pm_runtime_put_sync(dev->dev);
 	if (ret < 0) {
 		dev_err(dev->dev, "failed to install IRQ handler\n");
@@ -541,7 +548,6 @@ static struct drm_driver tilcdc_driver = {
 	.unload             = tilcdc_unload,
 	.preclose           = tilcdc_preclose,
 	.lastclose          = tilcdc_lastclose,
-	.set_busid          = drm_platform_set_busid,
 	.irq_handler        = tilcdc_irq,
 	.irq_preinstall     = tilcdc_irq_preinstall,
 	.irq_postinstall    = tilcdc_irq_postinstall,
@@ -644,6 +650,7 @@ static struct platform_driver tilcdc_platform_driver = {
 	.probe      = tilcdc_pdev_probe,
 	.remove     = tilcdc_pdev_remove,
 	.driver     = {
+		.owner  = THIS_MODULE,
 		.name   = "tilcdc",
 		.pm     = &tilcdc_pm_ops,
 		.of_match_table = tilcdc_of_match,
@@ -668,7 +675,7 @@ static void __exit tilcdc_drm_fini(void)
 	tilcdc_tfp410_fini();
 }
 
-module_init(tilcdc_drm_init);
+late_initcall(tilcdc_drm_init);
 module_exit(tilcdc_drm_fini);
 
 MODULE_AUTHOR("Rob Clark <robdclark@gmail.com");

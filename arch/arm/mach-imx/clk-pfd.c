@@ -1,5 +1,5 @@
 /*
- * Copyright 2012-2015 Freescale Semiconductor, Inc.
+ * Copyright 2012-2014 Freescale Semiconductor, Inc.
  * Copyright 2012 Linaro Ltd.
  *
  * The code contained herein is licensed under the GNU General Public
@@ -18,7 +18,6 @@
 #include <linux/err.h>
 #include "clk.h"
 #include "common.h"
-#include "hardware.h"
 
 /**
  * struct clk_pfd - IMX PFD clock
@@ -54,7 +53,7 @@ static void clk_pfd_do_shared_clks(struct clk_hw *hw, bool enable)
 {
 	struct clk_pfd *pfd = to_clk_pfd(hw);
 
-	if (imx_src_is_m4_enabled() && cpu_is_imx6sx()) {
+	if (imx_src_is_m4_enabled()) {
 #ifdef CONFIG_SOC_IMX6SX
 		if (!amp_power_mutex || !shared_mem) {
 			if (enable)

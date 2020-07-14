@@ -186,8 +186,7 @@ static int astfb_create_object(struct ast_fbdev *afbdev,
 static int astfb_create(struct drm_fb_helper *helper,
 			struct drm_fb_helper_surface_size *sizes)
 {
-	struct ast_fbdev *afbdev =
-		container_of(helper, struct ast_fbdev, helper);
+	struct ast_fbdev *afbdev = (struct ast_fbdev *)helper;
 	struct drm_device *dev = afbdev->helper.dev;
 	struct drm_mode_fb_cmd2 mode_cmd;
 	struct drm_framebuffer *fb;
@@ -288,7 +287,7 @@ static void ast_fb_gamma_get(struct drm_crtc *crtc, u16 *red, u16 *green,
 	*blue = ast_crtc->lut_b[regno] << 8;
 }
 
-static const struct drm_fb_helper_funcs ast_fb_helper_funcs = {
+static struct drm_fb_helper_funcs ast_fb_helper_funcs = {
 	.gamma_set = ast_fb_gamma_set,
 	.gamma_get = ast_fb_gamma_get,
 	.fb_probe = astfb_create,
@@ -329,33 +328,22 @@ int ast_fbdev_init(struct drm_device *dev)
 		return -ENOMEM;
 
 	ast->fbdev = afbdev;
+	afbdev->helper.funcs = &ast_fb_helper_funcs;
 	spin_lock_init(&afbdev->dirty_lock);
-
-	drm_fb_helper_prepare(dev, &afbdev->helper, &ast_fb_helper_funcs);
-
 	ret = drm_fb_helper_init(dev, &afbdev->helper,
 				 1, 1);
-	if (ret)
-		goto free;
+	if (ret) {
+		kfree(afbdev);
+		return ret;
+	}
 
-	ret = drm_fb_helper_single_add_all_connectors(&afbdev->helper);
-	if (ret)
-		goto fini;
+	drm_fb_helper_single_add_all_connectors(&afbdev->helper);
 
 	/* disable all the possible outputs/crtcs before entering KMS mode */
 	drm_helper_disable_unused_functions(dev);
 
-	ret = drm_fb_helper_initial_config(&afbdev->helper, 32);
-	if (ret)
-		goto fini;
-
+	drm_fb_helper_initial_config(&afbdev->helper, 32);
 	return 0;
-
-fini:
-	drm_fb_helper_fini(&afbdev->helper);
-free:
-	kfree(afbdev);
-	return ret;
 }
 
 void ast_fbdev_fini(struct drm_device *dev)

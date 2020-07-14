@@ -15,7 +15,7 @@
 static inline pte_t gup_get_pte(pte_t *ptep)
 {
 #ifndef CONFIG_X86_PAE
-	return READ_ONCE(*ptep);
+	return ACCESS_ONCE(*ptep);
 #else
 	/*
 	 * With get_user_pages_fast, we walk down the pagetables without taking
@@ -84,7 +84,7 @@ static noinline int gup_pte_range(pmd_t pmd, unsigned long addr,
 		struct page *page;
 
 		/* Similar to the PMD case, NUMA hinting must take slow path */
-		if (pte_protnone(pte)) {
+		if (pte_numa(pte)) {
 			pte_unmap(ptep);
 			return 0;
 		}
@@ -178,7 +178,7 @@ static int gup_pmd_range(pud_t pud, unsigned long addr, unsigned long end,
 			 * slowpath for accounting purposes and so that they
 			 * can be serialised against THP migration.
 			 */
-			if (pmd_protnone(pmd))
+			if (pmd_numa(pmd))
 				return 0;
 			if (!gup_huge_pmd(pmd, addr, next, write, pages, nr))
 				return 0;
@@ -388,9 +388,10 @@ slow_irqon:
 		start += nr << PAGE_SHIFT;
 		pages += nr;
 
-		ret = get_user_pages_unlocked(current, mm, start,
-					      (end - start) >> PAGE_SHIFT,
-					      write, 0, pages);
+		down_read(&mm->mmap_sem);
+		ret = get_user_pages(current, mm, start,
+			(end - start) >> PAGE_SHIFT, write, 0, pages, NULL);
+		up_read(&mm->mmap_sem);
 
 		/* Have to be a bit careful with return values */
 		if (nr > 0) {

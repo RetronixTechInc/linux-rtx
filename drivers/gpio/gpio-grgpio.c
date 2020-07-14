@@ -121,7 +121,7 @@ static int grgpio_to_irq(struct gpio_chip *gc, unsigned offset)
 {
 	struct grgpio_priv *priv = grgpio_gc_to_priv(gc);
 
-	if (offset >= gc->ngpio)
+	if (offset > gc->ngpio)
 		return -ENXIO;
 
 	if (priv->lirqs[offset].index < 0)
@@ -441,8 +441,6 @@ static int grgpio_probe(struct platform_device *ofdev)
 	err = gpiochip_add(gc);
 	if (err) {
 		dev_err(&ofdev->dev, "Could not add gpiochip\n");
-		if (priv->domain)
-			irq_domain_remove(priv->domain);
 		return err;
 	}
 
@@ -470,7 +468,9 @@ static int grgpio_remove(struct platform_device *ofdev)
 		}
 	}
 
-	gpiochip_remove(&priv->bgc.gc);
+	ret = gpiochip_remove(&priv->bgc.gc);
+	if (ret)
+		goto out;
 
 	if (priv->domain)
 		irq_domain_remove(priv->domain);
@@ -481,7 +481,7 @@ out:
 	return ret;
 }
 
-static const struct of_device_id grgpio_match[] = {
+static struct of_device_id grgpio_match[] = {
 	{.name = "GAISLER_GPIO"},
 	{.name = "01_01a"},
 	{},
@@ -492,6 +492,7 @@ MODULE_DEVICE_TABLE(of, grgpio_match);
 static struct platform_driver grgpio_driver = {
 	.driver = {
 		.name = "grgpio",
+		.owner = THIS_MODULE,
 		.of_match_table = grgpio_match,
 	},
 	.probe = grgpio_probe,

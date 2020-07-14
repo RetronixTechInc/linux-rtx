@@ -1,5 +1,5 @@
 /*
- * Copyright 2005-2016 Freescale Semiconductor, Inc. All Rights Reserved.
+ * Copyright 2005-2015 Freescale Semiconductor, Inc. All Rights Reserved.
  */
 
 /*
@@ -421,8 +421,6 @@ unsigned int fmt_to_bpp(unsigned int pixelformat)
 	/*non-interleaved 422*/
 	case IPU_PIX_FMT_YUV422P:
 	case IPU_PIX_FMT_YVU422P:
-	/*partial-interleaved 422*/
-	case IPU_PIX_FMT_NV16:
 		bpp = 16;
 		break;
 	case IPU_PIX_FMT_BGR24:
@@ -465,6 +463,8 @@ cs_t colorspaceofpixel(int fmt)
 	case IPU_PIX_FMT_RGBA32:
 	case IPU_PIX_FMT_RGB32:
 	case IPU_PIX_FMT_ABGR32:
+	case IPU_PIX_FMT_LVDS666:
+	case IPU_PIX_FMT_LVDS888:
 		return RGB_CS;
 		break;
 	case IPU_PIX_FMT_UYVY:
@@ -477,9 +477,10 @@ cs_t colorspaceofpixel(int fmt)
 	case IPU_PIX_FMT_YUV444:
 	case IPU_PIX_FMT_YUV444P:
 	case IPU_PIX_FMT_NV12:
-	case IPU_PIX_FMT_NV16:
 	case IPU_PIX_FMT_TILED_NV12:
 	case IPU_PIX_FMT_TILED_NV12F:
+	case IPU_PIX_FMT_BT656:
+	case IPU_PIX_FMT_BT1120:
 		return YUV_CS;
 		break;
 	default:
@@ -794,11 +795,6 @@ static void update_offset(unsigned int fmt,
 		*uoff = (width * (height - pos_y) - pos_x)
 			+ (width/2) * pos_y + pos_x/2;
 		*voff = *uoff + (width/2) * height;
-		break;
-	case IPU_PIX_FMT_NV16:
-		*off = pos_y * width + pos_x;
-		*uoff = (width * (height - pos_y) - pos_x)
-			+ pos_y * width + pos_x;
 		break;
 	case IPU_PIX_FMT_YUV444P:
 		*off = pos_y * width + pos_x;
@@ -2277,10 +2273,10 @@ static void uninit_ic(struct ipu_soc *ipu, struct ipu_task_entry *t)
 		CHECK_RETCODE_CONT(ret < 0, "ipu_unlink_ch vdoa_ic",
 				STATE_UNLINK_CHAN_FAIL, ret);
 	}
-	ipu_uninit_channel(ipu, t->set.ic_chan);
+	ipu_uninit_channel(ipu, t->set.ic_chan, NULL);
 	if (deinterlace_3_field(t)) {
-		ipu_uninit_channel(ipu, t->set.vdi_ic_p_chan);
-		ipu_uninit_channel(ipu, t->set.vdi_ic_n_chan);
+		ipu_uninit_channel(ipu, t->set.vdi_ic_p_chan, NULL);
+		ipu_uninit_channel(ipu, t->set.vdi_ic_n_chan, NULL);
 	}
 }
 
@@ -2361,7 +2357,7 @@ done:
 
 static void uninit_rot(struct ipu_soc *ipu, struct ipu_task_entry *t)
 {
-	ipu_uninit_channel(ipu, t->set.rot_chan);
+	ipu_uninit_channel(ipu, t->set.rot_chan, NULL);
 }
 
 static int get_irq(struct ipu_task_entry *t)
@@ -3390,6 +3386,7 @@ int ipu_queue_task(struct ipu_task *task)
 	u32 tmp_task_no;
 	DECLARE_PERF_VAR;
 
+	pr_debug("%s: %dx%d to %dx%d\n", __func__, task->input.width, task->input.height, task->output.width, task->output.height);
 	tsk = create_task_entry(task);
 	if (IS_ERR(tsk))
 		return PTR_ERR(tsk);
@@ -3510,6 +3507,7 @@ static long mxc_ipu_ioctl(struct file *file,
 					(&task, (struct ipu_task *) arg,
 					 sizeof(struct ipu_task)))
 				return -EFAULT;
+			pr_debug("%s: %dx%d to %dx%d\n", __func__, task.input.width, task.input.height, task.output.width, task.output.height);
 			ret = ipu_queue_task(&task);
 			break;
 		}

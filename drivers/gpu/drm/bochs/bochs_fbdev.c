@@ -9,17 +9,6 @@
 
 /* ---------------------------------------------------------------------- */
 
-static int bochsfb_mmap(struct fb_info *info,
-			struct vm_area_struct *vma)
-{
-	struct drm_fb_helper *fb_helper = info->par;
-	struct bochs_device *bochs =
-		container_of(fb_helper, struct bochs_device, fb.helper);
-	struct bochs_bo *bo = gem_to_bochs_bo(bochs->fb.gfb.obj);
-
-	return ttm_fbdev_mmap(vma, &bo->bo);
-}
-
 static struct fb_ops bochsfb_ops = {
 	.owner = THIS_MODULE,
 	.fb_check_var = drm_fb_helper_check_var,
@@ -30,7 +19,6 @@ static struct fb_ops bochsfb_ops = {
 	.fb_pan_display = drm_fb_helper_pan_display,
 	.fb_blank = drm_fb_helper_blank,
 	.fb_setcmap = drm_fb_helper_setcmap,
-	.fb_mmap = bochsfb_mmap,
 };
 
 static int bochsfb_create_object(struct bochs_device *bochs,
@@ -84,7 +72,7 @@ static int bochsfb_create(struct drm_fb_helper *helper,
 
 	bo = gem_to_bochs_bo(gobj);
 
-	ret = ttm_bo_reserve(&bo->bo, true, false, false, NULL);
+	ret = ttm_bo_reserve(&bo->bo, true, false, false, 0);
 	if (ret)
 		return ret;
 
@@ -135,9 +123,11 @@ static int bochsfb_create(struct drm_fb_helper *helper,
 	info->screen_base = bo->kmap.virtual;
 	info->screen_size = size;
 
-	drm_vma_offset_remove(&bo->bo.bdev->vma_manager, &bo->bo.vma_node);
-	info->fix.smem_start = 0;
+#if 0
+	/* FIXME: get this right for mmap(/dev/fb0) */
+	info->fix.smem_start = bochs_bo_mmap_offset(bo);
 	info->fix.smem_len = size;
+#endif
 
 	ret = fb_alloc_cmap(&info->cmap, 256, 0);
 	if (ret) {
@@ -189,7 +179,7 @@ void bochs_fb_gamma_get(struct drm_crtc *crtc, u16 *red, u16 *green,
 	*blue  = regno;
 }
 
-static const struct drm_fb_helper_funcs bochs_fb_helper_funcs = {
+static struct drm_fb_helper_funcs bochs_fb_helper_funcs = {
 	.gamma_set = bochs_fb_gamma_set,
 	.gamma_get = bochs_fb_gamma_get,
 	.fb_probe = bochsfb_create,
@@ -199,30 +189,20 @@ int bochs_fbdev_init(struct bochs_device *bochs)
 {
 	int ret;
 
-	drm_fb_helper_prepare(bochs->dev, &bochs->fb.helper,
-			      &bochs_fb_helper_funcs);
+	bochs->fb.helper.funcs = &bochs_fb_helper_funcs;
+	spin_lock_init(&bochs->fb.dirty_lock);
 
 	ret = drm_fb_helper_init(bochs->dev, &bochs->fb.helper,
 				 1, 1);
 	if (ret)
 		return ret;
 
-	ret = drm_fb_helper_single_add_all_connectors(&bochs->fb.helper);
-	if (ret)
-		goto fini;
-
+	drm_fb_helper_single_add_all_connectors(&bochs->fb.helper);
 	drm_helper_disable_unused_functions(bochs->dev);
-
-	ret = drm_fb_helper_initial_config(&bochs->fb.helper, 32);
-	if (ret)
-		goto fini;
+	drm_fb_helper_initial_config(&bochs->fb.helper, 32);
 
 	bochs->fb.initialized = true;
 	return 0;
-
-fini:
-	drm_fb_helper_fini(&bochs->fb.helper);
-	return ret;
 }
 
 void bochs_fbdev_fini(struct bochs_device *bochs)

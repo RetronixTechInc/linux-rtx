@@ -18,7 +18,7 @@
 
 #include <linux/slab.h>
 
-#include <target/iscsi/iscsi_target_core.h>
+#include "iscsi_target_core.h"
 #include "iscsi_target_util.h"
 #include "iscsi_target_parameters.h"
 
@@ -474,10 +474,10 @@ int iscsi_set_keys_to_negotiate(
 		if (!strcmp(param->name, AUTHMETHOD)) {
 			SET_PSTATE_NEGOTIATE(param);
 		} else if (!strcmp(param->name, HEADERDIGEST)) {
-			if (!iser)
+			if (iser == false)
 				SET_PSTATE_NEGOTIATE(param);
 		} else if (!strcmp(param->name, DATADIGEST)) {
-			if (!iser)
+			if (iser == false)
 				SET_PSTATE_NEGOTIATE(param);
 		} else if (!strcmp(param->name, MAXCONNECTIONS)) {
 			SET_PSTATE_NEGOTIATE(param);
@@ -497,7 +497,7 @@ int iscsi_set_keys_to_negotiate(
 		} else if (!strcmp(param->name, IMMEDIATEDATA)) {
 			SET_PSTATE_NEGOTIATE(param);
 		} else if (!strcmp(param->name, MAXRECVDATASEGMENTLENGTH)) {
-			if (!iser)
+			if (iser == false)
 				SET_PSTATE_NEGOTIATE(param);
 		} else if (!strcmp(param->name, MAXXMITDATASEGMENTLENGTH)) {
 			continue;
@@ -528,13 +528,13 @@ int iscsi_set_keys_to_negotiate(
 		} else if (!strcmp(param->name, OFMARKINT)) {
 			SET_PSTATE_NEGOTIATE(param);
 		} else if (!strcmp(param->name, RDMAEXTENSIONS)) {
-			if (iser)
+			if (iser == true)
 				SET_PSTATE_NEGOTIATE(param);
 		} else if (!strcmp(param->name, INITIATORRECVDATASEGMENTLENGTH)) {
-			if (iser)
+			if (iser == true)
 				SET_PSTATE_NEGOTIATE(param);
 		} else if (!strcmp(param->name, TARGETRECVDATASEGMENTLENGTH)) {
-			if (iser)
+			if (iser == true)
 				SET_PSTATE_NEGOTIATE(param);
 		}
 	}
@@ -1605,7 +1605,7 @@ int iscsi_decode_text_input(
 
 	tmpbuf = kzalloc(length + 1, GFP_KERNEL);
 	if (!tmpbuf) {
-		pr_err("Unable to allocate %u + 1 bytes for tmpbuf.\n", length);
+		pr_err("Unable to allocate memory for tmpbuf.\n");
 		return -1;
 	}
 

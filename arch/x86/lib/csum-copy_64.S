@@ -196,7 +196,7 @@ ENTRY(csum_partial_copy_generic)
 
 	/* handle last odd byte */
 .Lhandle_1:
-	testb $1, %r10b
+	testl $1, %r10d
 	jz    .Lende
 	xorl  %ebx, %ebx
 	source

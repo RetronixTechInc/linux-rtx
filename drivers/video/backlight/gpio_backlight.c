@@ -26,6 +26,8 @@ struct gpio_backlight {
 	int gpio;
 	int active;
 	int def_value;
+	int			disp_cnt;
+	struct device_node	*disp_node[4];
 };
 
 static int gpio_backlight_update_status(struct backlight_device *bl)
@@ -44,17 +46,33 @@ static int gpio_backlight_update_status(struct backlight_device *bl)
 	return 0;
 }
 
+static int gpio_backlight_get_brightness(struct backlight_device *bl)
+{
+	return bl->props.brightness;
+}
+
 static int gpio_backlight_check_fb(struct backlight_device *bl,
 				   struct fb_info *info)
 {
 	struct gpio_backlight *gbl = bl_get_data(bl);
 
+	if (gbl->disp_cnt) {
+		struct device_node *np = info->device->of_node;
+		int i;
+
+		for (i = 0 ; i < gbl->disp_cnt; i++) {
+			if (np == gbl->disp_node[i])
+				return 1;
+		}
+		return 0;
+	}
 	return gbl->fbdev == NULL || gbl->fbdev == info->dev;
 }
 
 static const struct backlight_ops gpio_backlight_ops = {
 	.options	= BL_CORE_SUSPENDRESUME,
 	.update_status	= gpio_backlight_update_status,
+	.get_brightness	= gpio_backlight_get_brightness,
 	.check_fb	= gpio_backlight_check_fb,
 };
 
@@ -63,6 +81,7 @@ static int gpio_backlight_probe_dt(struct platform_device *pdev,
 {
 	struct device_node *np = pdev->dev.of_node;
 	enum of_gpio_flags gpio_flags;
+	int i;
 
 	gbl->gpio = of_get_gpio_flags(np, 0, &gpio_flags);
 
@@ -78,6 +97,12 @@ static int gpio_backlight_probe_dt(struct platform_device *pdev,
 
 	gbl->def_value = of_property_read_bool(np, "default-on");
 
+	for (i = 0 ; i < ARRAY_SIZE(gbl->disp_node); i++) {
+		gbl->disp_node[i] = of_parse_phandle(np, "display", i);
+		if (!gbl->disp_node[i])
+			break;
+	}
+	gbl->disp_cnt = i;
 	return 0;
 }
 
@@ -89,6 +114,7 @@ static int gpio_backlight_probe(struct platform_device *pdev)
 	struct backlight_device *bl;
 	struct gpio_backlight *gbl;
 	struct device_node *np = pdev->dev.of_node;
+	unsigned long flags = GPIOF_DIR_OUT;
 	int ret;
 
 	if (!pdata && !np) {
@@ -114,9 +140,12 @@ static int gpio_backlight_probe(struct platform_device *pdev)
 		gbl->def_value = pdata->def_value;
 	}
 
-	ret = devm_gpio_request_one(gbl->dev, gbl->gpio, GPIOF_DIR_OUT |
-				    (gbl->active ? GPIOF_INIT_LOW
-						 : GPIOF_INIT_HIGH),
+	if (gbl->active)
+		flags |= gbl->def_value ? GPIOF_INIT_HIGH : GPIOF_INIT_LOW;
+	else
+		flags |= gbl->def_value ? GPIOF_INIT_LOW : GPIOF_INIT_HIGH;
+
+	ret = devm_gpio_request_one(gbl->dev, gbl->gpio, flags,
 				    pdata ? pdata->name : "backlight");
 	if (ret < 0) {
 		dev_err(&pdev->dev, "unable to request GPIO\n");
@@ -146,11 +175,14 @@ static struct of_device_id gpio_backlight_of_match[] = {
 	{ .compatible = "gpio-backlight" },
 	{ /* sentinel */ }
 };
+
+MODULE_DEVICE_TABLE(of, gpio_backlight_of_match);
 #endif
 
 static struct platform_driver gpio_backlight_driver = {
 	.driver		= {
 		.name		= "gpio-backlight",
+		.owner		= THIS_MODULE,
 		.of_match_table = of_match_ptr(gpio_backlight_of_match),
 	},
 	.probe		= gpio_backlight_probe,

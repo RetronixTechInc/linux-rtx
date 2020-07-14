@@ -35,8 +35,6 @@ struct pci_controller {
 	struct resource *io_resource;
 	unsigned long io_offset;
 	unsigned long io_map_base;
-	struct resource *busn_resource;
-	unsigned long busn_offset;
 
 	unsigned int index;
 	/* For compatibility with current (as of July 2003) pciutils
@@ -75,6 +73,11 @@ extern unsigned long PCIBIOS_MIN_MEM;
 
 extern void pcibios_set_master(struct pci_dev *dev);
 
+static inline void pcibios_penalize_isa_irq(int irq, int active)
+{
+	/* We don't do dynamic PCI IRQ allocation */
+}
+
 #define HAVE_PCI_MMAP
 
 extern int pci_mmap_page_range(struct pci_dev *dev, struct vm_area_struct *vma,
@@ -86,7 +89,7 @@ static inline void pci_resource_to_user(const struct pci_dev *dev, int bar,
 		const struct resource *rsrc, resource_size_t *start,
 		resource_size_t *end)
 {
-	phys_addr_t size = resource_size(rsrc);
+	phys_t size = resource_size(rsrc);
 
 	*start = fixup_bigphys_addr(rsrc->start, size);
 	*end = rsrc->start + size;
@@ -123,7 +126,6 @@ static inline void pci_dma_burst_advice(struct pci_dev *pdev,
 }
 #endif
 
-#ifdef CONFIG_PCI_DOMAINS
 #define pci_domain_nr(bus) ((struct pci_controller *)(bus)->sysdata)->index
 
 static inline int pci_proc_domain(struct pci_bus *bus)
@@ -131,7 +133,6 @@ static inline int pci_proc_domain(struct pci_bus *bus)
 	struct pci_controller *hose = bus->sysdata;
 	return hose->need_domain_info;
 }
-#endif /* CONFIG_PCI_DOMAINS */
 
 #endif /* __KERNEL__ */
 

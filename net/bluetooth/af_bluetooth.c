@@ -31,9 +31,7 @@
 #include <net/bluetooth/bluetooth.h>
 #include <linux/proc_fs.h>
 
-#include "selftest.h"
-
-#define VERSION "2.20"
+#define VERSION "2.18"
 
 /* Bluetooth sockets */
 #define BT_MAX_PROTO	8
@@ -239,8 +237,8 @@ struct sock *bt_accept_dequeue(struct sock *parent, struct socket *newsock)
 }
 EXPORT_SYMBOL(bt_accept_dequeue);
 
-int bt_sock_recvmsg(struct socket *sock, struct msghdr *msg, size_t len,
-		    int flags)
+int bt_sock_recvmsg(struct kiocb *iocb, struct socket *sock,
+				struct msghdr *msg, size_t len, int flags)
 {
 	int noblock = flags & MSG_DONTWAIT;
 	struct sock *sk = sock->sk;
@@ -268,7 +266,7 @@ int bt_sock_recvmsg(struct socket *sock, struct msghdr *msg, size_t len,
 	}
 
 	skb_reset_transport_header(skb);
-	err = skb_copy_datagram_msg(skb, 0, msg, copied);
+	err = skb_copy_datagram_iovec(skb, 0, msg->msg_iov, copied);
 	if (err == 0) {
 		sock_recv_ts_and_drops(msg, sk, skb);
 
@@ -312,8 +310,8 @@ static long bt_sock_data_wait(struct sock *sk, long timeo)
 	return timeo;
 }
 
-int bt_sock_stream_recvmsg(struct socket *sock, struct msghdr *msg,
-			   size_t size, int flags)
+int bt_sock_stream_recvmsg(struct kiocb *iocb, struct socket *sock,
+			       struct msghdr *msg, size_t size, int flags)
 {
 	struct sock *sk = sock->sk;
 	int err = 0;
@@ -359,7 +357,7 @@ int bt_sock_stream_recvmsg(struct socket *sock, struct msghdr *msg,
 		}
 
 		chunk = min_t(unsigned int, skb->len, size);
-		if (skb_copy_datagram_msg(skb, 0, msg, chunk)) {
+		if (skb_copy_datagram_iovec(skb, 0, msg->msg_iov, chunk)) {
 			skb_queue_head(&sk->sk_receive_queue, skb);
 			if (!copied)
 				copied = -EFAULT;
@@ -670,7 +668,7 @@ static int bt_seq_show(struct seq_file *seq, void *v)
 	return 0;
 }
 
-static const struct seq_operations bt_seq_ops = {
+static struct seq_operations bt_seq_ops = {
 	.start = bt_seq_start,
 	.next  = bt_seq_next,
 	.stop  = bt_seq_stop,
@@ -742,13 +740,7 @@ static int __init bt_init(void)
 {
 	int err;
 
-	sock_skb_cb_check_size(sizeof(struct bt_skb_cb));
-
 	BT_INFO("Core ver %s", VERSION);
-
-	err = bt_selftest();
-	if (err < 0)
-		return err;
 
 	bt_debugfs = debugfs_create_dir("bluetooth", NULL);
 
@@ -778,13 +770,6 @@ static int __init bt_init(void)
 		goto sock_err;
 	}
 
-	err = mgmt_init();
-	if (err < 0) {
-		sco_exit();
-		l2cap_exit();
-		goto sock_err;
-	}
-
 	return 0;
 
 sock_err:
@@ -799,8 +784,6 @@ error:
 
 static void __exit bt_exit(void)
 {
-	mgmt_exit();
-
 	sco_exit();
 
 	l2cap_exit();

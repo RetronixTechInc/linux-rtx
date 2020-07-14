@@ -2,7 +2,7 @@
  * sabresd_battery.c - Maxim 8903 USB/Adapter Charger Driver
  *
  * Copyright (C) 2011 Samsung Electronics
- * Copyright (C) 2011-2015 Freescale Semiconductor, Inc.
+ * Copyright (C) 2011-2014 Freescale Semiconductor, Inc.
  * Based on max8903_charger.c
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -40,10 +40,8 @@
 struct max8903_data {
 	struct max8903_pdata *pdata;
 	struct device *dev;
-	struct power_supply *psy;
-	struct power_supply_desc psy_desc;
-	struct power_supply *usb;
-	struct power_supply_desc usb_desc;
+	struct power_supply psy;
+	struct power_supply usb;
 	bool fault;
 	bool usb_in;
 	bool ta_in;
@@ -61,8 +59,7 @@ struct max8903_data {
 	int old_percent;
 	int usb_charger_online;
 	int first_delay_count;
-	struct power_supply *bat;
-	struct power_supply_desc bat_desc;
+	struct power_supply bat;
 	struct power_supply	detect_usb;
 };
 
@@ -256,7 +253,7 @@ static void max8903_battery_update_status(struct max8903_data *data)
 		data->percent = calibrate_battery_capability_percent(data);
 		if (data->percent != data->old_percent) {
 			data->old_percent = data->percent;
-			power_supply_changed(data->bat);
+			power_supply_changed(&data->bat);
 		}
 		 /*
 		  * because boot time gap between led framwork and charger
@@ -266,7 +263,7 @@ static void max8903_battery_update_status(struct max8903_data *data)
 		  */
 		if (data->first_delay_count < 200) {
 			data->first_delay_count = data->first_delay_count + 1;
-			power_supply_changed(data->bat);
+			power_supply_changed(&data->bat);
 		}
 	}
 }
@@ -275,7 +272,7 @@ static int max8903_battery_get_property(struct power_supply *bat,
 				       enum power_supply_property psp,
 				       union power_supply_propval *val)
 {
-	struct max8903_data *di = bat->drv_data;
+	struct max8903_data *di = container_of(bat, struct max8903_data, bat);
 
 	switch (psp) {
 	case POWER_SUPPLY_PROP_STATUS:
@@ -345,7 +342,8 @@ static int max8903_get_property(struct power_supply *psy,
 		enum power_supply_property psp,
 		union power_supply_propval *val)
 {
-	struct max8903_data *data = psy->drv_data;
+	struct max8903_data *data = container_of(psy,
+			struct max8903_data, psy);
 
 	switch (psp) {
 	case POWER_SUPPLY_PROP_ONLINE:
@@ -365,7 +363,8 @@ static int max8903_get_usb_property(struct power_supply *usb,
 		enum power_supply_property psp,
 		union power_supply_propval *val)
 {
-	struct max8903_data *data = usb->drv_data;
+	struct max8903_data *data = container_of(usb,
+			struct max8903_data, usb);
 
 	switch (psp) {
 	case POWER_SUPPLY_PROP_ONLINE:
@@ -397,8 +396,8 @@ static irqreturn_t max8903_dcin(int irq, void *_data)
 	dev_info(data->dev, "TA(DC-IN) Charger %s.\n", ta_in ?
 			"Connected" : "Disconnected");
 	max8903_charger_update_status(data);
-	power_supply_changed(data->psy);
-	power_supply_changed(data->bat);
+	power_supply_changed(&data->psy);
+	power_supply_changed(&data->bat);
 
 	return IRQ_HANDLED;
 }
@@ -417,8 +416,8 @@ static irqreturn_t max8903_usbin(int irq, void *_data)
 	dev_info(data->dev, "USB Charger %s.\n", usb_in ?
 			"Connected" : "Disconnected");
 	max8903_charger_update_status(data);
-	power_supply_changed(data->bat);
-	power_supply_changed(data->usb);
+	power_supply_changed(&data->bat);
+	power_supply_changed(&data->usb);
 
 	return IRQ_HANDLED;
 }
@@ -440,9 +439,9 @@ static irqreturn_t max8903_fault(int irq, void *_data)
 	else
 		dev_err(data->dev, "Charger recovered from a fault.\n");
 	max8903_charger_update_status(data);
-	power_supply_changed(data->psy);
-	power_supply_changed(data->bat);
-	power_supply_changed(data->usb);
+	power_supply_changed(&data->psy);
+	power_supply_changed(&data->bat);
+	power_supply_changed(&data->usb);
 
 	return IRQ_HANDLED;
 }
@@ -459,9 +458,9 @@ static irqreturn_t max8903_chg(int irq, void *_data)
 		return IRQ_HANDLED;
 	data->chg_state = chg_state;
 	max8903_charger_update_status(data);
-	power_supply_changed(data->psy);
-	power_supply_changed(data->bat);
-	power_supply_changed(data->usb);
+	power_supply_changed(&data->psy);
+	power_supply_changed(&data->bat);
+	power_supply_changed(&data->usb);
 
 	return IRQ_HANDLED;
 }
@@ -500,7 +499,7 @@ static ssize_t max8903_voltage_offset_discharger_store(struct device *dev,
 	int ret;
 	unsigned long data;
 
-	ret = kstrtoul(buf, 10, &data);
+	ret = strict_strtoul(buf, 10, &data);
 	offset_discharger = (int)data;
 	pr_info("read offset_discharger:%04d\n", offset_discharger);
 
@@ -521,7 +520,7 @@ static ssize_t max8903_voltage_offset_charger_store(struct device *dev,
 	int ret;
 	unsigned long data;
 
-	ret = kstrtoul(buf, 10, &data);
+	ret = strict_strtoul(buf, 10, &data);
 	offset_charger = (int)data;
 	pr_info("read offset_charger:%04d\n", offset_charger);
 	return count;
@@ -541,7 +540,7 @@ static ssize_t max8903_voltage_offset_usb_charger_store(struct device *dev,
 	int ret;
 	unsigned long data;
 
-	ret = kstrtoul(buf, 10, &data);
+	ret = strict_strtoul(buf, 10, &data);
 	offset_usb_charger = (int)data;
 	pr_info("read offset_charger:%04d\n", offset_usb_charger);
 
@@ -653,11 +652,11 @@ static int max8903_probe(struct platform_device *pdev)
 	struct max8903_data *data;
 	struct device *dev = &pdev->dev;
 	struct max8903_pdata *pdata = pdev->dev.platform_data;
-	struct power_supply_config psy_cfg = {};
 	int ret = 0;
 	int gpio = 0;
 	int ta_in = 0;
 	int usb_in = 0;
+	int retval;
 
 	data = devm_kzalloc(dev, sizeof(struct max8903_data), GFP_KERNEL);
 	if (!data)
@@ -735,39 +734,36 @@ static int max8903_probe(struct platform_device *pdev)
 	data->fault = false;
 	data->ta_in = ta_in;
 	data->usb_in = usb_in;
-	data->psy_desc.name = "max8903-ac";
-	data->psy_desc.type = POWER_SUPPLY_TYPE_MAINS;
-	data->psy_desc.get_property = max8903_get_property;
-	data->psy_desc.properties = max8903_charger_props;
-	data->psy_desc.num_properties = ARRAY_SIZE(max8903_charger_props);
-
-	psy_cfg.drv_data = data;
-
-	data->psy = power_supply_register(dev, &data->psy_desc, &psy_cfg);
-	if (IS_ERR(data->psy)) {
+	data->psy.name = "max8903-ac";
+	data->psy.type = POWER_SUPPLY_TYPE_MAINS;
+	data->psy.get_property = max8903_get_property;
+	data->psy.properties = max8903_charger_props;
+	data->psy.num_properties = ARRAY_SIZE(max8903_charger_props);
+	ret = power_supply_register(dev, &data->psy);
+	if (ret) {
 		dev_err(dev, "failed: power supply register.\n");
 		goto err_psy;
 	}
 
-	data->usb_desc.name = "max8903-usb";
-	data->usb_desc.type = POWER_SUPPLY_TYPE_USB;
-	data->usb_desc.get_property = max8903_get_usb_property;
-	data->usb_desc.properties = max8903_charger_props;
-	data->usb_desc.num_properties = ARRAY_SIZE(max8903_charger_props);
-	data->usb = power_supply_register(dev, &data->usb_desc, &psy_cfg);
-	if (IS_ERR(data->usb)) {
+	data->usb.name = "max8903-usb";
+	data->usb.type = POWER_SUPPLY_TYPE_USB;
+	data->usb.get_property = max8903_get_usb_property;
+	data->usb.properties = max8903_charger_props;
+	data->usb.num_properties = ARRAY_SIZE(max8903_charger_props);
+	ret = power_supply_register(dev, &data->usb);
+	if (ret) {
 		dev_err(dev, "failed: power supply register.\n");
 		goto err_psy;
 	}
 
-	data->bat_desc.name = "max8903-charger";
-	data->bat_desc.type = POWER_SUPPLY_TYPE_BATTERY;
-	data->bat_desc.properties = max8903_battery_props;
-	data->bat_desc.num_properties = ARRAY_SIZE(max8903_battery_props);
-	data->bat_desc.get_property = max8903_battery_get_property;
-	data->bat_desc.use_for_apm = 1;
-	data->bat = power_supply_register(&pdev->dev, &data->bat_desc, &psy_cfg);
-	if (IS_ERR(data->bat)) {
+	data->bat.name = "max8903-charger";
+	data->bat.type = POWER_SUPPLY_TYPE_BATTERY;
+	data->bat.properties = max8903_battery_props;
+	data->bat.num_properties = ARRAY_SIZE(max8903_battery_props);
+	data->bat.get_property = max8903_battery_get_property;
+	data->bat.use_for_apm = 1;
+	retval = power_supply_register(&pdev->dev, &data->bat);
+	if (retval) {
 		dev_err(data->dev, "failed to register battery\n");
 		goto battery_failed;
 	}
@@ -840,9 +836,9 @@ static int max8903_probe(struct platform_device *pdev)
 
 	return 0;
 err_psy:
-	power_supply_unregister(data->psy);
+	power_supply_unregister(&data->psy);
 battery_failed:
-	power_supply_unregister(data->bat);
+	power_supply_unregister(&data->bat);
 err_usb_irq:
 	if (pdata->usb_valid)
 		free_irq(gpio_to_irq(pdata->uok), data);
@@ -878,9 +874,9 @@ static int max8903_remove(struct platform_device *pdev)
 		struct max8903_pdata *pdata = data->pdata;
 
 		cancel_delayed_work_sync(&data->work);
-		power_supply_unregister(data->psy);
-		power_supply_unregister(data->usb);
-		power_supply_unregister(data->bat);
+		power_supply_unregister(&data->psy);
+		power_supply_unregister(&data->usb);
+		power_supply_unregister(&data->bat);
 
 		if (pdata->flt) {
 			free_irq(gpio_to_irq(pdata->flt), data);
@@ -955,7 +951,7 @@ static int max8903_resume(struct platform_device *pdev)
 				dev_info(data->dev, "TA(DC-IN) Charger %s.\n", ta_in ?
 				"Connected" : "Disconnected");
 				max8903_charger_update_status(data);
-				power_supply_changed(data->psy);
+				power_supply_changed(&data->psy);
 			}
 
 			if (usb_in != data->usb_in) {
@@ -963,7 +959,7 @@ static int max8903_resume(struct platform_device *pdev)
 				dev_info(data->dev, "USB Charger %s.\n", usb_in ?
 				"Connected" : "Disconnected");
 				max8903_charger_update_status(data);
-				power_supply_changed(data->usb);
+				power_supply_changed(&data->usb);
 			}
 
 			if (pdata->dc_valid && device_may_wakeup(&pdev->dev)) {

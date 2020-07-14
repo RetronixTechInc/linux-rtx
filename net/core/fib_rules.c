@@ -31,9 +31,9 @@ int fib_default_rule_add(struct fib_rules_ops *ops,
 	r->pref = pref;
 	r->table = table;
 	r->flags = flags;
-	r->fr_net = ops->fro_net;
 	r->uid_start = INVALID_UID;
 	r->uid_end = INVALID_UID;
+	r->fr_net = hold_net(ops->fro_net);
 
 	r->suppress_prefixlen = -1;
 	r->suppress_ifgroup = -1;
@@ -118,6 +118,7 @@ static int __fib_rules_register(struct fib_rules_ops *ops)
 		if (ops->family == o->family)
 			goto errout;
 
+	hold_net(net);
 	list_add_tail_rcu(&ops->list, &net->rules_ops);
 	err = 0;
 errout:
@@ -161,16 +162,25 @@ static void fib_rules_cleanup_ops(struct fib_rules_ops *ops)
 	}
 }
 
+static void fib_rules_put_rcu(struct rcu_head *head)
+{
+	struct fib_rules_ops *ops = container_of(head, struct fib_rules_ops, rcu);
+	struct net *net = ops->fro_net;
+
+	release_net(net);
+	kfree(ops);
+}
+
 void fib_rules_unregister(struct fib_rules_ops *ops)
 {
 	struct net *net = ops->fro_net;
 
 	spin_lock(&net->rules_mod_lock);
 	list_del_rcu(&ops->list);
+	fib_rules_cleanup_ops(ops);
 	spin_unlock(&net->rules_mod_lock);
 
-	fib_rules_cleanup_ops(ops);
-	kfree_rcu(ops, rcu);
+	call_rcu(&ops->rcu, fib_rules_put_rcu);
 }
 EXPORT_SYMBOL_GPL(fib_rules_unregister);
 
@@ -315,7 +325,7 @@ static int fib_nl_newrule(struct sk_buff *skb, struct nlmsghdr* nlh)
 		err = -ENOMEM;
 		goto errout;
 	}
-	rule->fr_net = net;
+	rule->fr_net = hold_net(net);
 
 	if (tb[FRA_PRIORITY])
 		rule->pref = nla_get_u32(tb[FRA_PRIORITY]);
@@ -448,6 +458,7 @@ static int fib_nl_newrule(struct sk_buff *skb, struct nlmsghdr* nlh)
 	return 0;
 
 errout_free:
+	release_net(rule->fr_net);
 	kfree(rule);
 errout:
 	rules_ops_put(ops);
@@ -524,12 +535,6 @@ static int fib_nl_delrule(struct sk_buff *skb, struct nlmsghdr* nlh)
 			goto errout;
 		}
 
-		if (ops->delete) {
-			err = ops->delete(rule);
-			if (err)
-				goto errout;
-		}
-
 		list_del_rcu(&rule->list);
 
 		if (rule->action == FR_ACT_GOTO) {
@@ -555,6 +560,8 @@ static int fib_nl_delrule(struct sk_buff *skb, struct nlmsghdr* nlh)
 
 		notify_rule_change(RTM_DELRULE, rule, ops, nlh,
 				   NETLINK_CB(skb).portid);
+		if (ops->delete)
+			ops->delete(rule);
 		fib_rule_put(rule);
 		flush_route_cache(ops);
 		rules_ops_put(ops);
@@ -651,8 +658,7 @@ static int fib_nl_fill_rule(struct sk_buff *skb, struct fib_rule *rule,
 	if (ops->fill(rule, skb, frh) < 0)
 		goto nla_put_failure;
 
-	nlmsg_end(skb, nlh);
-	return 0;
+	return nlmsg_end(skb, nlh);
 
 nla_put_failure:
 	nlmsg_cancel(skb, nlh);
@@ -664,17 +670,15 @@ static int dump_rules(struct sk_buff *skb, struct netlink_callback *cb,
 {
 	int idx = 0;
 	struct fib_rule *rule;
-	int err = 0;
 
 	rcu_read_lock();
 	list_for_each_entry_rcu(rule, &ops->rules_list, list) {
 		if (idx < cb->args[1])
 			goto skip;
 
-		err = fib_nl_fill_rule(skb, rule, NETLINK_CB(cb->skb).portid,
-				       cb->nlh->nlmsg_seq, RTM_NEWRULE,
-				       NLM_F_MULTI, ops);
-		if (err)
+		if (fib_nl_fill_rule(skb, rule, NETLINK_CB(cb->skb).portid,
+				     cb->nlh->nlmsg_seq, RTM_NEWRULE,
+				     NLM_F_MULTI, ops) < 0)
 			break;
 skip:
 		idx++;
@@ -683,7 +687,7 @@ skip:
 	cb->args[1] = idx;
 	rules_ops_put(ops);
 
-	return err;
+	return skb->len;
 }
 
 static int fib_nl_dumprule(struct sk_buff *skb, struct netlink_callback *cb)
@@ -699,9 +703,7 @@ static int fib_nl_dumprule(struct sk_buff *skb, struct netlink_callback *cb)
 		if (ops == NULL)
 			return -EAFNOSUPPORT;
 
-		dump_rules(skb, cb, ops);
-
-		return skb->len;
+		return dump_rules(skb, cb, ops);
 	}
 
 	rcu_read_lock();

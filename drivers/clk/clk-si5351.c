@@ -68,16 +68,16 @@ struct si5351_driver_data {
 	struct si5351_hw_data	*clkout;
 };
 
-static const char * const si5351_input_names[] = {
+static const char const *si5351_input_names[] = {
 	"xtal", "clkin"
 };
-static const char * const si5351_pll_names[] = {
+static const char const *si5351_pll_names[] = {
 	"plla", "pllb", "vxco"
 };
-static const char * const si5351_msynth_names[] = {
+static const char const *si5351_msynth_names[] = {
 	"ms0", "ms1", "ms2", "ms3", "ms4", "ms5", "ms6", "ms7"
 };
-static const char * const si5351_clkout_names[] = {
+static const char const *si5351_clkout_names[] = {
 	"clk0", "clk1", "clk2", "clk3", "clk4", "clk5", "clk6", "clk7"
 };
 
@@ -207,7 +207,7 @@ static bool si5351_regmap_is_writeable(struct device *dev, unsigned int reg)
 	return true;
 }
 
-static const struct regmap_config si5351_regmap_config = {
+static struct regmap_config si5351_regmap_config = {
 	.reg_bits = 8,
 	.val_bits = 8,
 	.cache_type = REGCACHE_RBTREE,
@@ -1128,6 +1128,13 @@ static int si5351_dt_parse(struct i2c_client *client,
 	if (!pdata)
 		return -ENOMEM;
 
+	pdata->clk_xtal = of_clk_get(np, 0);
+	if (!IS_ERR(pdata->clk_xtal))
+		clk_put(pdata->clk_xtal);
+	pdata->clk_clkin = of_clk_get(np, 1);
+	if (!IS_ERR(pdata->clk_clkin))
+		clk_put(pdata->clk_clkin);
+
 	/*
 	 * property silabs,pll-source : <num src>, [<..>]
 	 * allow to selectively set pll source
@@ -1321,22 +1328,8 @@ static int si5351_i2c_probe(struct i2c_client *client,
 	i2c_set_clientdata(client, drvdata);
 	drvdata->client = client;
 	drvdata->variant = variant;
-	drvdata->pxtal = devm_clk_get(&client->dev, "xtal");
-	drvdata->pclkin = devm_clk_get(&client->dev, "clkin");
-
-	if (PTR_ERR(drvdata->pxtal) == -EPROBE_DEFER ||
-	    PTR_ERR(drvdata->pclkin) == -EPROBE_DEFER)
-		return -EPROBE_DEFER;
-
-	/*
-	 * Check for valid parent clock: VARIANT_A and VARIANT_B need XTAL,
-	 *   VARIANT_C can have CLKIN instead.
-	 */
-	if (IS_ERR(drvdata->pxtal) &&
-	    (drvdata->variant != SI5351_VARIANT_C || IS_ERR(drvdata->pclkin))) {
-		dev_err(&client->dev, "missing parent clock\n");
-		return -EINVAL;
-	}
+	drvdata->pxtal = pdata->clk_xtal;
+	drvdata->pclkin = pdata->clk_clkin;
 
 	drvdata->regmap = devm_regmap_init_i2c(client, &si5351_regmap_config);
 	if (IS_ERR(drvdata->regmap)) {
@@ -1400,11 +1393,6 @@ static int si5351_i2c_probe(struct i2c_client *client,
 		}
 	}
 
-	if (!IS_ERR(drvdata->pxtal))
-		clk_prepare_enable(drvdata->pxtal);
-	if (!IS_ERR(drvdata->pclkin))
-		clk_prepare_enable(drvdata->pclkin);
-
 	/* register xtal input clock gate */
 	memset(&init, 0, sizeof(init));
 	init.name = si5351_input_names[0];
@@ -1419,8 +1407,7 @@ static int si5351_i2c_probe(struct i2c_client *client,
 	clk = devm_clk_register(&client->dev, &drvdata->xtal);
 	if (IS_ERR(clk)) {
 		dev_err(&client->dev, "unable to register %s\n", init.name);
-		ret = PTR_ERR(clk);
-		goto err_clk;
+		return PTR_ERR(clk);
 	}
 
 	/* register clkin input clock gate */
@@ -1438,8 +1425,7 @@ static int si5351_i2c_probe(struct i2c_client *client,
 		if (IS_ERR(clk)) {
 			dev_err(&client->dev, "unable to register %s\n",
 				init.name);
-			ret = PTR_ERR(clk);
-			goto err_clk;
+			return PTR_ERR(clk);
 		}
 	}
 
@@ -1461,8 +1447,7 @@ static int si5351_i2c_probe(struct i2c_client *client,
 	clk = devm_clk_register(&client->dev, &drvdata->pll[0].hw);
 	if (IS_ERR(clk)) {
 		dev_err(&client->dev, "unable to register %s\n", init.name);
-		ret = PTR_ERR(clk);
-		goto err_clk;
+		return -EINVAL;
 	}
 
 	/* register PLLB or VXCO (Si5351B) */
@@ -1486,8 +1471,7 @@ static int si5351_i2c_probe(struct i2c_client *client,
 	clk = devm_clk_register(&client->dev, &drvdata->pll[1].hw);
 	if (IS_ERR(clk)) {
 		dev_err(&client->dev, "unable to register %s\n", init.name);
-		ret = PTR_ERR(clk);
-		goto err_clk;
+		return -EINVAL;
 	}
 
 	/* register clk multisync and clk out divider */
@@ -1508,10 +1492,8 @@ static int si5351_i2c_probe(struct i2c_client *client,
 		num_clocks * sizeof(*drvdata->onecell.clks), GFP_KERNEL);
 
 	if (WARN_ON(!drvdata->msynth || !drvdata->clkout ||
-		    !drvdata->onecell.clks)) {
-		ret = -ENOMEM;
-		goto err_clk;
-	}
+		    !drvdata->onecell.clks))
+		return -ENOMEM;
 
 	for (n = 0; n < num_clocks; n++) {
 		drvdata->msynth[n].num = n;
@@ -1529,8 +1511,7 @@ static int si5351_i2c_probe(struct i2c_client *client,
 		if (IS_ERR(clk)) {
 			dev_err(&client->dev, "unable to register %s\n",
 				init.name);
-			ret = PTR_ERR(clk);
-			goto err_clk;
+			return -EINVAL;
 		}
 	}
 
@@ -1557,8 +1538,7 @@ static int si5351_i2c_probe(struct i2c_client *client,
 		if (IS_ERR(clk)) {
 			dev_err(&client->dev, "unable to register %s\n",
 				init.name);
-			ret = PTR_ERR(clk);
-			goto err_clk;
+			return -EINVAL;
 		}
 		drvdata->onecell.clks[n] = clk;
 
@@ -1577,17 +1557,10 @@ static int si5351_i2c_probe(struct i2c_client *client,
 				  &drvdata->onecell);
 	if (ret) {
 		dev_err(&client->dev, "unable to add clk provider\n");
-		goto err_clk;
+		return ret;
 	}
 
 	return 0;
-
-err_clk:
-	if (!IS_ERR(drvdata->pxtal))
-		clk_disable_unprepare(drvdata->pxtal);
-	if (!IS_ERR(drvdata->pclkin))
-		clk_disable_unprepare(drvdata->pclkin);
-	return ret;
 }
 
 static const struct i2c_device_id si5351_i2c_ids[] = {

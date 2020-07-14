@@ -60,7 +60,7 @@ struct fib_rules_ops {
 					     struct sk_buff *,
 					     struct fib_rule_hdr *,
 					     struct nlattr **);
-	int			(*delete)(struct fib_rule *);
+	void			(*delete)(struct fib_rule *);
 	int			(*compare)(struct fib_rule *,
 					   struct fib_rule_hdr *,
 					   struct nlattr **);
@@ -94,16 +94,24 @@ struct fib_rules_ops {
 	[FRA_SUPPRESS_PREFIXLEN] = { .type = NLA_U32 }, \
 	[FRA_SUPPRESS_IFGROUP] = { .type = NLA_U32 }, \
 	[FRA_GOTO]	= { .type = NLA_U32 }
+	
 
 static inline void fib_rule_get(struct fib_rule *rule)
 {
 	atomic_inc(&rule->refcnt);
 }
 
+static inline void fib_rule_put_rcu(struct rcu_head *head)
+{
+	struct fib_rule *rule = container_of(head, struct fib_rule, rcu);
+	release_net(rule->fr_net);
+	kfree(rule);
+}
+
 static inline void fib_rule_put(struct fib_rule *rule)
 {
 	if (atomic_dec_and_test(&rule->refcnt))
-		kfree_rcu(rule, rcu);
+		call_rcu(&rule->rcu, fib_rule_put_rcu);
 }
 
 static inline u32 frh_get_table(struct fib_rule_hdr *frh, struct nlattr **nla)

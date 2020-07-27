@@ -15,10 +15,13 @@
 #include <linux/serdev.h>
 
 #include "serial.h"
+#include "linux/of_gpio.h"
 
 struct ubx_data {
 	struct regulator *v_bckp;
 	struct regulator *vcc;
+	int	green_led;
+	int	red_led;
 };
 
 static int ubx_set_active(struct gnss_serial *gserial)
@@ -26,6 +29,10 @@ static int ubx_set_active(struct gnss_serial *gserial)
 	struct ubx_data *data = gnss_serial_get_drvdata(gserial);
 	int ret;
 
+	if (gpio_is_valid(data->red_led))
+		gpio_set_value_cansleep(data->red_led,0);
+	if (gpio_is_valid(data->green_led))
+		gpio_set_value_cansleep(data->green_led,1);
 	ret = regulator_enable(data->vcc);
 	if (ret)
 		return ret;
@@ -38,6 +45,10 @@ static int ubx_set_standby(struct gnss_serial *gserial)
 	struct ubx_data *data = gnss_serial_get_drvdata(gserial);
 	int ret;
 
+	if (gpio_is_valid(data->red_led))
+		gpio_set_value_cansleep(data->red_led,1);
+	if (gpio_is_valid(data->green_led))
+		gpio_set_value_cansleep(data->green_led,0);
 	ret = regulator_disable(data->vcc);
 	if (ret)
 		return ret;
@@ -67,6 +78,7 @@ static int ubx_probe(struct serdev_device *serdev)
 {
 	struct gnss_serial *gserial;
 	struct ubx_data *data;
+	struct device_node *np = serdev->dev.of_node;
 	int ret;
 
 	gserial = gnss_serial_allocate(serdev, sizeof(*data));
@@ -80,6 +92,13 @@ static int ubx_probe(struct serdev_device *serdev)
 	gserial->gdev->type = GNSS_TYPE_UBX;
 
 	data = gnss_serial_get_drvdata(gserial);
+
+	data->green_led = of_get_named_gpio(np, "ubx_data,green_led", 0);
+	data->red_led = of_get_named_gpio(np, "ubx_data,red_led", 0);
+	if (gpio_is_valid(data->red_led))
+		gpio_set_value_cansleep(data->red_led,1);
+	if (gpio_is_valid(data->green_led))
+		gpio_set_value_cansleep(data->green_led,0);
 
 	data->vcc = devm_regulator_get(&serdev->dev, "vcc");
 	if (IS_ERR(data->vcc)) {
@@ -113,6 +132,11 @@ err_disable_v_bckp:
 		regulator_disable(data->v_bckp);
 err_free_gserial:
 	gnss_serial_free(gserial);
+
+	if (gpio_is_valid(data->red_led))
+		gpio_set_value_cansleep(data->red_led,0);
+	if (gpio_is_valid(data->green_led))
+		gpio_set_value_cansleep(data->green_led,0);
 
 	return ret;
 }

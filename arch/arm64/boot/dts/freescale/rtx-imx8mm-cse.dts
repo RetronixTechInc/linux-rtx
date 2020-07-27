@@ -30,44 +30,16 @@
 		pinctrl-names = "default";
 		pinctrl-0 = <&pinctrl_gpio_led>;
 
-		power_green {
-			label = "power_green";
-			gpios = <&pca6416 0 GPIO_ACTIVE_HIGH>;
-			default-state = "on";
-		};
-		power_red {
-			label = "power_red";
-			gpios = <&pca6416 1 GPIO_ACTIVE_HIGH>;
-			default-state = "off";
-		};
-		lte_green {
-			label = "lte_green";
-			gpios = <&pca6416 2 GPIO_ACTIVE_HIGH>;
-			default-state = "off";
-		};
-		lte_red {
-			label = "lte_red";
-			gpios = <&pca6416 3 GPIO_ACTIVE_HIGH>;
-			default-state = "off";
-		};
-		gps_green {
-			label = "gps_green";
-			gpios = <&pca6416 4 GPIO_ACTIVE_HIGH>;
-			default-state = "off";
-		};
-		gps_red {
-			label = "gps_red";
-			gpios = <&pca6416 5 GPIO_ACTIVE_HIGH>;
-			default-state = "off";
-		};
-		data_grenn {
+		data_green {
 			label = "data_green";
 			gpios = <&pca6416 6 GPIO_ACTIVE_HIGH>;
+			linux,default-trigger = "mmc2";
 			default-state = "off";
 		};
 		data_red {
 			label = "data_red";
-			gpios = <&pca6416 7 GPIO_ACTIVE_HIGH>;
+			gpios = <&pca6416 7 GPIO_ACTIVE_LOW>;
+			linux,default-trigger = "mmc2";
 			default-state = "off";
 		};
 		usb1_onoff {
@@ -124,7 +96,7 @@
 */
 		cpu_ready {
 			label = "cpu_ready";
-			gpios = <&gpio4 14 GPIO_ACTIVE_HIGH>;
+			gpios = <&gpio4 14 GPIO_ACTIVE_LOW>;
 			default-state = "on";
 		};
 		gyro_en {
@@ -260,30 +232,6 @@
 		gpios = <&gpio1 11 GPIO_ACTIVE_HIGH>;
 		debounce-delay-us = <100>;
 		pinctrl-0 = <&pinctrl_gpio_count>;
-	};
-
-	sound-ak4458 {
-		compatible = "fsl,imx-audio-ak4458";
-		model = "ak4458-audio";
-		audio-cpu = <&sai1>;
-		audio-codec = <&ak4458_1>, <&ak4458_2>;
-		ak4458,pdn-gpio = <&pca6416 4 GPIO_ACTIVE_HIGH>;
-	};
-
-	sound-ak5558 {
-		compatible = "fsl,imx-audio-ak5558";
-		model = "ak5558-audio";
-		audio-cpu = <&sai5>;
-		audio-codec = <&ak5558>;
-		status = "disabled";
-	};
-
-	sound-ak4497 {
-		compatible = "fsl,imx-audio-ak4497";
-		model = "ak4497-audio";
-		audio-cpu = <&sai1>;
-		audio-codec = <&ak4497>;
-		status = "disabled";
 	};
 
 	sound-micfil {
@@ -519,8 +467,8 @@
 			fsl,pins = <
 				MX8MM_IOMUXC_SAI2_RXFS_UART1_DCE_TX	0x140
 				MX8MM_IOMUXC_SAI2_RXC_UART1_DCE_RX	0x140
-				MX8MM_IOMUXC_SAI2_TXFS_UART1_DCE_CTS_B	0x140
-				MX8MM_IOMUXC_SAI2_RXD0_GPIO4_IO23	0x19
+				MX8MM_IOMUXC_SAI2_TXFS_GPIO4_IO24	0x19
+				MX8MM_IOMUXC_SAI2_RXD0_UART1_DCE_RTS_B	0x140
 			>;
 		};
 
@@ -555,8 +503,8 @@
 			fsl,pins = <
 				MX8MM_IOMUXC_ECSPI1_SCLK_UART3_DCE_RX		0x140
 				MX8MM_IOMUXC_ECSPI1_MOSI_UART3_DCE_TX		0x140
-				MX8MM_IOMUXC_ECSPI1_MISO_UART3_DCE_CTS_B	0x140
-				MX8MM_IOMUXC_ECSPI1_SS0_GPIO5_IO9		0x19
+				MX8MM_IOMUXC_ECSPI1_MISO_GPIO5_IO8		0x19
+				MX8MM_IOMUXC_ECSPI1_SS0_UART3_DCE_RTS_B		0x140
 			>;
 		};
 
@@ -775,11 +723,11 @@
 			#size-cells = <0>;
 			port@0 {
 				reg = <0>;
-				label = "lan1";
+				label = "lan0";
 			};
 			port@1 {
 				reg = <1>;
-				label = "lan2";
+				label = "lan1";
 			};
 			port@2 {
 				reg = <2>;
@@ -987,11 +935,11 @@
 			#size-cells = <0>;
 			port@0 {
 				reg = <0>;
-				label = "lan1";
+				label = "lan0";
 			};
 			port@1 {
 				reg = <1>;
-				label = "lan2";
+				label = "lan1";
 			};
 			port@2 {
 				reg = <2>;
@@ -1013,11 +961,11 @@
 	pinctrl-0 = <&pinctrl_i2c3>;
 	status = "okay";
 
-	ads1015: ads1015@49 {
-		compatible = "ti,ads1015";
+	ads1115: ads1115@48 {
+		compatible = "ti,ads1115";
 		pinctrl-names = "default";
 		pinctrl-0 = <&pinctrl_ads1115>;
-		reg = <0x49>;
+		reg = <0x48>;
 		#address-cells = <1>;
 		#size-cells = <0>;
 
@@ -1043,11 +991,11 @@
 		};  
 	};
 
-  	lsm6dsl@6b {
+  	lsm6dsl@6a {
   		compatible = "st,lsm6dsl";
 		pinctrl-names = "default";
 		pinctrl-0 = <&pinctrl_gyro>;
-  		reg = <0x6b>;
+  		reg = <0x6a>;
   		interrupt-parent = <&gpio2>;
   		interrupts = <3 IRQ_TYPE_EDGE_RISING>;
  	};
@@ -1089,35 +1037,7 @@
 		};
 
 	};
-	ak4458_1: ak4458@10 {
-		compatible = "asahi-kasei,ak4458";
-		reg = <0x10>;
-		AVDD-supply = <&reg_audio_board>;
-		DVDD-supply = <&reg_audio_board>;
-	};
 
-	ak4458_2: ak4458@12 {
-		compatible = "asahi-kasei,ak4458";
-		reg = <0x12>;
-		AVDD-supply = <&reg_audio_board>;
-		DVDD-supply = <&reg_audio_board>;
-	};
-
-	ak5558: ak5558@13 {
-		compatible = "asahi-kasei,ak5558";
-		reg = <0x13>;
-		ak5558,pdn-gpio = <&pca6416 3 GPIO_ACTIVE_HIGH>;
-		AVDD-supply = <&reg_audio_board>;
-		DVDD-supply = <&reg_audio_board>;
-	};
-
-	ak4497: ak4497@11 {
-		compatible = "asahi-kasei,ak4497";
-		reg = <0x11>;
-		ak4497,pdn-gpio = <&pca6416 5 GPIO_ACTIVE_HIGH>;
-		AVDD-supply = <&reg_audio_board>;
-		DVDD-supply = <&reg_audio_board>;
-	};
 };
 
 &lcdif {
@@ -1158,22 +1078,8 @@
 	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl_fec1>;
 	phy-mode = "rgmii-id";
-	phy-handle = <&ethphy0>;
 	fsl,magic-packet;
 	status = "okay";
-
-	mdio {
-		#address-cells = <1>;
-		#size-cells = <0>;
-
-		ethphy0: ethernet-phy@0 {
-			compatible = "ethernet-phy-ieee802.3-c22";
-			reg = <0>;
-			at803x,led-act-blind-workaround;
-			at803x,eee-okay;
-			at803x,vddio-1p8v;
-		};
-	};
 
 	fixed-link {
 		speed = <1000>;
@@ -1204,7 +1110,7 @@
 	fsl,sp339e-m0     = <&gpio4 4 0> ;
 	fsl,sp339e-m1     = <&gpio4 5 0> ;
 	fsl,sp339e-tm     = <&gpio4 10 0> ;
-	fsl,sp339e-dir    = <&gpio4 23 0> ;
+	fsl,sp339e-dir    = <&gpio4 24 0> ;
 	status = "okay";
 };
 
@@ -1227,7 +1133,7 @@
 	fsl,sp339e-m0     = <&gpio4 2 0> ;
 	fsl,sp339e-m1     = <&gpio4 3 0> ;
 	fsl,sp339e-tm     = <&gpio4 1 0> ;
-	fsl,sp339e-dir    = <&gpio5 9 0> ;
+	fsl,sp339e-dir    = <&gpio5 8 0> ;
 	status = "okay";
 };
 
@@ -1240,7 +1146,9 @@
 	resets = <&gnss_reset>;
 	gnss {
 		compatible = "u-blox,neo-m8";
-		current-speed = <115200>;
+		current-speed = <9600>;
+		ubx_data,green_led = <&pca6416 4 GPIO_ACTIVE_HIGH>;
+		ubx_data,red_led = <&pca6416 5 GPIO_ACTIVE_HIGH>;
 	};
 };
 
@@ -1326,4 +1234,8 @@
 	assigned-clock-parents = <&clk IMX8MM_AUDIO_PLL1_OUT>;
 	assigned-clock-rates = <0>, <196608000>;
 	status = "disable";
+};
+
+&snvs_rtc {
+	status = "disabled";
 };

@@ -534,7 +534,7 @@ static int efm32_get_time( struct device *dev , struct rtc_time *tm )
 			case DEF_EFM32CMD_SLAVE_NACK :
 				break ;
 			case DEF_EFM32CMD_SLAVE_SENT_DATA :
-				for( i = 0; i < sizeof(unsigned long); i++)
+				for( i = 0; i < 4; i++)
 				{
 					iRTCsec |= ucRead[2 + i] << (i * 8) ;
 				}
@@ -543,7 +543,7 @@ static int efm32_get_time( struct device *dev , struct rtc_time *tm )
 				error = rtc_valid_tm(tm);
 				if (error)
 					return error;
-				efm32data->cr2032  = (int) ucRead[2 + sizeof(unsigned long)];
+				efm32data->cr2032  = (int) ucRead[2 + 4];
 
 				return error;
 			default :
@@ -667,7 +667,7 @@ static ssize_t mcu_version_show( struct device *dev , struct device_attribute *a
 			case DEF_EFM32CMD_SLAVE_NACK :
 				printk(KERN_INFO "%s Command is error\n" , __func__ ) ;
 			case DEF_EFM32CMD_SLAVE_SENT_DATA :
-				return sprintf(buf, "version:%02d%02d%02d\n", ucRead[3], ucRead[4], ucRead[5]);
+				return sprintf(buf, "version:%02d%02d%02d%02d\n", ucRead[2], ucRead[3], ucRead[4], ucRead[5]);
 			default :
 				printk(KERN_INFO "%s Unknow command\n" , __func__  ) ;
 				break ;

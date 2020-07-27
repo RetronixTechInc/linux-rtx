@@ -229,7 +229,6 @@ struct imx_port {
 	struct timer_list	timer;
 	unsigned int		old_status;
 	unsigned int		have_rtscts:1;
-	unsigned int		have_rtsgpio:1;
 	unsigned int		dte_mode:1;
 	struct clk		*clk_ipg;
 	struct clk		*clk_per;
@@ -367,6 +366,36 @@ static void imx_port_ucrs_restore(struct uart_port *port,
 }
 #endif
 
+/*
+ * We have a modem side uart, so the meanings of RTS and CTS are inverted.
+ */
+static unsigned int imx_get_hwmctrl(struct imx_port *sport)
+{
+	unsigned int tmp = TIOCM_DSR | TIOCM_CAR;
+	unsigned int usr1 = readl(sport->port.membase + USR1);
+	unsigned int usr2 = readl(sport->port.membase + USR2);
+	unsigned int ucr2 = readl(sport->port.membase + UCR2);
+
+	if (usr1 & USR1_RTSS)
+		tmp |= TIOCM_CTS;
+
+	if (ucr2 & UCR2_CTS)
+		tmp |= TIOCM_RTS;
+
+	/* in DCE mode DCDIN is always 0 */
+	if (!(usr2 & USR2_DCDIN))
+		tmp |= TIOCM_CAR;
+
+	if (sport->dte_mode)
+		if (!(readl(sport->port.membase + USR2) & USR2_RIIN))
+			tmp |= TIOCM_RI;
+
+	if (readl(sport->port.membase + uts_reg(sport)) & UTS_LOOP)
+		tmp |= TIOCM_LOOP;
+
+	return tmp;
+}
+
 static void imx_port_rts_active(struct imx_port *sport, unsigned long *ucr2)
 {
 	*ucr2 &= ~(UCR2_CTSC | UCR2_CTS);
@@ -387,6 +416,50 @@ static void imx_port_rts_inactive(struct imx_port *sport, unsigned long *ucr2)
 static void imx_port_rts_auto(struct imx_port *sport, unsigned long *ucr2)
 {
 	*ucr2 |= UCR2_CTSC;
+}
+
+/*
+ * Handle any change of modem status signal since we were last called.
+ */
+static void imx_mctrl_check(struct imx_port *sport)
+{
+	unsigned int status, changed;
+
+	status = imx_get_hwmctrl(sport);
+	changed = status ^ sport->old_status;
+
+	if (changed == 0)
+		return;
+
+	sport->old_status = status;
+
+	if (changed & TIOCM_RI && status & TIOCM_RI)
+		sport->port.icount.rng++;
+	if (changed & TIOCM_DSR)
+		sport->port.icount.dsr++;
+	if (changed & TIOCM_CAR)
+		uart_handle_dcd_change(&sport->port, status & TIOCM_CAR);
+	if (changed & TIOCM_CTS)
+		uart_handle_cts_change(&sport->port, status & TIOCM_CTS);
+
+	wake_up_interruptible(&sport->port.state->port.delta_msr_wait);
+}
+/*
+ * This is our per-port timeout handler, for checking the
+ * modem status signals.
+ */
+static void imx_timeout(unsigned long data)
+{
+	struct imx_port *sport = (struct imx_port *)data;
+	unsigned long flags;
+
+	if (sport->port.state) {
+		spin_lock_irqsave(&sport->port.lock, flags);
+		imx_mctrl_check(sport);
+		spin_unlock_irqrestore(&sport->port.lock, flags);
+
+		mod_timer(&sport->timer, jiffies + MCTRL_TIMEOUT);
+	}
 }
 
 /*
@@ -791,63 +864,6 @@ static void imx_disable_rx_int(struct imx_port *sport)
 	writel(temp, sport->port.membase + UCR4);
 }
 
-/*
- * We have a modem side uart, so the meanings of RTS and CTS are inverted.
- */
-static unsigned int imx_get_hwmctrl(struct imx_port *sport)
-{
-	unsigned int tmp = TIOCM_DSR | TIOCM_CAR;
-	unsigned int usr1 = readl(sport->port.membase + USR1);
-	unsigned int usr2 = readl(sport->port.membase + USR2);
-	unsigned int ucr2 = readl(sport->port.membase + UCR2);
-
-	if (usr1 & USR1_RTSS)
-		tmp |= TIOCM_CTS;
-
-	if (ucr2 & UCR2_CTS)
-		tmp |= TIOCM_RTS;
-
-	/* in DCE mode DCDIN is always 0 */
-	if (!(usr2 & USR2_DCDIN))
-		tmp |= TIOCM_CAR;
-
-	if (sport->dte_mode)
-		if (!(readl(sport->port.membase + USR2) & USR2_RIIN))
-			tmp |= TIOCM_RI;
-
-	if (readl(sport->port.membase + uts_reg(sport)) & UTS_LOOP)
-		tmp |= TIOCM_LOOP;
-
-	return tmp;
-}
-
-/*
- * Handle any change of modem status signal since we were last called.
- */
-static void imx_mctrl_check(struct imx_port *sport)
-{
-	unsigned int status, changed;
-
-	status = imx_get_hwmctrl(sport);
-	changed = status ^ sport->old_status;
-
-	if (changed == 0)
-		return;
-
-	sport->old_status = status;
-
-	if (changed & TIOCM_RI && status & TIOCM_RI)
-		sport->port.icount.rng++;
-	if (changed & TIOCM_DSR)
-		sport->port.icount.dsr++;
-	if (changed & TIOCM_CAR)
-		uart_handle_dcd_change(&sport->port, status & TIOCM_CAR);
-	if (changed & TIOCM_CTS)
-		uart_handle_cts_change(&sport->port, status & TIOCM_CTS);
-
-	wake_up_interruptible(&sport->port.state->port.delta_msr_wait);
-}
-
 static irqreturn_t imx_int(int irq, void *dev_id)
 {
 	struct imx_port *sport = dev_id;
@@ -1060,24 +1076,6 @@ static void clear_rx_errors(struct imx_port *sport)
 		writel(USR2_ORE, sport->port.membase + USR2);
 	}
 
-}
-
-/*
- * This is our per-port timeout handler, for checking the
- * modem status signals.
- */
-static void imx_timeout(unsigned long data)
-{
-	struct imx_port *sport = (struct imx_port *)data;
-	unsigned long flags;
-
-	if (sport->port.state) {
-		spin_lock_irqsave(&sport->port.lock, flags);
-		imx_mctrl_check(sport);
-		spin_unlock_irqrestore(&sport->port.lock, flags);
-
-		mod_timer(&sport->timer, jiffies + MCTRL_TIMEOUT);
-	}
 }
 
 /*
@@ -1809,7 +1807,7 @@ static int imx_rs485_config(struct uart_port *port,
 	rs485conf->delay_rts_after_send = 0;
 
 	/* RTS is required to control the transmitter */
-	if (!sport->have_rtscts && !sport->have_rtsgpio)
+	if (!sport->have_rtscts)
 		rs485conf->flags &= ~SER_RS485_ENABLED;
 
 	if (rs485conf->flags & SER_RS485_ENABLED) {
@@ -2132,9 +2130,6 @@ static int serial_imx_probe_dt(struct imx_port *sport,
 	if (of_get_property(np, "fsl,dte-mode", NULL))
 		sport->dte_mode = 1;
 
-	if (of_get_property(np, "rts-gpios", NULL))
-		sport->have_rtsgpio = 1;
-
 	if (of_get_property(np, "fsl,sp339e", NULL))
 		sport->have_sp339e = 1;
 
@@ -2148,7 +2143,7 @@ static int serial_imx_probe_dt(struct imx_port *sport,
 		if ( gpio_is_valid( gpio ) )
 		{
 			sport->sp339e_gpio_dir = gpio ;
-			if ( gpio_request_one( sport->sp339e_gpio_dir , GPIOF_DIR_OUT , "sp3339e-dir" ) == 0 )
+			if ( gpio_request_one( sport->sp339e_gpio_dir , GPIOF_DIR_OUT , "sp339e-dir" ) == 0 )
 			{
 				gpio_set_value( sport->sp339e_gpio_dir , 1 ) ;
 			} 
@@ -2167,7 +2162,7 @@ static int serial_imx_probe_dt(struct imx_port *sport,
 		if ( gpio_is_valid( gpio ) )
 		{
 			sport->sp339e_gpio_enable = gpio ;	
-			if ( gpio_request_one( sport->sp339e_gpio_enable , GPIOF_DIR_OUT , "sp3339e-enable" ) == 0 )
+			if ( gpio_request_one( sport->sp339e_gpio_enable , GPIOF_DIR_OUT , "sp339e-enable" ) == 0 )
 			{
 				gpio_set_value( sport->sp339e_gpio_enable , 0 ) ;
 			} 
@@ -2186,7 +2181,7 @@ static int serial_imx_probe_dt(struct imx_port *sport,
 		if ( gpio_is_valid( gpio ) )
 		{
 			sport->sp339e_gpio_m0 = gpio ;	
-			if ( gpio_request_one( sport->sp339e_gpio_m0 , GPIOF_DIR_OUT , "sp3339e-m0" ) == 0 )
+			if ( gpio_request_one( sport->sp339e_gpio_m0 , GPIOF_DIR_OUT , "sp339e-m0" ) == 0 )
 			{
 				gpio_set_value( sport->sp339e_gpio_m0 , 1 ) ;
 			} 
@@ -2205,7 +2200,7 @@ static int serial_imx_probe_dt(struct imx_port *sport,
 		if ( gpio_is_valid( gpio ) )
 		{
 			sport->sp339e_gpio_m1 = gpio ;	
-			if ( gpio_request_one( sport->sp339e_gpio_m1 , GPIOF_DIR_OUT , "sp3339e-m1" ) == 0 )
+			if ( gpio_request_one( sport->sp339e_gpio_m1 , GPIOF_DIR_OUT , "sp339e-m1" ) == 0 )
 			{
 				gpio_set_value( sport->sp339e_gpio_m1 , 0 ) ;
 			} 
@@ -2224,7 +2219,7 @@ static int serial_imx_probe_dt(struct imx_port *sport,
 		if ( gpio_is_valid( gpio ) )
 		{
 			sport->sp339e_gpio_tm = gpio ;	
-			if ( gpio_request_one( sport->sp339e_gpio_tm , GPIOF_DIR_OUT , "sp3339e-tm" ) == 0 )
+			if ( gpio_request_one( sport->sp339e_gpio_tm , GPIOF_DIR_OUT , "sp339e-tm" ) == 0 )
 			{
 				gpio_set_value( sport->sp339e_gpio_tm , 0 ) ;
 			} 
@@ -2243,7 +2238,7 @@ static int serial_imx_probe_dt(struct imx_port *sport,
 		if ( gpio_is_valid( gpio ) )
 		{
 			sport->sp339e_gpio_slew = gpio ;	
-			if ( gpio_request_one( sport->sp339e_gpio_slew , GPIOF_DIR_OUT , "sp3339e-slew" ) == 0 )
+			if ( gpio_request_one( sport->sp339e_gpio_slew , GPIOF_DIR_OUT , "sp339e-slew" ) == 0 )
 			{
 				gpio_set_value( sport->sp339e_gpio_slew , 0 ) ;
 			} 

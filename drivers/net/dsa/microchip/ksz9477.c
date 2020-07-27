@@ -1587,8 +1587,8 @@ static int ksz9477_switch_detect(struct ksz_device *dev)
 	ret = ksz_read8(dev, REG_SW_GLOBAL_SERIAL_CTRL_0, &data8);
 	if (ret)
 		return ret;
-	if (data8 == 0 || data8 == 0xff)
-		return -ENODEV;
+//	if (data8 == 0 || data8 == 0xff)
+//		return -ENODEV;
 
 	data8 &= ~SPI_AUTO_EDGE_DETECTION;
 	ret = ksz_write8(dev, REG_SW_GLOBAL_SERIAL_CTRL_0, data8);

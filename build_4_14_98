@@ -2,7 +2,10 @@
 
 set -e
 #### Cross compiler ####################################################
+[ -d /opt/freescale/usr/local ] && CROSS_COMPILE_PATH=/opt/freescale/usr/local
+if [ -z $CROSS_COMPILE_PATH ];then
 CROSS_COMPILE_PATH=/opt/cross
+fi
 
 #### Target OS #########################################################
 TARGET_OS="Ubuntu-18.04hf"

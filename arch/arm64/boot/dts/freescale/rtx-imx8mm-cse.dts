@@ -242,10 +242,9 @@
 
 	buzzer {
 		compatible = "pwm-backlight";
-		pwms = <&pwm1 0 366300 0>;
+		pwms = <&pwm1 0 366300>;
 		brightness-levels = <0 128 255>;
-		default-brightness-level = <2>;
-		status = "okay";
+		default-brightness-level = <0>;
 	};
 };
 

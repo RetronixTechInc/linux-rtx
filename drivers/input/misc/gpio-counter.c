@@ -455,7 +455,7 @@ static int gpio_counter_probe(struct platform_device *pdev)
     //printk(">>>>pdata->gpio=%d,last_stable_state=%d,last_state=%d,last_ns=%lld\n", pdata->gpio,counter->last_stable_state,counter->last_state,counter->last_ns);
 
     err = request_irq(counter->irq, &gpio_counter_irq,
-                      IRQF_TRIGGER_RISING,
+                      IRQF_TRIGGER_FALLING,
                       DRV_NAME, counter);
     if (err) {
         dev_err(dev, "unable to request IRQ %d\n", counter->irq);

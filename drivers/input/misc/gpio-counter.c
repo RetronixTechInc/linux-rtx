@@ -128,14 +128,16 @@ static void gpio_counter_process_state_change(struct gpio_counter *counter)
     debounce_ns = (s64)counter->pdata->debounce_us * NSEC_PER_USEC;
 
     if (delta_ns > debounce_ns) {
-	counter->count++;
-	if ((counter->count - counter->p1_count) >= counter->tire_pp){
-	    counter->tire_pptime = current_ns - counter->p1time_ns;
-	    counter->p1time_ns = current_ns;
-	    counter->p1_count = counter->count;
-
+	if (gpio_get_value(counter->pdata->gpio) == 0 )
+	{
+		counter->count++;
+		if ((counter->count - counter->p1_count) >= counter->tire_pp){
+			counter->tire_pptime = current_ns - counter->p1time_ns;
+			counter->p1time_ns = current_ns;
+			counter->p1_count = counter->count;
+		}
+		counter->pptime_ns = delta_ns;
 	}
-	counter->pptime_ns = delta_ns;
     }
 
     counter->last_ns = current_ns;

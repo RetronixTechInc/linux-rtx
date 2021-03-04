@@ -827,6 +827,7 @@ static int lt9611_pll_setup(struct lt9611 *pdata,
 		{0x26, 0x55, 0},
 		{0x27, 0x66, 0},
 		{0x28, 0x88, 0},
+		{0x2a, 0x20, 0},	//for U3
 	};
 
 	if (!pdata || !cfg) {

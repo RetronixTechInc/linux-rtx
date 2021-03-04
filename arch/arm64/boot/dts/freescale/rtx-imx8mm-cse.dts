@@ -1144,7 +1144,7 @@
 	assigned-clocks = <&clk IMX8MM_CLK_UART4_SRC>;
 	assigned-clock-parents = <&clk IMX8MM_SYS_PLL1_80M>;
 	status = "okay";
-	resets = <&gnss_reset>;
+	/*resets = <&gnss_reset>;*/
 	gnss {
 		compatible = "u-blox,neo-m8";
 		current-speed = <9600>;

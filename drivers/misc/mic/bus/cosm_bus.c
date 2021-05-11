@@ -1,19 +1,8 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Intel MIC Platform Software Stack (MPSS)
  *
  * Copyright(c) 2015 Intel Corporation.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License, version 2, as
- * published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful, but
- * WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
- * General Public License for more details.
- *
- * The full GNU General Public License is included in this distribution in
- * the file called "COPYING".
  *
  * Intel MIC COSM Bus Driver
  */
@@ -24,6 +13,13 @@
 
 /* Unique numbering for cosm devices. */
 static DEFINE_IDA(cosm_index_ida);
+
+static int cosm_uevent(struct device *d, struct kobj_uevent_env *env)
+{
+	struct cosm_device *dev = dev_to_cosm(d);
+
+	return add_uevent_var(env, "MODALIAS=cosm:cosm-dev%u", dev->index);
+}
 
 static int cosm_dev_probe(struct device *d)
 {
@@ -44,6 +40,7 @@ static int cosm_dev_remove(struct device *d)
 
 static struct bus_type cosm_bus = {
 	.name  = "cosm_bus",
+	.uevent = cosm_uevent,
 	.probe = cosm_dev_probe,
 	.remove = cosm_dev_remove,
 };

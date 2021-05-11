@@ -54,9 +54,6 @@ static int imx_si476x_hw_params(struct snd_pcm_substream *substream,
 {
 	struct snd_soc_pcm_runtime *rtd = substream->private_data;
 	struct snd_soc_dai *cpu_dai = rtd->cpu_dai;
-	u32 channels = params_channels(params);
-	u32 rate = params_rate(params);
-	u32 bclk = rate * channels * 32;
 	int ret = 0;
 
 	/* set cpu DAI configuration */
@@ -67,19 +64,6 @@ static int imx_si476x_hw_params(struct snd_pcm_substream *substream,
 		return ret;
 	}
 
-	ret = snd_soc_dai_set_tdm_slot(cpu_dai,
-			channels == 1 ? 1 : 0x3,
-			channels == 1 ? 1 : 0x3,
-			2, 32);
-	if (ret) {
-		dev_err(cpu_dai->dev, "failed to set dai tdm slot\n");
-		return ret;
-	}
-
-	ret = snd_soc_dai_set_sysclk(cpu_dai, 0, bclk, SND_SOC_CLOCK_OUT);
-	if (ret)
-		dev_err(cpu_dai->dev, "failed to set sysclk\n");
-
 	return ret;
 }
 
@@ -87,11 +71,16 @@ static struct snd_soc_ops imx_si476x_ops = {
 	.hw_params = imx_si476x_hw_params,
 };
 
+SND_SOC_DAILINK_DEFS(hifi,
+	DAILINK_COMP_ARRAY(COMP_EMPTY()),
+	DAILINK_COMP_ARRAY(COMP_CODEC(NULL, "si476x-codec")),
+	DAILINK_COMP_ARRAY(COMP_EMPTY()));
+
 static struct snd_soc_dai_link imx_dai = {
 	.name = "imx-si476x",
 	.stream_name = "imx-si476x",
-	.codec_dai_name = "si476x-codec",
 	.ops = &imx_si476x_ops,
+	SND_SOC_DAILINK_REG(hifi),
 };
 
 static struct snd_soc_card snd_soc_card_imx_3stack = {
@@ -152,9 +141,9 @@ static int imx_si476x_probe(struct platform_device *pdev)
 	}
 
 	card->dev = &pdev->dev;
-	card->dai_link->cpu_dai_name = dev_name(&ssi_pdev->dev);
-	card->dai_link->platform_of_node = ssi_np;
-	card->dai_link->codec_of_node = fm_np;
+	card->dai_link->cpus->dai_name = dev_name(&ssi_pdev->dev);
+	card->dai_link->platforms->of_node = ssi_np;
+	card->dai_link->codecs->of_node = fm_np;
 
 	platform_set_drvdata(pdev, card);
 

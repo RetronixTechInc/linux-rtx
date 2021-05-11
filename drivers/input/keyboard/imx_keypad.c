@@ -1,12 +1,7 @@
-/*
- * Driver for the IMX keypad port.
- * Copyright (C) 2009 Alberto Panizzo <maramaopercheseimorto@gmail.com>
- * Copyright (C) 2015 Freescale Semiconductor, Inc.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
- */
+// SPDX-License-Identifier: GPL-2.0
+//
+// Driver for the IMX keypad port.
+// Copyright (C) 2009 Alberto Panizzo <maramaopercheseimorto@gmail.com>
 
 #include <linux/clk.h>
 #include <linux/delay.h>
@@ -185,9 +180,9 @@ static void imx_keypad_fire_events(struct imx_keypad *keypad,
 /*
  * imx_keypad_check_for_events is the timer handler.
  */
-static void imx_keypad_check_for_events(unsigned long data)
+static void imx_keypad_check_for_events(struct timer_list *t)
 {
-	struct imx_keypad *keypad = (struct imx_keypad *) data;
+	struct imx_keypad *keypad = from_timer(keypad, t, check_matrix_timer);
 	unsigned short matrix_volatile_state[MAX_MATRIX_KEY_COLS];
 	unsigned short reg_val;
 	bool state_changed, is_zero_matrix;
@@ -268,7 +263,6 @@ static void imx_keypad_check_for_events(unsigned long data)
 		reg_val |= KBD_STAT_KDIE;
 		reg_val &= ~KBD_STAT_KRIE;
 		writew(reg_val, keypad->mmio_base + KPSR);
-		pm_relax(keypad->input_dev->dev.parent);
 	} else {
 		/*
 		 * Some keys are still pressed. Schedule a rescan in
@@ -281,6 +275,11 @@ static void imx_keypad_check_for_events(unsigned long data)
 
 		reg_val = readw(keypad->mmio_base + KPSR);
 		reg_val |= KBD_STAT_KPKR | KBD_STAT_KRSS;
+		writew(reg_val, keypad->mmio_base + KPSR);
+
+		reg_val = readw(keypad->mmio_base + KPSR);
+		reg_val |= KBD_STAT_KRIE;
+		reg_val &= ~KBD_STAT_KDIE;
 		writew(reg_val, keypad->mmio_base + KPSR);
 	}
 }
@@ -299,7 +298,6 @@ static irqreturn_t imx_keypad_irq_handler(int irq, void *dev_id)
 	writew(reg_val, keypad->mmio_base + KPSR);
 
 	if (keypad->enabled) {
-		pm_stay_awake(keypad->input_dev->dev.parent);
 		/* The matrix is supposed to be changed */
 		keypad->stable_count = 0;
 
@@ -424,7 +422,6 @@ static int imx_keypad_probe(struct platform_device *pdev)
 			dev_get_platdata(&pdev->dev);
 	struct imx_keypad *keypad;
 	struct input_dev *input_dev;
-	struct resource *res;
 	int irq, error, i, row, col;
 
 	if (!keymap_data && !pdev->dev.of_node) {
@@ -433,10 +430,8 @@ static int imx_keypad_probe(struct platform_device *pdev)
 	}
 
 	irq = platform_get_irq(pdev, 0);
-	if (irq < 0) {
-		dev_err(&pdev->dev, "no irq defined in platform data\n");
+	if (irq < 0)
 		return irq;
-	}
 
 	input_dev = devm_input_allocate_device(&pdev->dev);
 	if (!input_dev) {
@@ -454,11 +449,10 @@ static int imx_keypad_probe(struct platform_device *pdev)
 	keypad->irq = irq;
 	keypad->stable_count = 0;
 
-	setup_timer(&keypad->check_matrix_timer,
-		    imx_keypad_check_for_events, (unsigned long) keypad);
+	timer_setup(&keypad->check_matrix_timer,
+		    imx_keypad_check_for_events, 0);
 
-	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
-	keypad->mmio_base = devm_ioremap_resource(&pdev->dev, res);
+	keypad->mmio_base = devm_platform_ioremap_resource(pdev, 0);
 	if (IS_ERR(keypad->mmio_base))
 		return PTR_ERR(keypad->mmio_base);
 
@@ -528,7 +522,7 @@ static int imx_keypad_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static int __maybe_unused imx_kbd_suspend_noirq(struct device *dev)
+static int __maybe_unused imx_kbd_noirq_suspend(struct device *dev)
 {
 	struct platform_device *pdev = to_platform_device(dev);
 	struct imx_keypad *kbd = platform_get_drvdata(pdev);
@@ -556,7 +550,7 @@ static int __maybe_unused imx_kbd_suspend_noirq(struct device *dev)
 	return 0;
 }
 
-static int __maybe_unused imx_kbd_resume_noirq(struct device *dev)
+static int __maybe_unused imx_kbd_noirq_resume(struct device *dev)
 {
 	struct platform_device *pdev = to_platform_device(dev);
 	struct imx_keypad *kbd = platform_get_drvdata(pdev);
@@ -581,8 +575,7 @@ err_clk:
 }
 
 static const struct dev_pm_ops imx_kbd_pm_ops = {
-	.suspend_noirq = imx_kbd_suspend_noirq,
-	.resume_noirq = imx_kbd_resume_noirq,
+	SET_NOIRQ_SYSTEM_SLEEP_PM_OPS(imx_kbd_noirq_suspend, imx_kbd_noirq_resume)
 };
 
 static struct platform_driver imx_keypad_driver = {

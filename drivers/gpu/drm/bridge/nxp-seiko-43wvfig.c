@@ -19,6 +19,7 @@
 #include <drm/drm_crtc_helper.h>
 #include <drm/drm_of.h>
 #include <drm/drm_panel.h>
+#include <drm/drm_probe_helper.h>
 #include <linux/of.h>
 #include <linux/of_graph.h>
 #include <linux/of_platform.h>
@@ -106,7 +107,7 @@ static int seiko_adapter_bridge_attach(struct drm_bridge *bridge)
 				 &seiko_adapter_connector_helper_funcs);
 
 	adap->connector.dpms = DRM_MODE_DPMS_OFF;
-	drm_mode_connector_attach_encoder(&adap->connector, encoder);
+	drm_connector_attach_encoder(&adap->connector, encoder);
 
 	ret = drm_panel_attach(adap->panel, &adap->connector);
 	if (ret) {
@@ -169,7 +170,7 @@ static int seiko_adapter_probe(struct platform_device *pdev)
 	struct seiko_adapter *adap;
 	struct device_node *remote;
 	u32 bus_mode;
-	int ret, port;
+	int port;
 
 	adap = devm_kzalloc(dev, sizeof(*adap), GFP_KERNEL);
 	if (!adap)
@@ -195,16 +196,16 @@ static int seiko_adapter_probe(struct platform_device *pdev)
 	for (port = 0; port < 2; port++) {
 		remote = of_graph_get_remote_node(dev->of_node, port, -1);
 		if (!remote) {
-			pr_info("No remote for port %d\n", port);
+			dev_err(dev, "No remote for port %d\n", port);
 			return -ENODEV;
 		}
 		adap->panel = of_drm_find_panel(remote);
-		if (adap->panel)
+		if (!IS_ERR(adap->panel))
 			break;
 	}
-	if (!adap->panel) {
-		dev_err(dev, "No panel found!\n");
-		return -ENODEV;
+	if (IS_ERR(adap->panel)) {
+		dev_err(dev, "No panel found: %ld\n", PTR_ERR(adap->panel));
+		return PTR_ERR(adap->panel);
 	}
 
 	adap->dev = dev;
@@ -212,12 +213,9 @@ static int seiko_adapter_probe(struct platform_device *pdev)
 	adap->bridge.funcs = &seiko_adapter_bridge_funcs;
 	adap->bridge.of_node = dev->of_node;
 
-	ret = drm_bridge_add(&adap->bridge);
-	if (ret < 0)
-		dev_err(dev, "Failed to add seiko-adapter bridge (%d)\n", ret);
+	drm_bridge_add(&adap->bridge);
 
-	dev_info(dev, "Seiko adapter driver probed\n");
-	return ret;
+	return 0;
 }
 
 static int seiko_adapter_remove(struct platform_device *pdev)

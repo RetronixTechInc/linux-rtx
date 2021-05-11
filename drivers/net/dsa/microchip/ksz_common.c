@@ -5,16 +5,20 @@
  * Copyright (C) 2017-2019 Microchip Technology Inc.
  */
 
+#include <linux/delay.h>
+#include <linux/export.h>
+#include <linux/gpio/consumer.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/platform_data/microchip-ksz.h>
 #include <linux/phy.h>
+#include <linux/etherdevice.h>
 #include <linux/if_bridge.h>
 #include <linux/of_net.h>
 #include <net/dsa.h>
 #include <net/switchdev.h>
 
-#include "ksz_priv.h"
+#include "ksz_common.h"
 
 void ksz_update_port_member(struct ksz_device *dev, int port)
 {
@@ -62,32 +66,38 @@ static void port_r_cnt(struct ksz_device *dev, int port)
 
 static void ksz_mib_read_work(struct work_struct *work)
 {
-	struct ksz_device *dev =
-		container_of(work, struct ksz_device, mib_read);
-	struct ksz_port *p;
+	struct ksz_device *dev = container_of(work, struct ksz_device,
+					      mib_read);
 	struct ksz_port_mib *mib;
+	struct ksz_port *p;
 	int i;
 
 	for (i = 0; i < dev->mib_port_cnt; i++) {
-		p = &dev->ports[i];
-		if (!p->on)
+		if (dsa_is_unused_port(dev->ds, i))
 			continue;
+
+		p = &dev->ports[i];
 		mib = &p->mib;
 		mutex_lock(&mib->cnt_mutex);
 
-		/* read only dropped counters when link is not up */
-		if (p->link_just_down)
-			p->link_just_down = 0;
-		else if (!p->phydev.link)
-			mib->cnt_ptr = dev->reg_mib_cnt;
+		/* Only read MIB counters when the port is told to do.
+		 * If not, read only dropped counters when link is not up.
+		 */
+		if (!p->read) {
+			const struct dsa_port *dp = dsa_to_port(dev->ds, i);
+
+			if (!netif_carrier_ok(dp->slave))
+				mib->cnt_ptr = dev->reg_mib_cnt;
+		}
 		port_r_cnt(dev, i);
+		p->read = false;
 		mutex_unlock(&mib->cnt_mutex);
 	}
 }
 
-static void mib_monitor(unsigned long ptr)
+static void mib_monitor(struct timer_list *t)
 {
-	struct ksz_device *dev = (struct ksz_device *)ptr;
+	struct ksz_device *dev = from_timer(dev, t, mib_read_timer);
 
 	mod_timer(&dev->mib_read_timer, jiffies + dev->mib_read_interval);
 	schedule_work(&dev->mib_read);
@@ -101,7 +111,7 @@ void ksz_init_mib_timer(struct ksz_device *dev)
 	dev->mib_read_interval = msecs_to_jiffies(30000);
 
 	INIT_WORK(&dev->mib_read, ksz_mib_read_work);
-	setup_timer(&dev->mib_read_timer, mib_monitor, (unsigned long)dev);
+	timer_setup(&dev->mib_read_timer, mib_monitor, 0);
 
 	for (i = 0; i < dev->mib_port_cnt; i++)
 		dev->dev_ops->port_init_cnt(dev, i);
@@ -139,19 +149,27 @@ void ksz_adjust_link(struct dsa_switch *ds, int port,
 	struct ksz_device *dev = ds->priv;
 	struct ksz_port *p = &dev->ports[port];
 
-	if (phydev->link) {
-		dev->live_ports |= (1 << port) & dev->on_ports;
-	} else if (p->phydev.link) {
-		p->link_just_down = 1;
-		dev->live_ports &= ~(1 << port);
+	/* Read all MIB counters when the link is going down. */
+	if (!phydev->link) {
+		p->read = true;
+		schedule_work(&dev->mib_read);
 	}
-	p->phydev = *phydev;
+	mutex_lock(&dev->dev_mutex);
+	if (!phydev->link)
+		dev->live_ports &= ~(1 << port);
+	else
+		/* Remember which port is connected and active. */
+		dev->live_ports |= (1 << port) & dev->on_ports;
+	mutex_unlock(&dev->dev_mutex);
 }
 EXPORT_SYMBOL_GPL(ksz_adjust_link);
 
-int ksz_sset_count(struct dsa_switch *ds)
+int ksz_sset_count(struct dsa_switch *ds, int port, int sset)
 {
 	struct ksz_device *dev = ds->priv;
+
+	if (sset != ETH_SS_STATS)
+		return 0;
 
 	return dev->mib_cnt;
 }
@@ -159,11 +177,16 @@ EXPORT_SYMBOL_GPL(ksz_sset_count);
 
 void ksz_get_ethtool_stats(struct dsa_switch *ds, int port, uint64_t *buf)
 {
+	const struct dsa_port *dp = dsa_to_port(ds, port);
 	struct ksz_device *dev = ds->priv;
 	struct ksz_port_mib *mib;
 
 	mib = &dev->ports[port].mib;
 	mutex_lock(&mib->cnt_mutex);
+
+	/* Only read dropped counters if no link. */
+	if (!netif_carrier_ok(dp->slave))
+		mib->cnt_ptr = dev->reg_mib_cnt;
 	port_r_cnt(dev, port);
 	memcpy(buf, mib->counters, dev->mib_cnt * sizeof(u64));
 	mutex_unlock(&mib->cnt_mutex);
@@ -175,7 +198,9 @@ int ksz_port_bridge_join(struct dsa_switch *ds, int port,
 {
 	struct ksz_device *dev = ds->priv;
 
+	mutex_lock(&dev->dev_mutex);
 	dev->br_member |= (1 << port);
+	mutex_unlock(&dev->dev_mutex);
 
 	/* port_stp_state_set() will be called after to put the port in
 	 * appropriate state so there is no need to do anything.
@@ -185,12 +210,15 @@ int ksz_port_bridge_join(struct dsa_switch *ds, int port,
 }
 EXPORT_SYMBOL_GPL(ksz_port_bridge_join);
 
-void ksz_port_bridge_leave(struct dsa_switch *ds, int port)
+void ksz_port_bridge_leave(struct dsa_switch *ds, int port,
+			   struct net_device *br)
 {
 	struct ksz_device *dev = ds->priv;
 
+	mutex_lock(&dev->dev_mutex);
 	dev->br_member &= ~(1 << port);
 	dev->member &= ~(1 << port);
+	mutex_unlock(&dev->dev_mutex);
 
 	/* port_stp_state_set() will be called after to put the port in
 	 * forwarding state so there is no need to do anything.
@@ -207,8 +235,7 @@ void ksz_port_fast_age(struct dsa_switch *ds, int port)
 EXPORT_SYMBOL_GPL(ksz_port_fast_age);
 
 int ksz_port_vlan_prepare(struct dsa_switch *ds, int port,
-			  const struct switchdev_obj_port_vlan *vlan,
-			  struct switchdev_trans *trans)
+			  const struct switchdev_obj_port_vlan *vlan)
 {
 	/* nothing needed */
 
@@ -216,9 +243,8 @@ int ksz_port_vlan_prepare(struct dsa_switch *ds, int port,
 }
 EXPORT_SYMBOL_GPL(ksz_port_vlan_prepare);
 
-int ksz_port_fdb_dump(struct dsa_switch *ds, int port,
-		      struct switchdev_obj_port_fdb *fdb,
-		      int (*cb)(struct switchdev_obj *obj))
+int ksz_port_fdb_dump(struct dsa_switch *ds, int port, dsa_fdb_dump_cb_t *cb,
+		      void *data)
 {
 	struct ksz_device *dev = ds->priv;
 	int ret = 0;
@@ -235,11 +261,7 @@ int ksz_port_fdb_dump(struct dsa_switch *ds, int port,
 						    &member, &timestamp,
 						    &entries);
 		if (!ret && (member & BIT(port))) {
-			fdb->vid = fid;
-			fdb->ndm_state = NUD_REACHABLE;
-			ether_addr_copy(fdb->addr, alu.mac);
-
-			ret = cb(&fdb->obj);
+			ret = cb(alu.mac, alu.fid, alu.is_static, data);
 			if (ret)
 				break;
 		}
@@ -253,8 +275,7 @@ int ksz_port_fdb_dump(struct dsa_switch *ds, int port,
 EXPORT_SYMBOL_GPL(ksz_port_fdb_dump);
 
 int ksz_port_mdb_prepare(struct dsa_switch *ds, int port,
-			 const struct switchdev_obj_port_mdb *mdb,
-			 struct switchdev_trans *trans)
+			 const struct switchdev_obj_port_mdb *mdb)
 {
 	/* nothing to do */
 	return 0;
@@ -262,8 +283,7 @@ int ksz_port_mdb_prepare(struct dsa_switch *ds, int port,
 EXPORT_SYMBOL_GPL(ksz_port_mdb_prepare);
 
 void ksz_port_mdb_add(struct dsa_switch *ds, int port,
-		      const struct switchdev_obj_port_mdb *mdb,
-		      struct switchdev_trans *trans)
+		      const struct switchdev_obj_port_mdb *mdb)
 {
 	struct ksz_device *dev = ds->priv;
 	struct alu_struct alu;
@@ -295,10 +315,6 @@ void ksz_port_mdb_add(struct dsa_switch *ds, int port,
 		alu.is_static = true;
 	}
 	alu.port_forward |= BIT(port);
-#if 1
-	/* Host port can never be specified!? */
-	alu.port_forward |= dev->host_mask;
-#endif
 	if (mdb->vid) {
 		alu.is_use_fid = true;
 
@@ -332,7 +348,7 @@ int ksz_port_mdb_del(struct dsa_switch *ds, int port,
 
 	/* clear port */
 	alu.port_forward &= ~BIT(port);
-	if (!(alu.port_forward & ~dev->host_mask))
+	if (!alu.port_forward)
 		alu.is_static = false;
 	dev->dev_ops->w_sta_mac_table(dev, index, &alu);
 
@@ -345,12 +361,11 @@ int ksz_enable_port(struct dsa_switch *ds, int port, struct phy_device *phy)
 {
 	struct ksz_device *dev = ds->priv;
 
+	if (!dsa_is_user_port(ds, port))
+		return 0;
+
 	/* setup slave port */
 	dev->dev_ops->port_setup(dev, port, false);
-	dev->dev_ops->phy_setup(dev, port, phy);
-#if 1
-	dev->dev_ops->port_init_cnt(dev, port);
-#endif
 
 	/* port_stp_state_set() will be called after to enable the port so
 	 * there is no need to do anything.
@@ -360,9 +375,12 @@ int ksz_enable_port(struct dsa_switch *ds, int port, struct phy_device *phy)
 }
 EXPORT_SYMBOL_GPL(ksz_enable_port);
 
-void ksz_disable_port(struct dsa_switch *ds, int port, struct phy_device *phy)
+void ksz_disable_port(struct dsa_switch *ds, int port)
 {
 	struct ksz_device *dev = ds->priv;
+
+	if (!dsa_is_user_port(ds, port))
+		return;
 
 	dev->on_ports &= ~(1 << port);
 	dev->live_ports &= ~(1 << port);
@@ -373,74 +391,12 @@ void ksz_disable_port(struct dsa_switch *ds, int port, struct phy_device *phy)
 }
 EXPORT_SYMBOL_GPL(ksz_disable_port);
 
-ssize_t ksz_registers_read(struct file *filp, struct kobject *kobj,
-			   struct bin_attribute *bin_attr, char *buf,
-			   loff_t off, size_t count)
-{
-	size_t i;
-	u32 reg;
-	struct device *dev;
-	struct ksz_device *swdev;
-
-	dev = container_of(kobj, struct device, kobj);
-	swdev = dev_get_drvdata(dev);
-
-	if (unlikely(off >= swdev->regs_size))
-		return 0;
-
-	if ((off + count) >= swdev->regs_size)
-		count = swdev->regs_size - off;
-
-	if (unlikely(!count))
-		return count;
-
-	reg = off;
-	if (swdev->dev_ops->get)
-		i = swdev->dev_ops->get(swdev, reg, buf, count);
-	else
-		i = regmap_bulk_read(swdev->regmap[0], reg, buf, count);
-	i = count;
-	return i;
-}
-EXPORT_SYMBOL_GPL(ksz_registers_read);
-
-ssize_t ksz_registers_write(struct file *filp, struct kobject *kobj,
-			    struct bin_attribute *bin_attr, char *buf,
-			    loff_t off, size_t count)
-{
-	size_t i;
-	u32 reg;
-	struct device *dev;
-	struct ksz_device *swdev;
-
-	dev = container_of(kobj, struct device, kobj);
-	swdev = dev_get_drvdata(dev);
-
-	if (unlikely(off >= swdev->regs_size))
-		return -EFBIG;
-
-	if ((off + count) >= swdev->regs_size)
-		count = swdev->regs_size - off;
-
-	if (unlikely(!count))
-		return count;
-
-	reg = off;
-	if (swdev->dev_ops->set)
-		i = swdev->dev_ops->set(swdev, reg, buf, count);
-	else
-		i = regmap_bulk_write(swdev->regmap[0], reg, buf, count);
-	i = count;
-	return i;
-}
-EXPORT_SYMBOL_GPL(ksz_registers_write);
-
-struct ksz_device *ksz_switch_alloc(struct device *base)
+struct ksz_device *ksz_switch_alloc(struct device *base, void *priv)
 {
 	struct dsa_switch *ds;
 	struct ksz_device *swdev;
 
-	ds = devm_kzalloc(base, sizeof(*ds), GFP_KERNEL);
+	ds = dsa_switch_alloc(base, DSA_MAX_PORTS);
 	if (!ds)
 		return NULL;
 
@@ -448,32 +404,41 @@ struct ksz_device *ksz_switch_alloc(struct device *base)
 	if (!swdev)
 		return NULL;
 
-	ds->dev = base;
-
 	ds->priv = swdev;
 	swdev->dev = base;
 
 	swdev->ds = ds;
+	swdev->priv = priv;
 
 	return swdev;
 }
 EXPORT_SYMBOL(ksz_switch_alloc);
 
 int ksz_switch_register(struct ksz_device *dev,
-			const struct ksz_dev_ops *ops,
-			const struct ksz_tag_ops *tag_ops)
+			const struct ksz_dev_ops *ops)
 {
 	int ret;
 
 	if (dev->pdata)
 		dev->chip_id = dev->pdata->chip_id;
 
-	mutex_init(&dev->stats_mutex);
+	dev->reset_gpio = devm_gpiod_get_optional(dev->dev, "reset",
+						  GPIOD_OUT_LOW);
+	if (IS_ERR(dev->reset_gpio))
+		return PTR_ERR(dev->reset_gpio);
+
+	if (dev->reset_gpio) {
+		gpiod_set_value_cansleep(dev->reset_gpio, 1);
+		mdelay(10);
+		gpiod_set_value_cansleep(dev->reset_gpio, 0);
+	}
+
+	mutex_init(&dev->dev_mutex);
+	mutex_init(&dev->regmap_mutex);
 	mutex_init(&dev->alu_mutex);
 	mutex_init(&dev->vlan_mutex);
 
 	dev->dev_ops = ops;
-	dev->tag_ops = tag_ops;
 
 	if (dev->dev_ops->detect(dev))
 		return -EINVAL;
@@ -482,13 +447,18 @@ int ksz_switch_register(struct ksz_device *dev,
 	if (ret)
 		return ret;
 
+	/* Host port interface will be self detected, or specifically set in
+	 * device tree.
+	 */
 	if (dev->dev->of_node) {
 		ret = of_get_phy_mode(dev->dev->of_node);
 		if (ret >= 0)
 			dev->interface = ret;
+		dev->synclko_125 = of_property_read_bool(dev->dev->of_node,
+							 "microchip,synclko-125");
 	}
 
-	ret = dsa_register_switch(dev->ds, dev->ds->dev->of_node);
+	ret = dsa_register_switch(dev->ds);
 	if (ret) {
 		dev->dev_ops->exit(dev);
 		return ret;
@@ -508,6 +478,10 @@ void ksz_switch_remove(struct ksz_device *dev)
 
 	dev->dev_ops->exit(dev);
 	dsa_unregister_switch(dev->ds);
+
+	if (dev->reset_gpio)
+		gpiod_set_value_cansleep(dev->reset_gpio, 1);
+
 }
 EXPORT_SYMBOL(ksz_switch_remove);
 

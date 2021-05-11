@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2011-2015 Freescale Semiconductor, Inc. All Rights Reserved.
+ * Copyright 2020 NXP
  */
 
 /*
@@ -13,6 +14,8 @@
 
 #include <linux/console.h>
 #include <linux/dma-mapping.h>
+#include <linux/fb.h>
+#include <linux/fbcon.h>
 #include <linux/init.h>
 #include <linux/ipu-v3.h>
 #include <linux/module.h>
@@ -419,31 +422,6 @@ static int update_setting_from_fbi(struct mxc_vout_output *vout,
 	return 0;
 }
 
-static inline unsigned long get_jiffies(struct timeval *t)
-{
-	struct timeval cur;
-
-	if (t->tv_usec >= 1000000) {
-		t->tv_sec += t->tv_usec / 1000000;
-		t->tv_usec = t->tv_usec % 1000000;
-	}
-
-	do_gettimeofday(&cur);
-	if ((t->tv_sec < cur.tv_sec)
-	    || ((t->tv_sec == cur.tv_sec) && (t->tv_usec < cur.tv_usec)))
-		return jiffies;
-
-	if (t->tv_usec < cur.tv_usec) {
-		cur.tv_sec = t->tv_sec - cur.tv_sec - 1;
-		cur.tv_usec = t->tv_usec + 1000000 - cur.tv_usec;
-	} else {
-		cur.tv_sec = t->tv_sec - cur.tv_sec;
-		cur.tv_usec = t->tv_usec - cur.tv_usec;
-	}
-
-	return jiffies + timeval_to_jiffies(&cur);
-}
-
 static bool deinterlace_3_field(struct mxc_vout_output *vout)
 {
 	return (vout->task.input.deinterlace.enable &&
@@ -532,11 +510,11 @@ static void setup_buf_timer(struct mxc_vout_output *vout,
 	ktime_t expiry_time, now;
 
 	/* if timestamp is 0, then default to 30fps */
-	if ((vb->ts.tv_sec == 0) && (vb->ts.tv_usec == 0))
+	if (vb->ts == 0)
 		expiry_time = ktime_add_ns(vout->start_ktime,
 				NSEC_PER_FRAME_30FPS * vout->frame_count);
 	else
-		expiry_time = timeval_to_ktime(vb->ts);
+		expiry_time = ns_to_ktime(vb->ts);
 
 	now = hrtimer_cb_get_time(&vout->timer);
 	if (ktime_after(now, expiry_time)) {
@@ -896,7 +874,7 @@ static int mxc_vout_buffer_prepare(struct videobuf_queue *q,
 }
 
 /*
- * Buffer queue funtion will be called from the videobuf layer when _QBUF
+ * Buffer queue function will be called from the videobuf layer when _QBUF
  * ioctl is called. It is used to enqueue buffer, which is ready to be
  * displayed.
  * This function is protected by q->irqlock.
@@ -1395,113 +1373,106 @@ static int mxc_vidioc_s_fmt_vid_out(struct file *file, void *fh,
 	return ret;
 }
 
-static int mxc_vidioc_cropcap(struct file *file, void *fh,
-		struct v4l2_cropcap *cropcap)
+static int mxc_vidioc_g_selection(struct file *file, void *fh,
+				struct v4l2_selection *s)
 {
 	struct mxc_vout_output *vout = fh;
 
-	if (cropcap->type != V4L2_BUF_TYPE_VIDEO_OUTPUT)
+	if (s->type != V4L2_BUF_TYPE_VIDEO_OUTPUT)
 		return -EINVAL;
 
-	cropcap->bounds = vout->crop_bounds;
-	cropcap->defrect = vout->crop_bounds;
-
-	return 0;
-}
-
-static int mxc_vidioc_g_crop(struct file *file, void *fh,
-				struct v4l2_crop *crop)
-{
-	struct mxc_vout_output *vout = fh;
-
-	if (crop->type != V4L2_BUF_TYPE_VIDEO_OUTPUT)
-		return -EINVAL;
-
-	if (vout->disp_support_windows) {
-		crop->c.left = vout->win_pos.x;
-		crop->c.top = vout->win_pos.y;
-		crop->c.width = vout->task.output.width;
-		crop->c.height = vout->task.output.height;
-	} else {
-		if (vout->task.output.crop.w && vout->task.output.crop.h) {
-			crop->c.left = vout->task.output.crop.pos.x;
-			crop->c.top = vout->task.output.crop.pos.y;
-			crop->c.width = vout->task.output.crop.w;
-			crop->c.height = vout->task.output.crop.h;
+	switch (s->target) {
+	case V4L2_SEL_TGT_COMPOSE_DEFAULT:
+	case V4L2_SEL_TGT_COMPOSE_BOUNDS:
+		s->r = vout->crop_bounds;
+		break;
+	default:
+		if (vout->disp_support_windows) {
+			s->r.left = vout->win_pos.x;
+			s->r.top = vout->win_pos.y;
+			s->r.width = vout->task.output.width;
+			s->r.height = vout->task.output.height;
 		} else {
-			crop->c.left = 0;
-			crop->c.top = 0;
-			crop->c.width = vout->task.output.width;
-			crop->c.height = vout->task.output.height;
+			if (vout->task.output.crop.w &&
+			    vout->task.output.crop.h) {
+				s->r.left = vout->task.output.crop.pos.x;
+				s->r.top = vout->task.output.crop.pos.y;
+				s->r.width = vout->task.output.crop.w;
+				s->r.height = vout->task.output.crop.h;
+			} else {
+				s->r.left = 0;
+				s->r.top = 0;
+				s->r.width = vout->task.output.width;
+				s->r.height = vout->task.output.height;
+			}
 		}
+		break;
 	}
 
 	return 0;
 }
 
-static int mxc_vidioc_s_crop(struct file *file, void *fh,
-				const struct v4l2_crop *crop)
+static int mxc_vidioc_s_selection(struct file *file, void *fh,
+				struct v4l2_selection *s)
 {
 	struct mxc_vout_output *vout = fh, *pre_vout;
 	struct v4l2_rect *b = &vout->crop_bounds;
-	struct v4l2_crop fix_up_crop;
+	struct v4l2_selection fix_up_selection;
 	int ret = 0;
 
-	memcpy(&fix_up_crop, crop, sizeof(*crop));
+	memcpy(&fix_up_selection, s, sizeof(*s));
 
-	if (crop->type != V4L2_BUF_TYPE_VIDEO_OUTPUT)
+	if (s->type != V4L2_BUF_TYPE_VIDEO_OUTPUT)
 		return -EINVAL;
 
-	if (crop->c.width < 0 || crop->c.height < 0)
-		return -EINVAL;
+	if (s->r.width == 0)
+		fix_up_selection.r.width = b->width - b->left;
+	if (s->r.height == 0)
+		fix_up_selection.r.height = b->height - b->top;
 
-	if (crop->c.width == 0)
-		fix_up_crop.c.width = b->width - b->left;
-	if (crop->c.height == 0)
-		fix_up_crop.c.height = b->height - b->top;
+	if (s->r.top < b->top)
+		fix_up_selection.r.top = b->top;
+	if (s->r.top >= b->top + b->height)
+		fix_up_selection.r.top = b->top + b->height - 1;
+	if (s->r.height > b->top - s->r.top + b->height)
+		fix_up_selection.r.height =
+			b->top - fix_up_selection.r.top + b->height;
 
-	if (crop->c.top < b->top)
-		fix_up_crop.c.top = b->top;
-	if (crop->c.top >= b->top + b->height)
-		fix_up_crop.c.top = b->top + b->height - 1;
-	if (crop->c.height > b->top - crop->c.top + b->height)
-		fix_up_crop.c.height =
-			b->top - fix_up_crop.c.top + b->height;
-
-	if (crop->c.left < b->left)
-		fix_up_crop.c.left = b->left;
-	if (crop->c.left >= b->left + b->width)
-		fix_up_crop.c.left = b->left + b->width - 1;
-	if (crop->c.width > b->left - crop->c.left + b->width)
-		fix_up_crop.c.width =
-			b->left - fix_up_crop.c.left + b->width;
+	if (s->r.left < b->left)
+		fix_up_selection.r.left = b->left;
+	if (s->r.left >= b->left + b->width)
+		fix_up_selection.r.left = b->left + b->width - 1;
+	if (s->r.width > b->left - s->r.left + b->width)
+		fix_up_selection.r.width =
+			b->left - fix_up_selection.r.left + b->width;
 
 	/* stride line limitation */
-	fix_up_crop.c.height -= fix_up_crop.c.height % 8;
-	fix_up_crop.c.width -= fix_up_crop.c.width % 8;
-	if ((fix_up_crop.c.width <= 0) || (fix_up_crop.c.height <= 0) ||
-		((fix_up_crop.c.left + fix_up_crop.c.width) >
-		 (b->left + b->width)) ||
-		((fix_up_crop.c.top + fix_up_crop.c.height) >
-		 (b->top + b->height))) {
-		v4l2_err(vout->vfd->v4l2_dev, "s_crop err: %d, %d, %d, %d",
-			fix_up_crop.c.left, fix_up_crop.c.top,
-			fix_up_crop.c.width, fix_up_crop.c.height);
+	fix_up_selection.r.height -= fix_up_selection.r.height % 8;
+	fix_up_selection.r.width -= fix_up_selection.r.width % 8;
+	if ((fix_up_selection.r.width <= 0) ||
+	    (fix_up_selection.r.height <= 0) ||
+	    ((fix_up_selection.r.left + fix_up_selection.r.width) >
+	     (b->left + b->width)) ||
+	    ((fix_up_selection.r.top + fix_up_selection.r.height) >
+	     (b->top + b->height))) {
+		v4l2_err(vout->vfd->v4l2_dev, "s_selection err: %d, %d, %d, %d",
+			fix_up_selection.r.left, fix_up_selection.r.top,
+			fix_up_selection.r.width, fix_up_selection.r.height);
 		return -EINVAL;
 	}
 
 	/* the same setting, return */
 	if (vout->disp_support_windows) {
-		if ((vout->win_pos.x == fix_up_crop.c.left) &&
-			(vout->win_pos.y == fix_up_crop.c.top) &&
-			(vout->task.output.crop.w == fix_up_crop.c.width) &&
-			(vout->task.output.crop.h == fix_up_crop.c.height))
+		if ((vout->win_pos.x == fix_up_selection.r.left) &&
+			(vout->win_pos.y == fix_up_selection.r.top) &&
+			(vout->task.output.crop.w == fix_up_selection.r.width) &&
+			(vout->task.output.crop.h == fix_up_selection.r.height))
 			return 0;
 	} else {
-		if ((vout->task.output.crop.pos.x == fix_up_crop.c.left) &&
-			(vout->task.output.crop.pos.y == fix_up_crop.c.top) &&
-			(vout->task.output.crop.w == fix_up_crop.c.width) &&
-			(vout->task.output.crop.h == fix_up_crop.c.height))
+		if ((vout->task.output.crop.pos.x == fix_up_selection.r.left) &&
+			(vout->task.output.crop.pos.y == fix_up_selection.r.top) &&
+			(vout->task.output.crop.w == fix_up_selection.r.width) &&
+			(vout->task.output.crop.h == fix_up_selection.r.height))
 			return 0;
 	}
 
@@ -1520,17 +1491,17 @@ static int mxc_vidioc_s_crop(struct file *file, void *fh,
 	if (vout->disp_support_windows) {
 		vout->task.output.crop.pos.x = 0;
 		vout->task.output.crop.pos.y = 0;
-		vout->win_pos.x = fix_up_crop.c.left;
-		vout->win_pos.y = fix_up_crop.c.top;
-		vout->task.output.width = fix_up_crop.c.width;
-		vout->task.output.height = fix_up_crop.c.height;
+		vout->win_pos.x = fix_up_selection.r.left;
+		vout->win_pos.y = fix_up_selection.r.top;
+		vout->task.output.width = fix_up_selection.r.width;
+		vout->task.output.height = fix_up_selection.r.height;
 	} else {
-		vout->task.output.crop.pos.x = fix_up_crop.c.left;
-		vout->task.output.crop.pos.y = fix_up_crop.c.top;
+		vout->task.output.crop.pos.x = fix_up_selection.r.left;
+		vout->task.output.crop.pos.y = fix_up_selection.r.top;
 	}
 
-	vout->task.output.crop.w = fix_up_crop.c.width;
-	vout->task.output.crop.h = fix_up_crop.c.height;
+	vout->task.output.crop.w = fix_up_selection.r.width;
+	vout->task.output.crop.h = fix_up_selection.r.height;
 
 	/*
 	 * must S_CROP before S_FMT, for fist time S_CROP, will not check
@@ -1899,9 +1870,7 @@ static int config_disp_output(struct mxc_vout_output *vout)
 	 * This procedure applies to non-overlay fbs as well.
 	 */
 	console_lock();
-	fbi->flags |= FBINFO_MISC_USEREVENT;
 	fb_blank(fbi, FB_BLANK_POWERDOWN);
-	fbi->flags &= ~FBINFO_MISC_USEREVENT;
 	console_unlock();
 
 	pos.x = 0;
@@ -1917,9 +1886,9 @@ static int config_disp_output(struct mxc_vout_output *vout)
 	var.yoffset = 0;
 	var.activate |= FB_ACTIVATE_FORCE;
 	console_lock();
-	fbi->flags |= FBINFO_MISC_USEREVENT;
 	ret = fb_set_var(fbi, &var);
-	fbi->flags &= ~FBINFO_MISC_USEREVENT;
+	if (!ret)
+		fbcon_update_vcs(fbi, var.activate & FB_ACTIVATE_ALL);
 	console_unlock();
 	if (ret < 0) {
 		v4l2_err(vout->vfd->v4l2_dev,
@@ -1981,9 +1950,7 @@ static int config_disp_output(struct mxc_vout_output *vout)
 			*pixel++ = color;
 	}
 	console_lock();
-	fbi->flags |= FBINFO_MISC_USEREVENT;
 	ret = fb_blank(fbi, FB_BLANK_UNBLANK);
-	fbi->flags &= ~FBINFO_MISC_USEREVENT;
 	console_unlock();
 	vout->release = false;
 
@@ -2021,9 +1988,7 @@ static void release_disp_output(struct mxc_vout_output *vout)
 	if (vout->release)
 		return;
 	console_lock();
-	fbi->flags |= FBINFO_MISC_USEREVENT;
 	fb_blank(fbi, FB_BLANK_POWERDOWN);
-	fbi->flags &= ~FBINFO_MISC_USEREVENT;
 	console_unlock();
 
 	/* restore pos to 0,0 avoid fb pan display hang? */
@@ -2034,9 +1999,7 @@ static void release_disp_output(struct mxc_vout_output *vout)
 	if (get_ipu_channel(fbi) == MEM_BG_SYNC) {
 		console_lock();
 		fbi->fix.smem_start = vout->disp_bufs[0];
-		fbi->flags |= FBINFO_MISC_USEREVENT;
 		fb_blank(fbi, FB_BLANK_UNBLANK);
-		fbi->flags &= ~FBINFO_MISC_USEREVENT;
 		console_unlock();
 
 	}
@@ -2123,9 +2086,8 @@ static const struct v4l2_ioctl_ops mxc_vout_ioctl_ops = {
 	.vidioc_enum_fmt_vid_out		= mxc_vidioc_enum_fmt_vid_out,
 	.vidioc_g_fmt_vid_out			= mxc_vidioc_g_fmt_vid_out,
 	.vidioc_s_fmt_vid_out			= mxc_vidioc_s_fmt_vid_out,
-	.vidioc_cropcap				= mxc_vidioc_cropcap,
-	.vidioc_g_crop				= mxc_vidioc_g_crop,
-	.vidioc_s_crop				= mxc_vidioc_s_crop,
+	.vidioc_g_selection			= mxc_vidioc_g_selection,
+	.vidioc_s_selection			= mxc_vidioc_s_selection,
 	.vidioc_queryctrl			= mxc_vidioc_queryctrl,
 	.vidioc_g_ctrl				= mxc_vidioc_g_ctrl,
 	.vidioc_s_ctrl				= mxc_vidioc_s_ctrl,
@@ -2147,6 +2109,7 @@ static const struct v4l2_file_operations mxc_vout_fops = {
 
 static struct video_device mxc_vout_template = {
 	.name		= "MXC Video Output",
+	.device_caps	= V4L2_CAP_STREAMING | V4L2_CAP_VIDEO_OUTPUT,
 	.fops           = &mxc_vout_fops,
 	.ioctl_ops	= &mxc_vout_ioctl_ops,
 	.release	= video_device_release,

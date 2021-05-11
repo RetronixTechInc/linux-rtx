@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2016 Freescale Semiconductor, Inc.
- * Copyright 2017-2018 NXP
+ * Copyright 2017-2019 NXP
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the
@@ -13,6 +13,7 @@
  * for more details.
  */
 
+#include <drm/drm_blend.h>
 #include <linux/io.h>
 #include <linux/mutex.h>
 #include <linux/platform_device.h>
@@ -35,17 +36,13 @@ static const lb_prim_sel_t prim_sels[] = {
 	LB_PRIM_SEL__MATRIX4,
 	LB_PRIM_SEL__HSCALER4,
 	LB_PRIM_SEL__VSCALER4,
-	LB_PRIM_SEL__EXTSRC4,
 	LB_PRIM_SEL__MATRIX5,
 	LB_PRIM_SEL__HSCALER5,
 	LB_PRIM_SEL__VSCALER5,
-	LB_PRIM_SEL__EXTSRC5,
 	LB_PRIM_SEL__LAYERBLEND0,
 	LB_PRIM_SEL__LAYERBLEND1,
 	LB_PRIM_SEL__LAYERBLEND2,
 	LB_PRIM_SEL__LAYERBLEND3,
-	LB_PRIM_SEL__LAYERBLEND4,
-	LB_PRIM_SEL__LAYERBLEND5,
 };
 
 #define PIXENGCFG_STATUS			0xC
@@ -54,16 +51,15 @@ static const lb_prim_sel_t prim_sels[] = {
 #define SHDLDSEL				(0x3 << 1)
 #define SHDLDSEL_SHIFT				1
 #define CONTROL					0xC
-#define MODE_MASK				BIT(0)
+#define OPERATION_MODE_MASK			BIT(0)
 #define BLENDCONTROL				0x10
 #define ALPHA(a)				(((a) & 0xFF) << 16)
+#define PRIM_C_BLD_FUNC__ONE_MINUS_CONST_ALPHA	0x7
 #define PRIM_C_BLD_FUNC__ONE_MINUS_SEC_ALPHA	0x5
-#define PRIM_C_BLD_FUNC__PRIM_ALPHA		0x2
+#define PRIM_C_BLD_FUNC__ZERO			0x0
 #define SEC_C_BLD_FUNC__CONST_ALPHA		(0x6 << 4)
-#define SEC_C_BLD_FUNC__ONE_MINUS_PRIM_ALPHA	(0x3 << 4)
-#define PRIM_A_BLD_FUNC__ONE_MINUS_SEC_ALPHA	(0x5 << 8)
+#define SEC_C_BLD_FUNC__SEC_ALPHA		(0x4 << 4)
 #define PRIM_A_BLD_FUNC__ZERO			(0x0 << 8)
-#define SEC_A_BLD_FUNC__ONE			(0x1 << 12)
 #define SEC_A_BLD_FUNC__ZERO			(0x0 << 12)
 #define POSITION				0x14
 #define XPOS(x)					((x) & 0x7FFF)
@@ -86,8 +82,8 @@ static inline u32 dpu_pec_lb_read(struct dpu_layerblend *lb,
 	return readl(lb->pec_base + offset);
 }
 
-static inline void dpu_pec_lb_write(struct dpu_layerblend *lb, u32 value,
-				    unsigned int offset)
+static inline void dpu_pec_lb_write(struct dpu_layerblend *lb,
+				    unsigned int offset, u32 value)
 {
 	writel(value, lb->pec_base + offset);
 }
@@ -97,8 +93,8 @@ static inline u32 dpu_lb_read(struct dpu_layerblend *lb, unsigned int offset)
 	return readl(lb->base + offset);
 }
 
-static inline void dpu_lb_write(struct dpu_layerblend *lb, u32 value,
-				unsigned int offset)
+static inline void dpu_lb_write(struct dpu_layerblend *lb,
+				unsigned int offset, u32 value)
 {
 	writel(value, lb->base + offset);
 }
@@ -107,22 +103,17 @@ int layerblend_pixengcfg_dynamic_prim_sel(struct dpu_layerblend *lb,
 					  lb_prim_sel_t prim)
 {
 	struct dpu_soc *dpu = lb->dpu;
-	const unsigned int *block_id_map = dpu->devtype->sw2hw_block_id_map;
-	int fixed_sels_num = ARRAY_SIZE(prim_sels) - 6;
+	int fixed_sels_num = ARRAY_SIZE(prim_sels) - 4;
 	int i;
-	u32 val, mapped_prim;
+	u32 val;
 
 	mutex_lock(&lb->mutex);
 	for (i = 0; i < fixed_sels_num + lb->id; i++) {
 		if (prim_sels[i] == prim) {
-			mapped_prim = block_id_map ? block_id_map[prim] : prim;
-			if (WARN_ON(mapped_prim == NA))
-				return -EINVAL;
-
 			val = dpu_pec_lb_read(lb, PIXENGCFG_DYNAMIC);
 			val &= ~PIXENGCFG_DYNAMIC_PRIM_SEL_MASK;
-			val |= mapped_prim;
-			dpu_pec_lb_write(lb, val, PIXENGCFG_DYNAMIC);
+			val |= prim;
+			dpu_pec_lb_write(lb, PIXENGCFG_DYNAMIC, val);
 			mutex_unlock(&lb->mutex);
 			return 0;
 		}
@@ -138,19 +129,13 @@ EXPORT_SYMBOL_GPL(layerblend_pixengcfg_dynamic_prim_sel);
 void layerblend_pixengcfg_dynamic_sec_sel(struct dpu_layerblend *lb,
 					  lb_sec_sel_t sec)
 {
-	struct dpu_soc *dpu = lb->dpu;
-	const unsigned int *block_id_map = dpu->devtype->sw2hw_block_id_map;
-	u32 val, mapped_sec;
-
-	mapped_sec = block_id_map ? block_id_map[sec] : sec;
-	if (WARN_ON(mapped_sec == NA))
-		return;
+	u32 val;
 
 	mutex_lock(&lb->mutex);
 	val = dpu_pec_lb_read(lb, PIXENGCFG_DYNAMIC);
 	val &= ~PIXENGCFG_DYNAMIC_SEC_SEL_MASK;
-	val |= mapped_sec << PIXENGCFG_DYNAMIC_SEC_SEL_SHIFT;
-	dpu_pec_lb_write(lb, val, PIXENGCFG_DYNAMIC);
+	val |= sec << PIXENGCFG_DYNAMIC_SEC_SEL_SHIFT;
+	dpu_pec_lb_write(lb, PIXENGCFG_DYNAMIC, val);
 	mutex_unlock(&lb->mutex);
 }
 EXPORT_SYMBOL_GPL(layerblend_pixengcfg_dynamic_sec_sel);
@@ -164,7 +149,7 @@ void layerblend_pixengcfg_clken(struct dpu_layerblend *lb,
 	val = dpu_pec_lb_read(lb, PIXENGCFG_DYNAMIC);
 	val &= ~CLKEN_MASK;
 	val |= clken << CLKEN_MASK_SHIFT;
-	dpu_pec_lb_write(lb, val, PIXENGCFG_DYNAMIC);
+	dpu_pec_lb_write(lb, PIXENGCFG_DYNAMIC, val);
 	mutex_unlock(&lb->mutex);
 }
 EXPORT_SYMBOL_GPL(layerblend_pixengcfg_clken);
@@ -179,7 +164,7 @@ void layerblend_shden(struct dpu_layerblend *lb, bool enable)
 		val |= SHDEN;
 	else
 		val &= ~SHDEN;
-	dpu_lb_write(lb, val, STATICCONTROL);
+	dpu_lb_write(lb, STATICCONTROL, val);
 	mutex_unlock(&lb->mutex);
 }
 EXPORT_SYMBOL_GPL(layerblend_shden);
@@ -192,7 +177,7 @@ void layerblend_shdtoksel(struct dpu_layerblend *lb, lb_shadow_sel_t sel)
 	val = dpu_lb_read(lb, STATICCONTROL);
 	val &= ~SHDTOKSEL;
 	val |= (sel << SHDTOKSEL_SHIFT);
-	dpu_lb_write(lb, val, STATICCONTROL);
+	dpu_lb_write(lb, STATICCONTROL, val);
 	mutex_unlock(&lb->mutex);
 }
 EXPORT_SYMBOL_GPL(layerblend_shdtoksel);
@@ -205,7 +190,7 @@ void layerblend_shdldsel(struct dpu_layerblend *lb, lb_shadow_sel_t sel)
 	val = dpu_lb_read(lb, STATICCONTROL);
 	val &= ~SHDLDSEL;
 	val |= (sel << SHDLDSEL_SHIFT);
-	dpu_lb_write(lb, val, STATICCONTROL);
+	dpu_lb_write(lb, STATICCONTROL, val);
 	mutex_unlock(&lb->mutex);
 }
 EXPORT_SYMBOL_GPL(layerblend_shdldsel);
@@ -216,26 +201,44 @@ void layerblend_control(struct dpu_layerblend *lb, lb_mode_t mode)
 
 	mutex_lock(&lb->mutex);
 	val = dpu_lb_read(lb, CONTROL);
-	val &= ~MODE_MASK;
+	val &= ~OPERATION_MODE_MASK;
 	val |= mode;
-	dpu_lb_write(lb, val, CONTROL);
+	dpu_lb_write(lb, CONTROL, val);
 	mutex_unlock(&lb->mutex);
 }
 EXPORT_SYMBOL_GPL(layerblend_control);
 
-void layerblend_blendcontrol(struct dpu_layerblend *lb, bool sec_from_scaler)
+void layerblend_blendcontrol(struct dpu_layerblend *lb, unsigned int zpos,
+			     unsigned int pixel_blend_mode, u16 alpha)
 {
-	u32 val;
+	u32 val = PRIM_A_BLD_FUNC__ZERO | SEC_A_BLD_FUNC__ZERO;
 
-	val = ALPHA(0xff) |
-	      PRIM_C_BLD_FUNC__PRIM_ALPHA |
-	      SEC_C_BLD_FUNC__ONE_MINUS_PRIM_ALPHA |
-	      PRIM_A_BLD_FUNC__ZERO;
+	if (zpos == 0) {
+		val |= PRIM_C_BLD_FUNC__ZERO | SEC_C_BLD_FUNC__CONST_ALPHA;
+		alpha = DRM_BLEND_ALPHA_OPAQUE;
+	} else {
+		switch (pixel_blend_mode) {
+		case DRM_MODE_BLEND_PIXEL_NONE:
+			val |= PRIM_C_BLD_FUNC__ONE_MINUS_CONST_ALPHA |
+			       SEC_C_BLD_FUNC__CONST_ALPHA;
+			break;
+		case DRM_MODE_BLEND_PREMULTI:
+			val |= PRIM_C_BLD_FUNC__ONE_MINUS_SEC_ALPHA |
+			       SEC_C_BLD_FUNC__CONST_ALPHA;
+			break;
+		case DRM_MODE_BLEND_COVERAGE:
+			val |= PRIM_C_BLD_FUNC__ONE_MINUS_SEC_ALPHA |
+			       SEC_C_BLD_FUNC__SEC_ALPHA;
+			break;
+		default:
+			break;
+		}
+	}
 
-	val |= sec_from_scaler ? SEC_A_BLD_FUNC__ZERO : SEC_A_BLD_FUNC__ONE;
+	val |= ALPHA(alpha >> 8);
 
 	mutex_lock(&lb->mutex);
-	dpu_lb_write(lb, val, BLENDCONTROL);
+	dpu_lb_write(lb, BLENDCONTROL, val);
 	mutex_unlock(&lb->mutex);
 }
 EXPORT_SYMBOL_GPL(layerblend_blendcontrol);
@@ -243,7 +246,7 @@ EXPORT_SYMBOL_GPL(layerblend_blendcontrol);
 void layerblend_position(struct dpu_layerblend *lb, int x, int y)
 {
 	mutex_lock(&lb->mutex);
-	dpu_lb_write(lb, XPOS(x) | YPOS(y), POSITION);
+	dpu_lb_write(lb, POSITION, XPOS(x) | YPOS(y));
 	mutex_unlock(&lb->mutex);
 }
 EXPORT_SYMBOL_GPL(layerblend_position);

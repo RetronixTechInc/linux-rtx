@@ -1,5 +1,5 @@
 /*
- * Copyright 2017-2018 NXP
+ * Copyright 2017-2019 NXP
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the
@@ -75,11 +75,15 @@ fetcheco_set_src_buf_dimensions(struct dpu_fetchunit *fu,
 	val = LINEWIDTH(width) | LINECOUNT(height);
 
 	mutex_lock(&fu->mutex);
-	dpu_fu_write(fu, val, SOURCEBUFFERDIMENSION0);
+	dpu_fu_write(fu, SOURCEBUFFERDIMENSION0, val);
 	mutex_unlock(&fu->mutex);
 }
 
-static void fetcheco_set_fmt(struct dpu_fetchunit *fu, u32 fmt, bool unused)
+static void fetcheco_set_fmt(struct dpu_fetchunit *fu,
+			     u32 fmt,
+			     enum drm_color_encoding unused1,
+			     enum drm_color_range unused2,
+			     bool unused3)
 {
 	u32 val, bits, shift;
 	int i, hsub, vsub;
@@ -128,12 +132,12 @@ static void fetcheco_set_fmt(struct dpu_fetchunit *fu, u32 fmt, bool unused)
 	val = dpu_fu_read(fu, FRAMERESAMPLING);
 	val &= ~(DELTAX_MASK | DELTAY_MASK);
 	val |= DELTAX(x) | DELTAY(y);
-	dpu_fu_write(fu, val, FRAMERESAMPLING);
+	dpu_fu_write(fu, FRAMERESAMPLING, val);
 
 	val = dpu_fu_read(fu, CONTROL);
 	val &= ~RASTERMODE_MASK;
 	val |= RASTERMODE(RASTERMODE__NORMAL);
-	dpu_fu_write(fu, val, CONTROL);
+	dpu_fu_write(fu, CONTROL, val);
 	mutex_unlock(&fu->mutex);
 
 	for (i = 0; i < ARRAY_SIZE(dpu_pixel_format_matrix); i++) {
@@ -145,8 +149,8 @@ static void fetcheco_set_fmt(struct dpu_fetchunit *fu, u32 fmt, bool unused)
 			shift &= ~Y_SHIFT_MASK;
 
 			mutex_lock(&fu->mutex);
-			dpu_fu_write(fu, bits, COLORCOMPONENTBITS0);
-			dpu_fu_write(fu, shift, COLORCOMPONENTSHIFT0);
+			dpu_fu_write(fu, COLORCOMPONENTBITS0, bits);
+			dpu_fu_write(fu, COLORCOMPONENTSHIFT0, shift);
 			mutex_unlock(&fu->mutex);
 			return;
 		}
@@ -163,7 +167,7 @@ void fetcheco_layeroffset(struct dpu_fetchunit *fu, unsigned int x,
 	val = LAYERXOFFSET(x) | LAYERYOFFSET(y);
 
 	mutex_lock(&fu->mutex);
-	dpu_fu_write(fu, val, LAYEROFFSET0);
+	dpu_fu_write(fu, LAYEROFFSET0, val);
 	mutex_unlock(&fu->mutex);
 }
 EXPORT_SYMBOL_GPL(fetcheco_layeroffset);
@@ -176,7 +180,7 @@ void fetcheco_clipoffset(struct dpu_fetchunit *fu, unsigned int x,
 	val = CLIPWINDOWXOFFSET(x) | CLIPWINDOWYOFFSET(y);
 
 	mutex_lock(&fu->mutex);
-	dpu_fu_write(fu, val, CLIPWINDOWOFFSET0);
+	dpu_fu_write(fu, CLIPWINDOWOFFSET0, val);
 	mutex_unlock(&fu->mutex);
 }
 EXPORT_SYMBOL_GPL(fetcheco_clipoffset);
@@ -189,7 +193,7 @@ void fetcheco_clipdimensions(struct dpu_fetchunit *fu, unsigned int w,
 	val = CLIPWINDOWWIDTH(w) | CLIPWINDOWHEIGHT(h);
 
 	mutex_lock(&fu->mutex);
-	dpu_fu_write(fu, val, CLIPWINDOWDIMENSIONS0);
+	dpu_fu_write(fu, CLIPWINDOWDIMENSIONS0, val);
 	mutex_unlock(&fu->mutex);
 }
 EXPORT_SYMBOL_GPL(fetcheco_clipdimensions);
@@ -207,7 +211,7 @@ fetcheco_set_framedimensions(struct dpu_fetchunit *fu,
 	val = FRAMEWIDTH(w) | FRAMEHEIGHT(h);
 
 	mutex_lock(&fu->mutex);
-	dpu_fu_write(fu, val, FRAMEDIMENSIONS);
+	dpu_fu_write(fu, FRAMEDIMENSIONS, val);
 	mutex_unlock(&fu->mutex);
 }
 
@@ -220,7 +224,7 @@ void fetcheco_frameresampling(struct dpu_fetchunit *fu, unsigned int x,
 	val = dpu_fu_read(fu, FRAMERESAMPLING);
 	val &= ~(DELTAX_MASK | DELTAY_MASK);
 	val |= DELTAX(x) | DELTAY(y);
-	dpu_fu_write(fu, val, FRAMERESAMPLING);
+	dpu_fu_write(fu, FRAMERESAMPLING, val);
 	mutex_unlock(&fu->mutex);
 }
 EXPORT_SYMBOL_GPL(fetcheco_frameresampling);
@@ -228,7 +232,7 @@ EXPORT_SYMBOL_GPL(fetcheco_frameresampling);
 static void fetcheco_set_controltrigger(struct dpu_fetchunit *fu)
 {
 	mutex_lock(&fu->mutex);
-	dpu_fu_write(fu, SHDTOKGEN, CONTROLTRIGGER);
+	dpu_fu_write(fu, CONTROLTRIGGER, SHDTOKGEN);
 	mutex_unlock(&fu->mutex);
 }
 
@@ -244,42 +248,14 @@ int fetcheco_fetchtype(struct dpu_fetchunit *fu, fetchtype_t *type)
 
 	switch (val) {
 	case FETCHTYPE__DECODE:
-		dev_dbg(dpu->dev, "FetchEco%d with RL and RLAD decoder\n",
-				fu->id);
-		break;
 	case FETCHTYPE__LAYER:
-		dev_dbg(dpu->dev, "FetchEco%d with fractional "
-				"plane(8 layers)\n", fu->id);
-		break;
 	case FETCHTYPE__WARP:
-		dev_dbg(dpu->dev, "FetchEco%d with arbitrary warping and "
-				"fractional plane(8 layers)\n", fu->id);
-		break;
 	case FETCHTYPE__ECO:
-		dev_dbg(dpu->dev, "FetchEco%d with minimum feature set for "
-				"alpha, chroma and coordinate planes\n",
-				fu->id);
-		break;
 	case FETCHTYPE__PERSP:
-		dev_dbg(dpu->dev, "FetchEco%d with affine, perspective and "
-				"arbitrary warping\n", fu->id);
-		break;
 	case FETCHTYPE__ROT:
-		dev_dbg(dpu->dev, "FetchEco%d with affine and arbitrary "
-				"warping\n", fu->id);
-		break;
 	case FETCHTYPE__DECODEL:
-		dev_dbg(dpu->dev, "FetchEco%d with RL and RLAD decoder, "
-				"reduced feature set\n", fu->id);
-		break;
 	case FETCHTYPE__LAYERL:
-		dev_dbg(dpu->dev, "FetchEco%d with fractional "
-				"plane(8 layers), reduced feature set\n",
-				fu->id);
-		break;
 	case FETCHTYPE__ROTL:
-		dev_dbg(dpu->dev, "FetchEco%d with affine and arbitrary "
-				"warping, reduced feature set\n", fu->id);
 		break;
 	default:
 		dev_warn(dpu->dev, "Invalid fetch type %u for FetchEco%d\n",
@@ -364,9 +340,6 @@ static const struct dpu_fetchunit_ops fe_ops = {
 	.set_controltrigger	= fetcheco_set_controltrigger,
 	.get_stream_id		= fetchunit_get_stream_id,
 	.set_stream_id		= fetchunit_set_stream_id,
-	.pin_off		= fetchunit_pin_off,
-	.unpin_off		= fetchunit_unpin_off,
-	.is_pinned_off		= fetchunit_is_pinned_off,
 };
 
 void _dpu_fe_init(struct dpu_soc *dpu, unsigned int id)
@@ -386,8 +359,8 @@ void _dpu_fe_init(struct dpu_soc *dpu, unsigned int id)
 	fetchunit_shden(fu, true);
 
 	mutex_lock(&fu->mutex);
-	dpu_fu_write(fu, SETNUMBUFFERS(16) | SETBURSTLENGTH(16),
-			BURSTBUFFERMANAGEMENT);
+	dpu_fu_write(fu, BURSTBUFFERMANAGEMENT,
+			SETNUMBUFFERS(16) | SETBURSTLENGTH(16));
 	mutex_unlock(&fu->mutex);
 }
 

@@ -18,6 +18,11 @@
 
 /* ...number of max input buffers */
 #define INBUF_SIZE	4096
+/* ...buffer size of the buffer shared between A core and DSP. Use large */
+/* ...to let A core suspend longer time to save power.*/
+#define INBUF_SIZE_LPA	(128*1024)
+/* ...ping-pong buffer locate in DRAM for PCM LPA. */
+#define INBUF_SIZE_LPA_PCM	(8*1024*1024)
 #define OUTBUF_SIZE	16384
 
 struct xaf_pipeline;
@@ -106,12 +111,36 @@ struct __attribute__((__packed__)) xf_unroute_port_msg {
 /* ...check if non-zero value is a power-of-two */
 #define xf_is_power_of_two(v)       (((v) & ((v) - 1)) == 0)
 
+
+/*******************************************************************************
+ * bascial message
+ ******************************************************************************/
+typedef union DATA {
+	u32                 value;
+
+	struct {
+		u32 size;
+		u32 channel_table[10];
+	} chan_map_tab;
+
+	struct {
+		u32 samplerate;
+		u32 width;
+		u32 depth;
+		u32 channels;
+		u32 endian;
+		u32 interleave;
+		u32 layout[12];
+		u32 chan_pos_set;  // indicate if channel position is set outside or use codec default
+	} outputFormat;
+} data_t;
+
 /* ...component initialization parameter */
 struct __attribute__((__packed__)) xf_set_param_msg {
 	/* ...index of parameter passed to SET_CONFIG_PARAM call */
 	u32 id;
 	/* ...value of parameter */
-	u32 value;
+	data_t mixData;
 };
 
 /* ...message body (command/response) */
@@ -119,7 +148,7 @@ struct __attribute__((__packed__)) xf_get_param_msg {
 	/* ...array of parameters requested */
 	u32 id;
 	/* ...array of parameters values */
-	u32 value;
+	data_t mixData;
 };
 
 /* ...renderer-specific configuration parameters */
@@ -130,7 +159,20 @@ enum xa_config_param_renderer {
 	XA_RENDERER_CONFIG_PARAM_CHANNELS       = 3,
 	XA_RENDERER_CONFIG_PARAM_SAMPLE_RATE    = 4,
 	XA_RENDERER_CONFIG_PARAM_FRAME_SIZE     = 5,
-	XA_RENDERER_CONFIG_PARAM_NUM            = 6,
+	XA_RENDERER_CONFIG_PARAM_CONSUMED       = 6,
+	XA_RENDERER_CONFIG_PARAM_NUM            = 7,
+};
+
+/* pcm codec configuration parameters */
+enum xa_config_param_pcm {
+	XA_PCM_CONFIG_PARAM_SAMPLE_RATE         = 0, /* not supported */
+	XA_PCM_CONFIG_PARAM_IN_PCM_WIDTH        = 1,
+	XA_PCM_CONFIG_PARAM_IN_CHANNELS         = 2, /* not supported */
+	XA_PCM_CONFIG_PARAM_OUT_PCM_WIDTH       = 3, /* not supported */
+	XA_PCM_CONFIG_PARAM_OUT_CHANNELS        = 4, /* not supported */
+	XA_PCM_CONFIG_PARAM_CHANROUTING         = 5, /* not supported */
+	XA_PCM_CONFIG_PARAM_FUNC_PRINT          = 13, /* not supported */
+	XA_PCM_CONFIG_PARAM_NUM                 = 14, /* not supported */
 };
 
 #endif /* FSL_DSP_XAF_API_H */

@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2012-2015 Freescale Semiconductor, Inc. All Rights Reserved.
+ * Copyright 2019 NXP
  */
 
 /*
@@ -596,6 +597,16 @@ static int ov5640_remove(struct i2c_client *client);
 static s32 ov5640_read_reg(u16 reg, u8 *val);
 static s32 ov5640_write_reg(u16 reg, u8 val);
 
+#ifdef CONFIG_OF
+static const struct of_device_id ov5640_of_match[] = {
+	{ .compatible = "ovti,ov5640",
+	},
+	{ /* sentinel */ }
+};
+
+MODULE_DEVICE_TABLE(of, ov5640_of_match);
+#endif
+
 static const struct i2c_device_id ov5640_id[] = {
 	{"ov5640", 0},
 	{},
@@ -607,6 +618,9 @@ static struct i2c_driver ov5640_i2c_driver = {
 	.driver = {
 		  .owner = THIS_MODULE,
 		  .name  = "ov5640",
+#ifdef CONFIG_OF
+		  .of_match_table = of_match_ptr(ov5640_of_match),
+#endif
 		  },
 	.probe  = ov5640_probe,
 	.remove = ov5640_remove,
@@ -715,6 +729,18 @@ static int ov5640_regulator_enable(struct device *dev)
 	}
 
 	return ret;
+}
+
+static void ov5640_regualtor_disable(void)
+{
+	if (analog_regulator)
+		regulator_disable(analog_regulator);
+
+	if (core_regulator)
+		regulator_disable(core_regulator);
+
+	if (io_regulator)
+		regulator_disable(io_regulator);
 }
 
 static s32 ov5640_write_reg(u16 reg, u8 val)
@@ -1826,12 +1852,14 @@ static int ov5640_probe(struct i2c_client *client,
 
 	retval = ov5640_read_reg(OV5640_CHIP_ID_HIGH_BYTE, &chip_id_high);
 	if (retval < 0 || chip_id_high != 0x56) {
+		ov5640_regualtor_disable();
 		clk_disable_unprepare(ov5640_data.sensor_clk);
 		pr_warning("camera ov5640 is not found\n");
 		return -ENODEV;
 	}
 	retval = ov5640_read_reg(OV5640_CHIP_ID_LOW_BYTE, &chip_id_low);
 	if (retval < 0 || chip_id_low != 0x40) {
+		ov5640_regualtor_disable();
 		clk_disable_unprepare(ov5640_data.sensor_clk);
 		pr_warning("camera ov5640 is not found\n");
 		return -ENODEV;
@@ -1839,6 +1867,7 @@ static int ov5640_probe(struct i2c_client *client,
 
 	retval = init_device();
 	if (retval < 0) {
+		ov5640_regualtor_disable();
 		clk_disable_unprepare(ov5640_data.sensor_clk);
 		pr_warning("camera ov5640 init failed\n");
 		ov5640_power_down(1);
@@ -1874,14 +1903,7 @@ static int ov5640_remove(struct i2c_client *client)
 
 	ov5640_power_down(1);
 
-	if (analog_regulator)
-		regulator_disable(analog_regulator);
-
-	if (core_regulator)
-		regulator_disable(core_regulator);
-
-	if (io_regulator)
-		regulator_disable(io_regulator);
+	ov5640_regualtor_disable();
 
 	return 0;
 }

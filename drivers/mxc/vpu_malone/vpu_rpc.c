@@ -54,6 +54,7 @@
 
 #include <linux/uaccess.h>
 #include <linux/fs.h>
+#include <linux/delay.h>
 #include "vpu_rpc.h"
 
 void rpc_init_shared_memory(struct shared_addr *This,
@@ -163,6 +164,56 @@ void rpc_init_shared_memory(struct shared_addr *This,
 	}
 }
 
+void rpc_restore_shared_memory(struct shared_addr *This,
+		unsigned long long base_phy_addr,
+		void *base_virt_addr)
+{
+	pDEC_RPC_HOST_IFACE pSharedInterface;
+	unsigned int phy_addr;
+
+	This->shared_mem_phy = base_phy_addr;
+	This->shared_mem_vir = base_virt_addr;
+
+	pSharedInterface = (pDEC_RPC_HOST_IFACE)This->shared_mem_vir;
+	This->pSharedInterface = pSharedInterface;
+
+	phy_addr = base_phy_addr + sizeof(DEC_RPC_HOST_IFACE);
+	This->cmd_mem_phy = phy_addr;
+	This->cmd_mem_vir = This->shared_mem_vir + sizeof(DEC_RPC_HOST_IFACE);
+
+	phy_addr += CMD_SIZE;
+	This->msg_mem_phy = phy_addr;
+	This->msg_mem_vir = This->cmd_mem_vir + CMD_SIZE;
+
+	phy_addr += MSG_SIZE;
+	This->codec_mem_phy = phy_addr;
+	This->codec_mem_vir = This->msg_mem_vir + MSG_SIZE;
+
+	phy_addr += CODEC_SIZE;
+	This->jpeg_mem_phy = phy_addr;
+	This->jpeg_mem_vir = This->codec_mem_vir + CODEC_SIZE;
+
+	phy_addr += JPEG_SIZE;
+	This->seq_mem_phy = phy_addr;
+	This->seq_mem_vir = This->jpeg_mem_vir + JPEG_SIZE;
+
+	phy_addr += SEQ_SIZE;
+	This->pic_mem_phy = phy_addr;
+	This->pic_mem_vir = This->seq_mem_vir + SEQ_SIZE;
+
+	phy_addr += PIC_SIZE;
+	This->gop_mem_phy = phy_addr;
+	This->gop_mem_vir = This->pic_mem_vir + PIC_SIZE;
+
+	phy_addr += GOP_SIZE;
+	This->qmeter_mem_phy = phy_addr;
+	This->qmeter_mem_vir = This->gop_mem_vir + GOP_SIZE;
+
+	phy_addr += QMETER_SIZE;
+	This->dbglog_mem_phy = phy_addr;
+	This->dbglog_mem_vir = This->qmeter_mem_vir + QMETER_SIZE;
+}
+
 void rpc_set_stream_cfg_value(void *Interface, u_int32 str_idx, u_int32 vpu_dbe_num)
 {
 	pDEC_RPC_HOST_IFACE pSharedInterface;
@@ -239,7 +290,7 @@ u_int32 rpc_MediaIPFW_Video_buffer_space_check(MediaIPFW_Video_BufDesc *pBufDesc
 			/* the updated write pointer.                     */
 			uTemp = uPtr1 + uSize;
 			if (uTemp >= uEnd)
-				uTemp += (uStart - uEnd);
+				uTemp -= (uEnd - uStart);
 			*puUpdateAddress = uTemp;
 			return (uEnd - uStart);
 		}
@@ -257,7 +308,7 @@ u_int32 rpc_MediaIPFW_Video_buffer_space_check(MediaIPFW_Video_BufDesc *pBufDesc
 	uEnd   = pBufDesc->uEnd;
 	uTemp  = uPtr1 + uSize;
 	if (uTemp >= uEnd)
-		uTemp += (uStart - uEnd);
+		uTemp -= (uEnd - uStart);
 	*puUpdateAddress = uTemp;
 	return ((uEnd - uPtr1) + (uPtr2 - uStart));
 }
@@ -281,9 +332,22 @@ void rpc_send_cmd_buf(struct shared_addr *This,
 {
 	pDEC_RPC_HOST_IFACE pSharedInterface = (pDEC_RPC_HOST_IFACE)This->shared_mem_vir;
 	MediaIPFW_Video_BufDesc *pCmdDesc = &pSharedInterface->StreamCmdBufferDesc;
+	BUFFER_DESCRIPTOR_TYPE *desc = NULL;
 	u_int32 *cmddata;
 	u_int32 i;
 	u_int32 *cmdword = (u_int32 *)(This->cmd_mem_vir+pCmdDesc->uWrPtr - pCmdDesc->uStart);
+	u_int32 uIgnore;
+	u_int32 uSpace;
+
+	uSpace = rpc_MediaIPFW_Video_buffer_space_check(pCmdDesc,
+							FALSE,
+							0,
+							&uIgnore);
+	if (uSpace < ((cmdnum + 1) << 2) + 16) {
+		pr_err("[VPU MALONE] CmdBuf is no space for [%d] %d\n",
+				idx, cmdid);
+		return;
+	}
 
 	*cmdword = 0;
 	*cmdword |= ((idx & 0x000000ff) << 24);
@@ -295,6 +359,12 @@ void rpc_send_cmd_buf(struct shared_addr *This,
 		cmddata = (u_int32 *)(This->cmd_mem_vir+pCmdDesc->uWrPtr - pCmdDesc->uStart);
 		*cmddata = local_cmddata[i];
 		rpc_update_cmd_buffer_ptr(pCmdDesc);
+	}
+	if (cmdid != VID_API_CMD_FIRM_RESET) {
+		desc = &pSharedInterface->StreamApiCmdBufferDesc[idx];
+		desc->wptr++;
+		if (desc->wptr >= desc->end)
+			desc->wptr = desc->start;
 	}
 }
 
@@ -361,4 +431,57 @@ void rpc_receive_msg_buf(struct shared_addr *This, struct event_msg *msg)
 		msg->msgdata[i] = *((u_int32 *)(This->msg_mem_vir+pMsgDesc->uRdPtr - pMsgDesc->uStart));
 		rpc_update_msg_buffer_ptr(pMsgDesc);
 	}
+}
+
+static bool check_is_ready(struct shared_addr *This, u32 idx)
+{
+	pDEC_RPC_HOST_IFACE pSharedInterface = NULL;
+	BUFFER_DESCRIPTOR_TYPE *desc = NULL;
+	u32 size;
+	u32 rptr;
+	u32 wptr;
+	u32 used;
+
+	if (!This || !This->shared_mem_vir || idx >= VID_API_NUM_STREAMS)
+		return false;
+	pSharedInterface = This->shared_mem_vir;
+	desc = &pSharedInterface->StreamApiCmdBufferDesc[idx];
+	size = desc->end - desc->start;
+	rptr = desc->rptr;
+	wptr = desc->wptr;
+	used = (wptr + size - rptr) % size;
+	if (!size || used < size / 2)
+		return true;
+
+	return false;
+}
+
+bool rpc_check_is_ready(struct shared_addr *This, u32 idx)
+{
+	u32 cnt = 0;
+
+	if (!This || !This->shared_mem_vir || idx >= VID_API_NUM_STREAMS)
+		return false;
+	while (!check_is_ready(This, idx)) {
+		if (cnt > 30)
+			return false;
+		mdelay(1);
+		cnt++;
+	}
+
+	return true;
+}
+
+void rpc_init_instance(struct shared_addr *This, u32 idx)
+{
+	pDEC_RPC_HOST_IFACE pSharedInterface = NULL;
+	BUFFER_DESCRIPTOR_TYPE *desc = NULL;
+
+	if (!This || !This->shared_mem_vir || idx >= VID_API_NUM_STREAMS)
+		return;
+	pSharedInterface = This->shared_mem_vir;
+	desc = &pSharedInterface->StreamApiCmdBufferDesc[idx];
+	desc->wptr = desc->rptr;
+	if (desc->wptr >= desc->end)
+		desc->wptr = desc->start;
 }

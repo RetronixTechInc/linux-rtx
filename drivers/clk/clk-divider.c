@@ -1,11 +1,8 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (C) 2011 Sascha Hauer, Pengutronix <s.hauer@pengutronix.de>
  * Copyright (C) 2011 Richard Zhao, Linaro <richard.zhao@linaro.org>
  * Copyright (C) 2011-2012 Mike Turquette, Linaro Ltd <mturquette@linaro.org>
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
  *
  * Adjustable divider clock implementation
  */
@@ -28,12 +25,26 @@
  * parent - fixed parent.  No clk_set_parent support
  */
 
-#define div_mask(width)	((1 << (width)) - 1)
+static inline u32 clk_div_readl(struct clk_divider *divider)
+{
+	if (divider->flags & CLK_DIVIDER_BIG_ENDIAN)
+		return ioread32be(divider->reg);
+
+	return readl(divider->reg);
+}
+
+static inline void clk_div_writel(struct clk_divider *divider, u32 val)
+{
+	if (divider->flags & CLK_DIVIDER_BIG_ENDIAN)
+		iowrite32be(val, divider->reg);
+	else
+		writel(val, divider->reg);
+}
 
 static unsigned int _get_table_maxdiv(const struct clk_div_table *table,
 				      u8 width)
 {
-	unsigned int maxdiv = 0, mask = div_mask(width);
+	unsigned int maxdiv = 0, mask = clk_div_mask(width);
 	const struct clk_div_table *clkt;
 
 	for (clkt = table; clkt->div; clkt++)
@@ -57,12 +68,12 @@ static unsigned int _get_maxdiv(const struct clk_div_table *table, u8 width,
 				unsigned long flags)
 {
 	if (flags & CLK_DIVIDER_ONE_BASED)
-		return div_mask(width);
+		return clk_div_mask(width);
 	if (flags & CLK_DIVIDER_POWER_OF_TWO)
-		return 1 << div_mask(width);
+		return 1 << clk_div_mask(width);
 	if (table)
 		return _get_table_maxdiv(table, width);
-	return div_mask(width) + 1;
+	return clk_div_mask(width) + 1;
 }
 
 static unsigned int _get_table_div(const struct clk_div_table *table,
@@ -84,7 +95,7 @@ static unsigned int _get_div(const struct clk_div_table *table,
 	if (flags & CLK_DIVIDER_POWER_OF_TWO)
 		return 1 << val;
 	if (flags & CLK_DIVIDER_MAX_AT_ZERO)
-		return val ? val : div_mask(width) + 1;
+		return val ? val : clk_div_mask(width) + 1;
 	if (table)
 		return _get_table_div(table, val);
 	return val + 1;
@@ -109,7 +120,7 @@ static unsigned int _get_val(const struct clk_div_table *table,
 	if (flags & CLK_DIVIDER_POWER_OF_TWO)
 		return __ffs(div);
 	if (flags & CLK_DIVIDER_MAX_AT_ZERO)
-		return (div == div_mask(width) + 1) ? 0 : div;
+		return (div == clk_div_mask(width) + 1) ? 0 : div;
 	if (table)
 		return  _get_table_val(table, div);
 	return div - 1;
@@ -121,9 +132,6 @@ unsigned long divider_recalc_rate(struct clk_hw *hw, unsigned long parent_rate,
 				  unsigned long flags, unsigned long width)
 {
 	unsigned int div;
-
-	if (flags & CLK_DIVIDER_ZERO_GATE && !val)
-		return 0;
 
 	div = _get_div(table, val, flags, width);
 	if (!div) {
@@ -143,13 +151,8 @@ static unsigned long clk_divider_recalc_rate(struct clk_hw *hw,
 	struct clk_divider *divider = to_clk_divider(hw);
 	unsigned int val;
 
-	if ((divider->flags & CLK_DIVIDER_ZERO_GATE) &&
-	    !clk_hw_is_enabled(hw)) {
-		val = divider->cached_val;
-	} else {
-		val = clk_readl(divider->reg) >> divider->shift;
-		val &= div_mask(divider->width);
-	}
+	val = clk_div_readl(divider) >> divider->shift;
+	val &= clk_div_mask(divider->width);
 
 	return divider_recalc_rate(hw, parent_rate, val, divider->table,
 				   divider->flags, divider->width);
@@ -352,19 +355,43 @@ long divider_round_rate_parent(struct clk_hw *hw, struct clk_hw *parent,
 }
 EXPORT_SYMBOL_GPL(divider_round_rate_parent);
 
+long divider_ro_round_rate_parent(struct clk_hw *hw, struct clk_hw *parent,
+				  unsigned long rate, unsigned long *prate,
+				  const struct clk_div_table *table, u8 width,
+				  unsigned long flags, unsigned int val)
+{
+	int div;
+
+	div = _get_div(table, val, flags, width);
+
+	/* Even a read-only clock can propagate a rate change */
+	if (clk_hw_get_flags(hw) & CLK_SET_RATE_PARENT) {
+		if (!parent)
+			return -EINVAL;
+
+		*prate = clk_hw_round_rate(parent, rate * div);
+	}
+
+	return DIV_ROUND_UP_ULL((u64)*prate, div);
+}
+EXPORT_SYMBOL_GPL(divider_ro_round_rate_parent);
+
+
 static long clk_divider_round_rate(struct clk_hw *hw, unsigned long rate,
 				unsigned long *prate)
 {
 	struct clk_divider *divider = to_clk_divider(hw);
-	int bestdiv;
 
 	/* if read only, just return current value */
 	if (divider->flags & CLK_DIVIDER_READ_ONLY) {
-		bestdiv = clk_readl(divider->reg) >> divider->shift;
-		bestdiv &= div_mask(divider->width);
-		bestdiv = _get_div(divider->table, bestdiv, divider->flags,
-			divider->width);
-		return DIV_ROUND_UP_ULL((u64)*prate, bestdiv);
+		u32 val;
+
+		val = clk_div_readl(divider) >> divider->shift;
+		val &= clk_div_mask(divider->width);
+
+		return divider_ro_round_rate(hw, rate, prate, divider->table,
+					     divider->width, divider->flags,
+					     val);
 	}
 
 	return divider_round_rate(hw, rate, prate, divider->table,
@@ -384,7 +411,7 @@ int divider_get_val(unsigned long rate, unsigned long parent_rate,
 
 	value = _get_val(table, div, flags, width);
 
-	return min_t(unsigned int, value, div_mask(width));
+	return min_t(unsigned int, value, clk_div_mask(width));
 }
 EXPORT_SYMBOL_GPL(divider_get_val);
 
@@ -401,25 +428,19 @@ static int clk_divider_set_rate(struct clk_hw *hw, unsigned long rate,
 	if (value < 0)
 		return value;
 
-	if ((divider->flags & CLK_DIVIDER_ZERO_GATE) &&
-	    !clk_hw_is_enabled(hw)) {
-		divider->cached_val = value;
-		return 0;
-	}
-
 	if (divider->lock)
 		spin_lock_irqsave(divider->lock, flags);
 	else
 		__acquire(divider->lock);
 
 	if (divider->flags & CLK_DIVIDER_HIWORD_MASK) {
-		val = div_mask(divider->width) << (divider->shift + 16);
+		val = clk_div_mask(divider->width) << (divider->shift + 16);
 	} else {
-		val = clk_readl(divider->reg);
-		val &= ~(div_mask(divider->width) << divider->shift);
+		val = clk_div_readl(divider);
+		val &= ~(clk_div_mask(divider->width) << divider->shift);
 	}
 	val |= (u32)value << divider->shift;
-	clk_writel(val, divider->reg);
+	clk_div_writel(divider, val);
 
 	if (divider->lock)
 		spin_unlock_irqrestore(divider->lock, flags);
@@ -427,87 +448,12 @@ static int clk_divider_set_rate(struct clk_hw *hw, unsigned long rate,
 		__release(divider->lock);
 
 	return 0;
-}
-
-static int clk_divider_enable(struct clk_hw *hw)
-{
-	struct clk_divider *divider = to_clk_divider(hw);
-	unsigned long flags = 0;
-	u32 val;
-
-	if (!(divider->flags & CLK_DIVIDER_ZERO_GATE))
-		return 0;
-
-	if (!divider->cached_val) {
-		pr_err("%s: no valid preset rate\n", clk_hw_get_name(hw));
-		return -EINVAL;
-	}
-
-	if (divider->lock)
-		spin_lock_irqsave(divider->lock, flags);
-	else
-		__acquire(divider->lock);
-
-	/* restore div val */
-	val = clk_readl(divider->reg);
-	val |= divider->cached_val << divider->shift;
-	clk_writel(val, divider->reg);
-
-	if (divider->lock)
-		spin_unlock_irqrestore(divider->lock, flags);
-	else
-		__release(divider->lock);
-
-	return 0;
-}
-
-static void clk_divider_disable(struct clk_hw *hw)
-{
-	struct clk_divider *divider = to_clk_divider(hw);
-	unsigned long flags = 0;
-	u32 val;
-
-	if (!(divider->flags & CLK_DIVIDER_ZERO_GATE))
-		return;
-
-	if (divider->lock)
-		spin_lock_irqsave(divider->lock, flags);
-	else
-		__acquire(divider->lock);
-
-	/* store the current div val */
-	val = clk_readl(divider->reg) >> divider->shift;
-	val &= div_mask(divider->width);
-	divider->cached_val = val;
-	clk_writel(0, divider->reg);
-
-	if (divider->lock)
-		spin_unlock_irqrestore(divider->lock, flags);
-	else
-		__release(divider->lock);
-}
-
-static int clk_divider_is_enabled(struct clk_hw *hw)
-{
-	struct clk_divider *divider = to_clk_divider(hw);
-	u32 val;
-
-	if (!(divider->flags & CLK_DIVIDER_ZERO_GATE))
-		return __clk_get_enable_count(hw->clk);
-
-	val = clk_readl(divider->reg) >> divider->shift;
-	val &= div_mask(divider->width);
-
-	return val ? 1 : 0;
 }
 
 const struct clk_ops clk_divider_ops = {
 	.recalc_rate = clk_divider_recalc_rate,
 	.round_rate = clk_divider_round_rate,
 	.set_rate = clk_divider_set_rate,
-	.enable = clk_divider_enable,
-	.disable = clk_divider_disable,
-	.is_enabled = clk_divider_is_enabled,
 };
 EXPORT_SYMBOL_GPL(clk_divider_ops);
 
@@ -526,7 +472,6 @@ static struct clk_hw *_register_divider(struct device *dev, const char *name,
 	struct clk_divider *div;
 	struct clk_hw *hw;
 	struct clk_init_data init;
-	u32 val;
 	int ret;
 
 	if (clk_divider_flags & CLK_DIVIDER_HIWORD_MASK) {
@@ -546,7 +491,7 @@ static struct clk_hw *_register_divider(struct device *dev, const char *name,
 		init.ops = &clk_divider_ro_ops;
 	else
 		init.ops = &clk_divider_ops;
-	init.flags = flags | CLK_IS_BASIC;
+	init.flags = flags;
 	init.parent_names = (parent_name ? &parent_name: NULL);
 	init.num_parents = (parent_name ? 1 : 0);
 
@@ -558,12 +503,6 @@ static struct clk_hw *_register_divider(struct device *dev, const char *name,
 	div->lock = lock;
 	div->hw.init = &init;
 	div->table = table;
-
-	if (div->flags & CLK_DIVIDER_ZERO_GATE) {
-		val = clk_readl(reg) >> shift;
-		val &= div_mask(width);
-		div->cached_val = val;
-	}
 
 	/* register the clock */
 	hw = &div->hw;

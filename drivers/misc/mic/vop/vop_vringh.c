@@ -1,22 +1,10 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Intel MIC Platform Software Stack (MPSS)
  *
  * Copyright(c) 2016 Intel Corporation.
  *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License, version 2, as
- * published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful, but
- * WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
- * General Public License for more details.
- *
- * The full GNU General Public License is included in this distribution in
- * the file called "COPYING".
- *
  * Intel Virtio Over PCIe (VOP) driver.
- *
  */
 #include <linux/sched.h>
 #include <linux/poll.h>
@@ -63,33 +51,6 @@ static void _vop_notify(struct vringh *vrh)
 
 	if (db != -1)
 		vpdev->hw_ops->send_intr(vpdev, db);
-}
-
-static void vop_virtio_init_post(struct vop_vdev *vdev)
-{
-	struct mic_vqconfig *vqconfig = mic_vq_config(vdev->dd);
-	struct vop_device *vpdev = vdev->vpdev;
-	int i, used_size;
-
-	for (i = 0; i < vdev->dd->num_vq; i++) {
-		used_size = PAGE_ALIGN(sizeof(u16) * 3 +
-				sizeof(struct vring_used_elem) *
-				le16_to_cpu(vqconfig->num));
-		if (!le64_to_cpu(vqconfig[i].used_address)) {
-			dev_warn(vop_dev(vdev), "used_address zero??\n");
-			continue;
-		}
-		vdev->vvr[i].vrh.vring.used =
-			(void __force *)vpdev->hw_ops->ioremap(
-			vpdev,
-			le64_to_cpu(vqconfig[i].used_address),
-			used_size);
-	}
-
-	vdev->dc->used_address_updated = 0;
-
-	dev_info(vop_dev(vdev), "%s: device type %d LINKUP\n",
-		 __func__, vdev->virtio_id);
 }
 
 static inline void vop_virtio_device_reset(struct vop_vdev *vdev)
@@ -141,9 +102,6 @@ static void vop_bh_handler(struct work_struct *work)
 {
 	struct vop_vdev *vdev = container_of(work, struct vop_vdev,
 			virtio_bh_work);
-
-	if (vdev->dc->used_address_updated)
-		vop_virtio_init_post(vdev);
 
 	if (vdev->dc->vdev_reset)
 		vop_virtio_device_reset(vdev);
@@ -262,7 +220,6 @@ static void vop_init_device_ctrl(struct vop_vdev *vdev,
 	dc->guest_ack = 0;
 	dc->vdev_reset = 0;
 	dc->host_ack = 0;
-	dc->used_address_updated = 0;
 	dc->c2h_vdev_db = -1;
 	dc->h2c_vdev_db = -1;
 	vdev->dc = dc;
@@ -308,11 +265,11 @@ static int vop_virtio_add_device(struct vop_vdev *vdev,
 
 		num = le16_to_cpu(vqconfig[i].num);
 		mutex_init(&vvr->vr_mutex);
-		vr_size = PAGE_ALIGN(vring_size(num, MIC_VIRTIO_RING_ALIGN) +
+		vr_size = PAGE_ALIGN(round_up(vring_size(num, MIC_VIRTIO_RING_ALIGN), 4) +
 			sizeof(struct _mic_vring_info));
-		vr->va = (void *)
-			__get_free_pages(GFP_KERNEL | __GFP_ZERO,
-					 get_order(vr_size));
+
+		vr->va = dma_alloc_coherent(vop_dev(vdev), vr_size,
+					    &vr_addr, GFP_KERNEL);
 		if (!vr->va) {
 			ret = -ENOMEM;
 			dev_err(vop_dev(vdev), "%s %d err %d\n",
@@ -320,17 +277,9 @@ static int vop_virtio_add_device(struct vop_vdev *vdev,
 			goto err;
 		}
 		vr->len = vr_size;
-		vr->info = vr->va + vring_size(num, MIC_VIRTIO_RING_ALIGN);
+		vr->info = vr->va + round_up(vring_size(num, MIC_VIRTIO_RING_ALIGN), 4);
 		vr->info->magic = cpu_to_le32(MIC_MAGIC + vdev->virtio_id + i);
-		vr_addr = dma_map_single(&vpdev->dev, vr->va, vr_size,
-					 DMA_BIDIRECTIONAL);
-		if (dma_mapping_error(&vpdev->dev, vr_addr)) {
-			free_pages((unsigned long)vr->va, get_order(vr_size));
-			ret = -ENOMEM;
-			dev_err(vop_dev(vdev), "%s %d err %d\n",
-				__func__, __LINE__, ret);
-			goto err;
-		}
+
 		vqconfig[i].address = cpu_to_le64(vr_addr);
 
 		vring_init(&vr->vr, num, vr->va, MIC_VIRTIO_RING_ALIGN);
@@ -351,11 +300,9 @@ static int vop_virtio_add_device(struct vop_vdev *vdev,
 		dev_dbg(&vpdev->dev,
 			"%s %d index %d va %p info %p vr_size 0x%x\n",
 			__func__, __LINE__, i, vr->va, vr->info, vr_size);
-		vvr->buf = (void *)__get_free_pages(GFP_KERNEL,
-					get_order(VOP_INT_DMA_BUF_SIZE));
-		vvr->buf_da = dma_map_single(&vpdev->dev,
-					  vvr->buf, VOP_INT_DMA_BUF_SIZE,
-					  DMA_BIDIRECTIONAL);
+
+		vvr->buf = dma_alloc_coherent(vop_dev(vdev), VOP_INT_DMA_BUF_SIZE,
+					      &vvr->buf_da, GFP_KERNEL);
 	}
 
 	snprintf(irqname, sizeof(irqname), "vop%dvirtio%d", vpdev->index,
@@ -394,10 +341,8 @@ err:
 	for (j = 0; j < i; j++) {
 		struct vop_vringh *vvr = &vdev->vvr[j];
 
-		dma_unmap_single(&vpdev->dev, le64_to_cpu(vqconfig[j].address),
-				 vvr->vring.len, DMA_BIDIRECTIONAL);
-		free_pages((unsigned long)vvr->vring.va,
-			   get_order(vvr->vring.len));
+		dma_free_coherent(vop_dev(vdev), vvr->vring.len, vvr->vring.va,
+				  le64_to_cpu(vqconfig[j].address));
 	}
 	return ret;
 }
@@ -445,17 +390,12 @@ skip_hot_remove:
 	for (i = 0; i < vdev->dd->num_vq; i++) {
 		struct vop_vringh *vvr = &vdev->vvr[i];
 
-		dma_unmap_single(&vpdev->dev,
-				 vvr->buf_da, VOP_INT_DMA_BUF_SIZE,
-				 DMA_BIDIRECTIONAL);
-		free_pages((unsigned long)vvr->buf,
-			   get_order(VOP_INT_DMA_BUF_SIZE));
+		dma_free_coherent(vop_dev(vdev), VOP_INT_DMA_BUF_SIZE,
+				  vvr->buf, vvr->buf_da);
 		vringh_kiov_cleanup(&vvr->riov);
 		vringh_kiov_cleanup(&vvr->wiov);
-		dma_unmap_single(&vpdev->dev, le64_to_cpu(vqconfig[i].address),
-				 vvr->vring.len, DMA_BIDIRECTIONAL);
-		free_pages((unsigned long)vvr->vring.va,
-			   get_order(vvr->vring.len));
+		dma_free_coherent(vop_dev(vdev), vvr->vring.len, vvr->vring.va,
+				  le64_to_cpu(vqconfig[i].address));
 	}
 	/*
 	 * Order the type update with previous stores. This write barrier
@@ -528,15 +468,15 @@ static int vop_virtio_copy_to_user(struct vop_vdev *vdev, void __user *ubuf,
 				   int vr_idx)
 {
 	struct vop_device *vpdev = vdev->vpdev;
-	void __iomem *dbuf = vpdev->hw_ops->ioremap(vpdev, daddr, len);
+	void __iomem *dbuf = vpdev->hw_ops->remap(vpdev, daddr, len);
 	struct vop_vringh *vvr = &vdev->vvr[vr_idx];
 	struct vop_info *vi = dev_get_drvdata(&vpdev->dev);
-	size_t dma_alignment = 1 << vi->dma_ch->device->copy_align;
-	bool x200 = is_dma_copy_aligned(vi->dma_ch->device, 1, 1, 1);
+	size_t dma_alignment;
+	bool x200;
 	size_t dma_offset, partlen;
 	int err;
 
-	if (!VOP_USE_DMA) {
+	if (!VOP_USE_DMA || !vi->dma_ch) {
 		if (copy_to_user(ubuf, (void __force *)dbuf, len)) {
 			err = -EFAULT;
 			dev_err(vop_dev(vdev), "%s %d err %d\n",
@@ -547,6 +487,9 @@ static int vop_virtio_copy_to_user(struct vop_vdev *vdev, void __user *ubuf,
 		err = 0;
 		goto err;
 	}
+
+	dma_alignment = 1 << vi->dma_ch->device->copy_align;
+	x200 = is_dma_copy_aligned(vi->dma_ch->device, 1, 1, 1);
 
 	dma_offset = daddr - round_down(daddr, dma_alignment);
 	daddr -= dma_offset;
@@ -585,9 +528,9 @@ static int vop_virtio_copy_to_user(struct vop_vdev *vdev, void __user *ubuf,
 	}
 	err = 0;
 err:
-	vpdev->hw_ops->iounmap(vpdev, dbuf);
+	vpdev->hw_ops->unmap(vpdev, dbuf);
 	dev_dbg(vop_dev(vdev),
-		"%s: ubuf %p dbuf %p len 0x%lx vr_idx 0x%x\n",
+		"%s: ubuf %p dbuf %p len 0x%zx vr_idx 0x%x\n",
 		__func__, ubuf, dbuf, len, vr_idx);
 	return err;
 }
@@ -603,21 +546,27 @@ static int vop_virtio_copy_from_user(struct vop_vdev *vdev, void __user *ubuf,
 				     int vr_idx)
 {
 	struct vop_device *vpdev = vdev->vpdev;
-	void __iomem *dbuf = vpdev->hw_ops->ioremap(vpdev, daddr, len);
+	void __iomem *dbuf = vpdev->hw_ops->remap(vpdev, daddr, len);
 	struct vop_vringh *vvr = &vdev->vvr[vr_idx];
 	struct vop_info *vi = dev_get_drvdata(&vdev->vpdev->dev);
-	size_t dma_alignment = 1 << vi->dma_ch->device->copy_align;
-	bool x200 = is_dma_copy_aligned(vi->dma_ch->device, 1, 1, 1);
+	size_t dma_alignment;
+	bool x200;
 	size_t partlen;
-	bool dma = VOP_USE_DMA;
+	bool dma = VOP_USE_DMA && vi->dma_ch;
 	int err = 0;
+	size_t offset = 0;
 
-	if (daddr & (dma_alignment - 1)) {
-		vdev->tx_dst_unaligned += len;
-		dma = false;
-	} else if (ALIGN(len, dma_alignment) > dlen) {
-		vdev->tx_len_unaligned += len;
-		dma = false;
+	if (dma) {
+		dma_alignment = 1 << vi->dma_ch->device->copy_align;
+		x200 = is_dma_copy_aligned(vi->dma_ch->device, 1, 1, 1);
+
+		if (daddr & (dma_alignment - 1)) {
+			vdev->tx_dst_unaligned += len;
+			dma = false;
+		} else if (ALIGN(len, dma_alignment) > dlen) {
+			vdev->tx_len_unaligned += len;
+			dma = false;
+		}
 	}
 
 	if (!dma)
@@ -659,18 +608,25 @@ memcpy:
 	 * We are copying to IO below and should ideally use something
 	 * like copy_from_user_toio(..) if it existed.
 	 */
-	if (copy_from_user((void __force *)dbuf, ubuf, len)) {
-		err = -EFAULT;
-		dev_err(vop_dev(vdev), "%s %d err %d\n",
-			__func__, __LINE__, err);
-		goto err;
+	while (len) {
+		partlen = min_t(size_t, len, VOP_INT_DMA_BUF_SIZE);
+
+		if (copy_from_user(vvr->buf, ubuf + offset, partlen)) {
+			err = -EFAULT;
+			dev_err(vop_dev(vdev), "%s %d err %d\n",
+				__func__, __LINE__, err);
+			goto err;
+		}
+		memcpy_toio(dbuf + offset, vvr->buf, partlen);
+		offset += partlen;
+		vdev->out_bytes += partlen;
+		len -= partlen;
 	}
-	vdev->out_bytes += len;
 	err = 0;
 err:
-	vpdev->hw_ops->iounmap(vpdev, dbuf);
+	vpdev->hw_ops->unmap(vpdev, dbuf);
 	dev_dbg(vop_dev(vdev),
-		"%s: ubuf %p dbuf %p len 0x%lx vr_idx 0x%x\n",
+		"%s: ubuf %p dbuf %p len 0x%zx vr_idx 0x%x\n",
 		__func__, ubuf, dbuf, len, vr_idx);
 	return err;
 }
@@ -704,16 +660,17 @@ static int vop_vringh_copy(struct vop_vdev *vdev, struct vringh_kiov *iov,
 
 	while (len && iov->i < iov->used) {
 		struct kvec *kiov = &iov->iov[iov->i];
+		unsigned long daddr = (unsigned long)kiov->iov_base;
 
 		partlen = min(kiov->iov_len, len);
 		if (read)
 			ret = vop_virtio_copy_to_user(vdev, ubuf, partlen,
-						      (u64)kiov->iov_base,
+						      daddr,
 						      kiov->iov_len,
 						      vr_idx);
 		else
 			ret = vop_virtio_copy_from_user(vdev, ubuf, partlen,
-							(u64)kiov->iov_base,
+							daddr,
 							kiov->iov_len,
 							vr_idx);
 		if (ret) {
@@ -937,13 +894,10 @@ static long vop_ioctl(struct file *f, unsigned int cmd, unsigned long arg)
 		    dd.num_vq > MIC_MAX_VRINGS)
 			return -EINVAL;
 
-		dd_config = kzalloc(mic_desc_size(&dd), GFP_KERNEL);
-		if (!dd_config)
-			return -ENOMEM;
-		if (copy_from_user(dd_config, argp, mic_desc_size(&dd))) {
-			ret = -EFAULT;
-			goto free_ret;
-		}
+		dd_config = memdup_user(argp, mic_desc_size(&dd));
+		if (IS_ERR(dd_config))
+			return PTR_ERR(dd_config);
+
 		/* Ensure desc has not changed between the two reads */
 		if (memcmp(&dd, dd_config, sizeof(dd))) {
 			ret = -EINVAL;
@@ -995,17 +949,12 @@ _unlock_ret:
 		ret = vop_vdev_inited(vdev);
 		if (ret)
 			goto __unlock_ret;
-		buf = kzalloc(vdev->dd->config_len, GFP_KERNEL);
-		if (!buf) {
-			ret = -ENOMEM;
+		buf = memdup_user(argp, vdev->dd->config_len);
+		if (IS_ERR(buf)) {
+			ret = PTR_ERR(buf);
 			goto __unlock_ret;
 		}
-		if (copy_from_user(buf, argp, vdev->dd->config_len)) {
-			ret = -EFAULT;
-			goto done;
-		}
 		ret = vop_virtio_config_change(vdev, buf);
-done:
 		kfree(buf);
 __unlock_ret:
 		mutex_unlock(&vdev->vdev_mutex);
@@ -1018,66 +967,31 @@ __unlock_ret:
 }
 
 /*
- * We return POLLIN | POLLOUT from poll when new buffers are enqueued, and
+ * We return EPOLLIN | EPOLLOUT from poll when new buffers are enqueued, and
  * not when previously enqueued buffers may be available. This means that
  * in the card->host (TX) path, when userspace is unblocked by poll it
  * must drain all available descriptors or it can stall.
  */
-static unsigned int vop_poll(struct file *f, poll_table *wait)
+static __poll_t vop_poll(struct file *f, poll_table *wait)
 {
 	struct vop_vdev *vdev = f->private_data;
-	int mask = 0;
+	__poll_t mask = 0;
 
 	mutex_lock(&vdev->vdev_mutex);
 	if (vop_vdev_inited(vdev)) {
-		mask = POLLERR;
+		mask = EPOLLERR;
 		goto done;
 	}
 	poll_wait(f, &vdev->waitq, wait);
 	if (vop_vdev_inited(vdev)) {
-		mask = POLLERR;
+		mask = EPOLLERR;
 	} else if (vdev->poll_wake) {
 		vdev->poll_wake = 0;
-		mask = POLLIN | POLLOUT;
+		mask = EPOLLIN | EPOLLOUT;
 	}
 done:
 	mutex_unlock(&vdev->vdev_mutex);
 	return mask;
-}
-
-static inline int
-vop_query_offset(struct vop_vdev *vdev, unsigned long offset,
-		 unsigned long *size, unsigned long *pa)
-{
-	struct vop_device *vpdev = vdev->vpdev;
-	unsigned long start = MIC_DP_SIZE;
-	int i;
-
-	/*
-	 * MMAP interface is as follows:
-	 * offset				region
-	 * 0x0					virtio device_page
-	 * 0x1000				first vring
-	 * 0x1000 + size of 1st vring		second vring
-	 * ....
-	 */
-	if (!offset) {
-		*pa = virt_to_phys(vpdev->hw_ops->get_dp(vpdev));
-		*size = MIC_DP_SIZE;
-		return 0;
-	}
-
-	for (i = 0; i < vdev->dd->num_vq; i++) {
-		struct vop_vringh *vvr = &vdev->vvr[i];
-
-		if (offset == start) {
-			*pa = virt_to_phys(vvr->vring.va);
-			*size = vvr->vring.len;
-			return 0;
-		}
-		start += vvr->vring.len;
-	}
-	return -1;
 }
 
 /*
@@ -1086,32 +1000,61 @@ vop_query_offset(struct vop_vdev *vdev, unsigned long offset,
 static int vop_mmap(struct file *f, struct vm_area_struct *vma)
 {
 	struct vop_vdev *vdev = f->private_data;
-	unsigned long offset = vma->vm_pgoff << PAGE_SHIFT;
-	unsigned long pa, size = vma->vm_end - vma->vm_start, size_rem = size;
-	int i, err;
+	struct mic_vqconfig *vqconfig = mic_vq_config(vdev->dd);
+	unsigned long orig_start = vma->vm_start;
+	unsigned long orig_end = vma->vm_end;
+	int err, i;
+
+	if (!vdev->vpdev->hw_ops->dp_mmap)
+		return -EINVAL;
+	if (vma->vm_pgoff)
+		return -EINVAL;
+	if (vma->vm_flags & VM_WRITE)
+		return -EACCES;
 
 	err = vop_vdev_inited(vdev);
 	if (err)
-		goto ret;
-	if (vma->vm_flags & VM_WRITE) {
-		err = -EACCES;
-		goto ret;
-	}
-	while (size_rem) {
-		i = vop_query_offset(vdev, offset, &size, &pa);
-		if (i < 0) {
-			err = -EINVAL;
-			goto ret;
-		}
-		err = remap_pfn_range(vma, vma->vm_start + offset,
-				      pa >> PAGE_SHIFT, size,
-				      vma->vm_page_prot);
+		return err;
+
+	/*
+	 * MMAP interface is as follows:
+	 * offset				region
+	 * 0x0					virtio device_page
+	 * 0x1000				first vring
+	 * 0x1000 + size of 1st vring		second vring
+	 * ....
+	 *
+	 * We manipulate vm_start/vm_end to trick dma_mmap_coherent into
+	 * performing partial mappings, which is a bit of a hack, but safe
+	 * while we are under mmap_lock().  Eventually this needs to be
+	 * replaced by a proper DMA layer API.
+	 */
+	vma->vm_end = vma->vm_start + MIC_DP_SIZE;
+	err = vdev->vpdev->hw_ops->dp_mmap(vdev->vpdev, vma);
+	if (err)
+		goto out;
+
+	for (i = 0; i < vdev->dd->num_vq; i++) {
+		struct vop_vringh *vvr = &vdev->vvr[i];
+
+		vma->vm_start = vma->vm_end;
+		vma->vm_end += vvr->vring.len;
+
+		err = -EINVAL;
+		if (vma->vm_end > orig_end)
+			goto out;
+		err = dma_mmap_coherent(vop_dev(vdev), vma, vvr->vring.va,
+					le64_to_cpu(vqconfig[i].address),
+					vvr->vring.len);
 		if (err)
-			goto ret;
-		size_rem -= size;
-		offset += size;
+			goto out;
 	}
-ret:
+out:
+	/*
+	 * Restore the original vma parameters.
+	 */
+	vma->vm_start = orig_start;
+	vma->vm_end = orig_end;
 	return err;
 }
 

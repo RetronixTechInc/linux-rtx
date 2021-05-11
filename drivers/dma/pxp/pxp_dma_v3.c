@@ -1,22 +1,8 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 /*
  * Copyright (C) 2010-2016 Freescale Semiconductor, Inc.
  *
- * Copyright 2017-2018 NXP
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307 USA
- *
+ * Copyright 2017-2019 NXP
  */
 /*
  * Based on STMP378X PxP driver
@@ -195,7 +181,6 @@ static unsigned int block_size;
 static struct kmem_cache *tx_desc_cache;
 static struct kmem_cache *edge_node_cache;
 static struct pxp_collision_info col_info;
-static dma_addr_t paddr;
 static bool v3p_flag;
 static int alpha_blending_version;
 static bool pxp_legacy;
@@ -893,7 +878,7 @@ static __attribute__((aligned (1024*4))) unsigned int active_matrix_data_8x8[64]
    0x03020706, 0x05010004, 0x03020706, 0x05010004
     };
 
-static __attribute__((aligned (1024*4))) unsigned int bit1_dither_data_8x8[64]={
+static __attribute__((aligned (1024*4))) unsigned int bit1_dither_data_8x8[64] = {
 
 	1,       49*2,    13*2,    61*2,    4*2,     52*2,    16*2,    64*2,
 	33*2,    17*2,    45*2,    29*2,    36*2,    20*2,    48*2,    32*2,
@@ -905,7 +890,7 @@ static __attribute__((aligned (1024*4))) unsigned int bit1_dither_data_8x8[64]={
 	43*2,    27*2,    39*2,    23*2,    42*2,    26*2,    38*2,    22*2
 };
 
-static __attribute__((aligned (1024*4))) unsigned int bit2_dither_data_8x8[64]={
+static __attribute__((aligned (1024*4))) unsigned int bit2_dither_data_8x8[64] = {
 
 	1,     49,    13,    61,    4,     52,    16,    64,
 	33,    17,    45,    29,    36,    20,    48,    32,
@@ -917,7 +902,7 @@ static __attribute__((aligned (1024*4))) unsigned int bit2_dither_data_8x8[64]={
 	43,    27,    39,    23,    42,    26,    38,    22
 };
 
-static __attribute__((aligned (1024*4))) unsigned int bit4_dither_data_8x8[64]={
+static __attribute__((aligned (1024*4))) unsigned int bit4_dither_data_8x8[64] = {
 
 	1,       49/4,    13/4,    61/4,    4/4,     52/4,    16/4,    64/4,
 	33/4,    17/4,    45/4,    29/4,    36/4,    20/4,    48/4,    32/4,
@@ -1558,7 +1543,7 @@ static uint32_t pxp_store_ctrl_config(struct pxp_pixmap *out, uint8_t mode,
 		ctrl.store_memory_en = 1;
 	}
 
-	if (out->rotate || out->flip)
+	if (out && (out->rotate || out->flip))
 		ctrl.block_en = 1;
 
 	ctrl.ch_en = 1;
@@ -1713,11 +1698,13 @@ static uint32_t pxp_store_shift_ctrl_config(struct pxp_pixmap *out,
 		switch(out->format) {
 		case PXP_PIX_FMT_YUYV:
 			shift_bypass = 1;
+			/* fall through */
 		case PXP_PIX_FMT_YVYU:
 			shift_ctrl.out_yuv422_1p_en = 1;
 			break;
 		case PXP_PIX_FMT_NV16:
 			shift_bypass = 1;
+			/* fall through */
 		case PXP_PIX_FMT_NV61:
 			shift_ctrl.out_yuv422_2p_en = 1;
 			break;
@@ -2436,6 +2423,7 @@ static int pxp_ps_config(struct pxp_pixmap *input,
 
 	offset = input->crop.y * input->pitch +
 		 input->crop.x * (input->bpp >> 3);
+
 	pxp_writel(input->paddr + offset, HW_PXP_PS_BUF);
 
 	switch (is_yuv(input->format)) {
@@ -3050,6 +3038,7 @@ static int pxp_2d_task_config(struct pxp_pixmap *input,
 {
 	uint8_t position = 0;
 
+
 	do {
 		position = find_next_bit((unsigned long *)&nodes_used, 32, position);
 		if (position >= sizeof(uint32_t) * 8)
@@ -3365,7 +3354,7 @@ reparse:
 		filter_possible_inputs(input_s0, &possible_inputs_s0);
 		filter_possible_inputs(input_s1, &possible_inputs_s1);
 
-		if (!possible_inputs_s0 || !possible_inputs_s0)
+		if (!possible_inputs_s0 || !possible_inputs_s1)
 			return -EINVAL;
 
 		filter_possible_outputs(output, &possible_outputs);
@@ -3584,7 +3573,7 @@ static int pxp_config(struct pxps *pxp, struct pxp_channel *pxp_chan)
 			/* collision detection should be always enable in standard mode */
 			pxp_collision_detection_enable(pxp, pxp_conf_data->wfe_a_fetch_param[0].width,
 					pxp_conf_data->wfe_a_fetch_param[0].height);
-		}
+			}
 
 		if (pxp->devdata && pxp->devdata->pxp_wfe_a_configure)
 			pxp->devdata->pxp_wfe_a_configure(pxp);
@@ -3655,9 +3644,9 @@ static inline void clkoff_callback(struct work_struct *w)
 	pxp_clk_disable(pxp);
 }
 
-static void pxp_clkoff_timer(unsigned long arg)
+static void pxp_clkoff_timer(struct timer_list *t)
 {
-	struct pxps *pxp = (struct pxps *)arg;
+	struct pxps *pxp = from_timer(pxp, t, clk_timer);
 
 	if ((pxp->pxp_ongoing == 0) && list_empty(&head))
 		schedule_work(&pxp->work);
@@ -3726,10 +3715,11 @@ static void __pxpdma_dostart(struct pxp_channel *pxp_chan)
 	struct pxp_pixmap *input, *output;
 	int i = 0, ret;
 	bool combine_enable = false;
+	int delta_x, delta_y;
 
 	memset(&pxp->pxp_conf_state.s0_param, 0,  sizeof(struct pxp_layer_param));
 	memset(&pxp->pxp_conf_state.out_param, 0,  sizeof(struct pxp_layer_param));
-	memset(pxp->pxp_conf_state.ol_param, 0,  sizeof(struct pxp_layer_param));
+	memset(pxp->pxp_conf_state.ol_param, 0, sizeof(struct pxp_layer_param));
 	memset(&pxp->pxp_conf_state.proc_data, 0,  sizeof(struct pxp_proc_data));
 
 	memset(task, 0, sizeof(*task));
@@ -3746,6 +3736,19 @@ static void __pxpdma_dostart(struct pxp_channel *pxp_chan)
 		alpha_blending_version = PXP_ALPHA_BLENDING_NONE;
 
 	pxp_legacy = (proc_data->pxp_legacy) ? true : false;
+
+	param = &pxp->pxp_conf_state.s0_param;
+	if (param->pixel_fmt == PXP_PIX_FMT_YUV420P ||
+	    param->pixel_fmt == PXP_PIX_FMT_YVU420P) {
+		delta_x = proc_data->srect.left - ALIGN_DOWN(proc_data->srect.left, 2);
+		delta_y = proc_data->srect.top - ALIGN_DOWN(proc_data->srect.top, 2);
+
+		proc_data->srect.left = ALIGN_DOWN(proc_data->srect.left, 2);
+		proc_data->srect.top  = ALIGN_DOWN(proc_data->srect.top, 2);
+
+		proc_data->srect.width  = proc_data->srect.width + delta_x;
+		proc_data->srect.height = proc_data->srect.height + delta_y;
+	}
 
 	/* Save PxP configuration */
 	list_for_each_entry(child, &desc->tx_list, list) {
@@ -6542,15 +6545,22 @@ static void pxp_histogram_enable(struct pxps *pxp,
 				 unsigned int width,
 				 unsigned int height)
 {
+	u32 val = 0;
+
 	__raw_writel(
 			BF_PXP_HIST_B_BUF_SIZE_HEIGHT(height)|
 			BF_PXP_HIST_B_BUF_SIZE_WIDTH(width),
 			pxp->base + HW_PXP_HIST_B_BUF_SIZE);
 
+	if (pxp_is_v3(pxp))
+		val = 64;
+	else if (pxp_is_v3p(pxp))
+		val = 64 + 4;
+
 	__raw_writel(
 			BF_PXP_HIST_B_MASK_MASK_EN(1)|
 			BF_PXP_HIST_B_MASK_MASK_MODE(0)|
-			BF_PXP_HIST_B_MASK_MASK_OFFSET(64)|
+			BF_PXP_HIST_B_MASK_MASK_OFFSET(val)|
 			BF_PXP_HIST_B_MASK_MASK_WIDTH(0)|
 			BF_PXP_HIST_B_MASK_MASK_VALUE0(1) |
 			BF_PXP_HIST_B_MASK_MASK_VALUE1(0),
@@ -6591,15 +6601,22 @@ static void pxp_collision_detection_enable(struct pxps *pxp,
 					   unsigned int width,
 					   unsigned int height)
 {
+	u32 val = 0;
+
 	__raw_writel(
 			BF_PXP_HIST_A_BUF_SIZE_HEIGHT(height)|
 			BF_PXP_HIST_A_BUF_SIZE_WIDTH(width),
 			pxp_reg_base + HW_PXP_HIST_A_BUF_SIZE);
 
+	if (pxp_is_v3(pxp))
+		val = 65;
+	else if (pxp_is_v3p(pxp))
+		val = 65 + 4;
+
 	__raw_writel(
 			BF_PXP_HIST_A_MASK_MASK_EN(1)|
 			BF_PXP_HIST_A_MASK_MASK_MODE(0)|
-			BF_PXP_HIST_A_MASK_MASK_OFFSET(65)|
+			BF_PXP_HIST_A_MASK_MASK_OFFSET(val)|
 			BF_PXP_HIST_A_MASK_MASK_WIDTH(0)|
 			BF_PXP_HIST_A_MASK_MASK_VALUE0(1) |
 			BF_PXP_HIST_A_MASK_MASK_VALUE1(0),
@@ -6911,7 +6928,7 @@ static void pxp_set_final_lut_data(struct pxps *pxp)
 	struct pxp_config_data *pxp_conf = &pxp->pxp_conf_state;
 	struct pxp_proc_data *proc_data = &pxp_conf->proc_data;
 
-	if(proc_data->quant_bit < 2) {
+	if (proc_data->quant_bit < 2) {
 		pxp_sram_init(pxp, DITHER0_LUT, (u32)bit1_dither_data_8x8, 64);
 
 		__raw_writel(
@@ -6941,7 +6958,7 @@ static void pxp_set_final_lut_data(struct pxps *pxp)
 				BF_PXP_DITHER_FINAL_LUT_DATA3_DATA14(0xf0) |
 				BF_PXP_DITHER_FINAL_LUT_DATA3_DATA15(0xf0),
 				pxp->base + HW_PXP_DITHER_FINAL_LUT_DATA3);
-	} else if(proc_data->quant_bit < 4) {
+	} else if (proc_data->quant_bit < 4) {
 		pxp_sram_init(pxp, DITHER0_LUT, (u32)bit2_dither_data_8x8, 64);
 
 		__raw_writel(
@@ -7631,7 +7648,8 @@ static int pxp_init_interrupt(struct platform_device *pdev)
 	err = devm_request_irq(&pdev->dev, std_irq, pxp_irq, 0,
 				"pxp-dmaengine-std", pxp);
 	if (err) {
-		dev_err(&pdev->dev, "Request pxp standard irq failed: %d\n", err);
+		dev_err(&pdev->dev, "Request pxp standard irq failed: %d\n",
+			err);
 		return err;
 	}
 
@@ -7674,9 +7692,7 @@ static void pxp_init_timer(struct pxps *pxp)
 {
 	INIT_WORK(&pxp->work, clkoff_callback);
 
-	init_timer(&pxp->clk_timer);
-	pxp->clk_timer.function = pxp_clkoff_timer;
-	pxp->clk_timer.data = (unsigned long)pxp;
+	timer_setup(&pxp->clk_timer, pxp_clkoff_timer, 0);
 }
 
 static bool is_mux_node(uint32_t node_id)
@@ -7903,9 +7919,9 @@ static void pxp_config_m4(struct platform_device *pdev)
 	__raw_writel(0xC0000000, pinctrl_base + 0x08);
 	__raw_writel(0x3, pinctrl_base + PIN_DOUT);
 	int i;
-	for (i = 0; i < 1024 * 32 / 4; i++) {
+
+	for (i = 0; i < 1024 * 32 / 4; i++)
 		*(((unsigned int *)(fpga_tcml_base)) + i) = cm4_image[i];
-	}
 }
 #endif
 
@@ -7975,6 +7991,8 @@ static int pxp_probe(struct platform_device *pdev)
 
 	if (pxp->devdata && pxp->devdata->pxp_data_path_config)
 		pxp->devdata->pxp_data_path_config(pxp);
+	/* enable all the possible irq raised by PXP */
+	__raw_writel(0xffff, pxp->base + HW_PXP_IRQ_MASK);
 
 	dump_pxp_reg(pxp);
 	pxp_clk_disable(pxp);
@@ -8023,9 +8041,6 @@ static int pxp_probe(struct platform_device *pdev)
 #endif
 	register_pxp_device();
 	pm_runtime_enable(pxp->dev);
-
-	dma_alloc_coherent(NULL, PAGE_ALIGN(1920 * 1088 * 4),
-			   &paddr, GFP_KERNEL);
 
 exit:
 	if (err)

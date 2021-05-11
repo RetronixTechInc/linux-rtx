@@ -1,20 +1,9 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * copyright (c) 2013 Freescale Semiconductor, Inc.
  * Freescale IMX AHCI SATA platform driver
  *
  * based on the AHCI SATA platform driver by Jeff Garzik and Anton Vorontsov
- *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms and conditions of the GNU General Public License,
- * version 2, as published by the Free Software Foundation.
- *
- * This program is distributed in the hope it will be useful, but WITHOUT
- * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
- * FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for
- * more details.
- *
- * You should have received a copy of the GNU General Public License along with
- * this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
 #include <linux/kernel.h>
@@ -22,9 +11,8 @@
 #include <linux/platform_device.h>
 #include <linux/regmap.h>
 #include <linux/ahci_platform.h>
-#include <linux/gpio.h>
-#include <linux/of_gpio.h>
 #include <linux/of_device.h>
+#include <linux/of_gpio.h>
 #include <linux/mfd/syscon.h>
 #include <linux/mfd/syscon/imx6q-iomuxc-gpr.h>
 #include <linux/libata.h>
@@ -60,7 +48,7 @@ enum {
 	IMX8QM_SATA_PHY_REG09_TX_IMPED_RATIO		= 0x09,
 	IMX8QM_SATA_PHY_REG10_TX_POST_CURSOR_RATIO	= 0x0a,
 	IMX8QM_SATA_PHY_GEN1_TX_POST_CURSOR_RATIO	= 0x15,
-	IMX8QM_SATA_PHY_IMPED_RATIO_85OHM		= 0x6c,
+	IMX8QM_SATA_PHY_IMPED_RATIO_100OHM		= 0x5d,
 	IMX8QM_SATA_PHY_REG22_TX_POST_CURSOR_RATIO	= 0x16,
 	IMX8QM_SATA_PHY_GEN2_TX_POST_CURSOR_RATIO	= 0x00,
 	IMX8QM_SATA_PHY_REG24_TX_AMP_RATIO_MARGIN0	= 0x18,
@@ -99,10 +87,14 @@ enum {
 	IMX8QM_SATA_PP3CFG_COMWAKE_BURST_GAP		= 0x08 << 16,
 	IMX8QM_SATA_PP3CFG_COMWAKE_BURST_GAP_MAX	= 0x0f << 8,
 	IMX8QM_SATA_PP3CFG_COMWAKE_BURST_GAP_MIN	= 0x01 << 0,
+	IMX8QM_SATA_AHCI_VEND_PTC			= 0xc8,
+	IMX8QM_SATA_AHCI_VEND_PTC_RXWM_MASK		= 0x7f,
+	IMX8QM_SATA_AHCI_VEND_PTC_RXWM			= 0x29,
 
 	IMX8QM_LPCG_PHYX2_PCLK0_MASK		= (0x3 << 16),
 	IMX8QM_LPCG_PHYX2_PCLK1_MASK		= (0x3 << 20),
 	IMX8QM_PHY_APB_RSTN_0			= BIT(0),
+	IMX8QM_PHY_APB_RSTN_1			= BIT(1),
 	IMX8QM_PHY_MODE_SATA			= BIT(19),
 	IMX8QM_PHY_MODE_MASK			= (0xf << 17),
 	IMX8QM_PHY_PIPE_RSTN_0			= BIT(24),
@@ -122,6 +114,7 @@ enum {
 	IMX8QM_SATA_CTRL_EPCS_TXDEEMP_SEL	= BIT(6),
 	IMX8QM_SATA_CTRL_EPCS_TXDEEMP		= BIT(5),
 	IMX8QM_CTRL_BUTTON_RST_N		= BIT(21),
+	IMX8QM_CTRL_PERST_N			= BIT(22),
 	IMX8QM_CTRL_POWER_UP_RST_N		= BIT(23),
 	IMX8QM_CTRL_LTSSM_ENABLE		= BIT(4),
 };
@@ -144,6 +137,12 @@ struct imx_ahci_priv {
 	struct clk *phy_apbclk;
 	struct clk *phy_pclk0;
 	struct clk *phy_pclk1;
+	struct clk *per_clk0;
+	struct clk *per_clk1;
+	struct clk *per_clk2;
+	struct clk *per_clk3;
+	struct clk *per_clk4;
+	struct clk *per_clk5;
 	void __iomem *phy_base;
 	int clkreq_gpio;
 	struct regmap *gpr;
@@ -166,6 +165,55 @@ MODULE_PARM_DESC(bist, "AHCI IMX bist mode enable(1 = enable)");
 
 static void ahci_imx_host_stop(struct ata_host *host);
 
+static bool imx_sata_readable_reg(struct device *dev, unsigned int reg)
+{
+	switch (reg) {
+	case IMX8QM_LPCG_PHYX2_OFFSET:
+	case IMX8QM_CSR_PHYX2_OFFSET:
+	case IMX8QM_CSR_PHYX1_OFFSET:
+	case IMX8QM_CSR_PCIEA_OFFSET:
+	case IMX8QM_CSR_PCIEB_OFFSET:
+	case IMX8QM_CSR_SATA_OFFSET:
+	case IMX8QM_CSR_MISC_OFFSET:
+	case IMX8QM_CSR_PHYX2_OFFSET + IMX8QM_CSR_PHYX_STTS0_OFFSET:
+	case IMX8QM_CSR_PHYX1_OFFSET + IMX8QM_CSR_PHYX_STTS0_OFFSET:
+	case IMX8QM_CSR_PCIEA_OFFSET + IMX8QM_CSR_PCIE_CTRL2_OFFSET:
+	case IMX8QM_CSR_PCIEB_OFFSET + IMX8QM_CSR_PCIE_CTRL2_OFFSET:
+		return true;
+	default:
+		return false;
+	}
+}
+
+static bool imx_sata_writeable_reg(struct device *dev, unsigned int reg)
+{
+	switch (reg) {
+	case IMX8QM_LPCG_PHYX2_OFFSET:
+	case IMX8QM_CSR_PHYX2_OFFSET:
+	case IMX8QM_CSR_PHYX1_OFFSET:
+	case IMX8QM_CSR_PCIEA_OFFSET:
+	case IMX8QM_CSR_PCIEB_OFFSET:
+	case IMX8QM_CSR_SATA_OFFSET:
+	case IMX8QM_CSR_MISC_OFFSET:
+	case IMX8QM_CSR_PCIEA_OFFSET + IMX8QM_CSR_PCIE_CTRL2_OFFSET:
+	case IMX8QM_CSR_PCIEB_OFFSET + IMX8QM_CSR_PCIE_CTRL2_OFFSET:
+		return true;
+	default:
+		return false;
+	}
+}
+
+static const struct regmap_config imx_sata_regconfig = {
+	.max_register = IMX8QM_CSR_MISC_OFFSET,
+	.reg_bits = 32,
+	.val_bits = 32,
+	.reg_stride = 4,
+	.val_format_endian = REGMAP_ENDIAN_NATIVE,
+	.num_reg_defaults_raw =  IMX8QM_CSR_MISC_OFFSET / sizeof(uint32_t) + 1,
+	.readable_reg = imx_sata_readable_reg,
+	.writeable_reg = imx_sata_writeable_reg,
+	.cache_type = REGCACHE_NONE,
+};
 static int imx_phy_crbit_assert(void __iomem *mmio, u32 bit, bool assert)
 {
 	int timeout = 10;
@@ -276,10 +324,25 @@ static int imx_phy_reg_read(u16 *val, void __iomem *mmio)
 
 static int imx_sata_phy_reset(struct ahci_host_priv *hpriv)
 {
+	struct imx_ahci_priv *imxpriv = hpriv->plat_data;
 	void __iomem *mmio = hpriv->mmio;
 	int timeout = 10;
 	u16 val;
 	int ret;
+
+	if (imxpriv->type == AHCI_IMX6QP) {
+		/* 6qp adds the sata reset mechanism, use it for 6qp sata */
+		regmap_update_bits(imxpriv->gpr, IOMUXC_GPR5,
+				   IMX6Q_GPR5_SATA_SW_PD, 0);
+
+		regmap_update_bits(imxpriv->gpr, IOMUXC_GPR5,
+				   IMX6Q_GPR5_SATA_SW_RST, 0);
+		udelay(50);
+		regmap_update_bits(imxpriv->gpr, IOMUXC_GPR5,
+				   IMX6Q_GPR5_SATA_SW_RST,
+				   IMX6Q_GPR5_SATA_SW_RST);
+		return 0;
+	}
 
 	/* Reset SATA PHY by setting RESET bit of PHY register CLOCK_RESET */
 	ret = imx_phy_reg_addressing(IMX_CLOCK_RESET, mmio);
@@ -318,7 +381,7 @@ static int read_adc_sum(void *dev, u16 rtune_ctl_reg, void __iomem * mmio)
 {
 	u16 adc_out_reg, read_sum;
 	u32 index, read_attempt;
-	const u32 attempt_limit = 100;
+	const u32 attempt_limit = 200;
 
 	imx_phy_reg_addressing(SATA_PHY_CR_CLOCK_RTUNE_CTL, mmio);
 	imx_phy_reg_write(rtune_ctl_reg, mmio);
@@ -479,6 +542,106 @@ static struct attribute *fsl_sata_ahci_attrs[] = {
 };
 ATTRIBUTE_GROUPS(fsl_sata_ahci);
 
+static int imx8_sata_clk_enable(struct imx_ahci_priv *imxpriv)
+{
+	int ret;
+	struct device *dev = &imxpriv->ahci_pdev->dev;
+
+	/* configure the hsio for sata */
+	ret = clk_prepare_enable(imxpriv->phy_pclk0);
+	if (ret < 0) {
+		dev_err(dev, "can't enable phy_pclk0.\n");
+		return ret;
+	}
+	ret = clk_prepare_enable(imxpriv->phy_pclk1);
+	if (ret < 0) {
+		dev_err(dev, "can't enable phy_pclk1.\n");
+		goto disable_phy_pclk0;
+	}
+	ret = clk_prepare_enable(imxpriv->epcs_tx_clk);
+	if (ret < 0) {
+		dev_err(dev, "can't enable epcs_tx_clk.\n");
+		goto disable_phy_pclk1;
+	}
+	ret = clk_prepare_enable(imxpriv->epcs_rx_clk);
+	if (ret < 0) {
+		dev_err(dev, "can't enable epcs_rx_clk.\n");
+		goto disable_epcs_tx_clk;
+	}
+	ret = clk_prepare_enable(imxpriv->phy_apbclk);
+	if (ret < 0) {
+		dev_err(dev, "can't enable phy_apbclk.\n");
+		goto disable_epcs_rx_clk;
+	}
+	ret = clk_prepare_enable(imxpriv->per_clk0);
+	if (ret < 0) {
+		dev_err(dev, "can't enable per_clk.\n");
+		goto disable_phy_apbclk;
+	}
+	ret = clk_prepare_enable(imxpriv->per_clk1);
+	if (ret < 0) {
+		dev_err(dev, "can't enable per_clk.\n");
+		goto disable_per_clk0;
+	}
+	ret = clk_prepare_enable(imxpriv->per_clk2);
+	if (ret < 0) {
+		dev_err(dev, "can't enable per_clk.\n");
+		goto disable_per_clk1;
+	}
+	ret = clk_prepare_enable(imxpriv->per_clk3);
+	if (ret < 0) {
+		dev_err(dev, "can't enable per_clk.\n");
+		goto disable_per_clk2;
+	}
+	ret = clk_prepare_enable(imxpriv->per_clk4);
+	if (ret < 0) {
+		dev_err(dev, "can't enable per_clk.\n");
+		goto disable_per_clk3;
+	}
+	ret = clk_prepare_enable(imxpriv->per_clk5);
+	if (ret < 0)
+		dev_err(dev, "can't enable per_clk.\n");
+	else
+		return 0;
+
+	clk_disable_unprepare(imxpriv->per_clk4);
+disable_per_clk3:
+	clk_disable_unprepare(imxpriv->per_clk3);
+disable_per_clk2:
+	clk_disable_unprepare(imxpriv->per_clk2);
+disable_per_clk1:
+	clk_disable_unprepare(imxpriv->per_clk1);
+disable_per_clk0:
+	clk_disable_unprepare(imxpriv->per_clk0);
+disable_phy_apbclk:
+	clk_disable_unprepare(imxpriv->phy_apbclk);
+disable_epcs_rx_clk:
+	clk_disable_unprepare(imxpriv->epcs_rx_clk);
+disable_epcs_tx_clk:
+	clk_disable_unprepare(imxpriv->epcs_tx_clk);
+disable_phy_pclk1:
+	clk_disable_unprepare(imxpriv->phy_pclk1);
+disable_phy_pclk0:
+	clk_disable_unprepare(imxpriv->phy_pclk0);
+	return ret;
+}
+
+static void imx8_sata_clk_disable(struct imx_ahci_priv *imxpriv)
+{
+	regmap_update_bits(imxpriv->gpr,
+			IMX8QM_LPCG_PHYX2_OFFSET,
+			IMX8QM_LPCG_PHYX2_PCLK0_MASK |
+			IMX8QM_LPCG_PHYX2_PCLK1_MASK, 0);
+	clk_disable_unprepare(imxpriv->epcs_rx_clk);
+	clk_disable_unprepare(imxpriv->epcs_tx_clk);
+	clk_disable_unprepare(imxpriv->per_clk5);
+	clk_disable_unprepare(imxpriv->per_clk4);
+	clk_disable_unprepare(imxpriv->per_clk3);
+	clk_disable_unprepare(imxpriv->per_clk2);
+	clk_disable_unprepare(imxpriv->per_clk1);
+	clk_disable_unprepare(imxpriv->per_clk0);
+}
+
 static int imx8_sata_enable(struct ahci_host_priv *hpriv)
 {
 	u32 val, reg;
@@ -486,63 +649,46 @@ static int imx8_sata_enable(struct ahci_host_priv *hpriv)
 	struct imx_ahci_priv *imxpriv = hpriv->plat_data;
 	struct device *dev = &imxpriv->ahci_pdev->dev;
 
-	/* configure the hsio for sata */
-	ret = clk_prepare_enable(imxpriv->phy_pclk0);
-	if (ret < 0) {
-		dev_err(dev, "can't enable phy pclk0.\n");
+	ret = imx8_sata_clk_enable(imxpriv);
+	if (ret)
 		return ret;
-	}
-	ret = clk_prepare_enable(imxpriv->phy_pclk1);
-	if (ret < 0) {
-		dev_err(dev, "can't enable phy pclk1.\n");
-		goto disable_phy_pclk0;
-	}
-	ret = clk_prepare_enable(imxpriv->epcs_tx_clk);
-	if (ret < 0) {
-		dev_err(dev, "can't enable epcs tx clk.\n");
-		goto disable_phy_pclk1;
-	}
-	ret = clk_prepare_enable(imxpriv->epcs_rx_clk);
-	if (ret < 0) {
-		dev_err(dev, "can't enable epcs rx clk.\n");
-		goto disable_epcs_tx_clk;
-	}
-	ret = clk_prepare_enable(imxpriv->phy_apbclk);
-	if (ret < 0) {
-		dev_err(dev, "can't enable phy pclk1.\n");
-		goto disable_epcs_rx_clk;
-	}
+
+	/* PHYX2 APB reset */
+	regmap_update_bits(imxpriv->gpr,
+			IMX8QM_CSR_PHYX2_OFFSET,
+			IMX8QM_PHY_APB_RSTN_0 | IMX8QM_PHY_APB_RSTN_1,
+			IMX8QM_PHY_APB_RSTN_0 | IMX8QM_PHY_APB_RSTN_1);
+
 	/* Configure PHYx2 PIPE_RSTN */
-	regmap_read(imxpriv->gpr, IMX8QM_CSR_PCIEA_OFFSET
-			+ IMX8QM_CSR_PCIE_CTRL2_OFFSET, &val);
+	regmap_read(imxpriv->gpr, IMX8QM_CSR_PCIEA_OFFSET +
+			IMX8QM_CSR_PCIE_CTRL2_OFFSET, &val);
 	if ((val & IMX8QM_CTRL_LTSSM_ENABLE) == 0) {
-		 /* PCIEA of HSIO is down too */
+		/* The link of the PCIEA of HSIO is down */
 		regmap_update_bits(imxpriv->gpr,
 				IMX8QM_CSR_PHYX2_OFFSET,
-				IMX8QM_PHY_PIPE_RSTN_0
-				| IMX8QM_PHY_PIPE_RSTN_OVERRIDE_0,
-				IMX8QM_PHY_PIPE_RSTN_0
-				| IMX8QM_PHY_PIPE_RSTN_OVERRIDE_0);
+				IMX8QM_PHY_PIPE_RSTN_0 |
+				IMX8QM_PHY_PIPE_RSTN_OVERRIDE_0,
+				IMX8QM_PHY_PIPE_RSTN_0 |
+				IMX8QM_PHY_PIPE_RSTN_OVERRIDE_0);
 	}
-	regmap_read(imxpriv->gpr, IMX8QM_CSR_PCIEB_OFFSET
-			+ IMX8QM_CSR_PCIE_CTRL2_OFFSET, &reg);
+	regmap_read(imxpriv->gpr, IMX8QM_CSR_PCIEB_OFFSET +
+			IMX8QM_CSR_PCIE_CTRL2_OFFSET, &reg);
 	if ((reg & IMX8QM_CTRL_LTSSM_ENABLE) == 0) {
-		 /* PCIEB of HSIO is down */
+		/* The link of the PCIEB of HSIO is down */
 		regmap_update_bits(imxpriv->gpr,
 				IMX8QM_CSR_PHYX2_OFFSET,
-				IMX8QM_PHY_PIPE_RSTN_1
-				| IMX8QM_PHY_PIPE_RSTN_OVERRIDE_1,
-				IMX8QM_PHY_PIPE_RSTN_1
-				| IMX8QM_PHY_PIPE_RSTN_OVERRIDE_1);
+				IMX8QM_PHY_PIPE_RSTN_1 |
+				IMX8QM_PHY_PIPE_RSTN_OVERRIDE_1,
+				IMX8QM_PHY_PIPE_RSTN_1 |
+				IMX8QM_PHY_PIPE_RSTN_OVERRIDE_1);
 	}
-	if (((reg | val) & IMX8QM_CTRL_LTSSM_ENABLE) == 0) {
-		 /* Both PCIA and PCIEB of HSIO is down */
-		regmap_update_bits(imxpriv->gpr,
-				IMX8QM_LPCG_PHYX2_OFFSET,
-				IMX8QM_LPCG_PHYX2_PCLK0_MASK
-				| IMX8QM_LPCG_PHYX2_PCLK1_MASK,
-				0);
-	}
+
+	regmap_update_bits(imxpriv->gpr,
+			IMX8QM_LPCG_PHYX2_OFFSET,
+			IMX8QM_LPCG_PHYX2_PCLK0_MASK |
+			IMX8QM_LPCG_PHYX2_PCLK1_MASK,
+			IMX8QM_LPCG_PHYX2_PCLK0_MASK |
+			IMX8QM_LPCG_PHYX2_PCLK1_MASK);
 
 	/* set PWR_RST and BT_RST of csr_pciea */
 	val = IMX8QM_CSR_PCIEA_OFFSET + IMX8QM_CSR_PCIE_CTRL2_OFFSET;
@@ -550,6 +696,8 @@ static int imx8_sata_enable(struct ahci_host_priv *hpriv)
 			val,
 			IMX8QM_CTRL_BUTTON_RST_N,
 			IMX8QM_CTRL_BUTTON_RST_N);
+	regmap_update_bits(imxpriv->gpr, val, IMX8QM_CTRL_PERST_N,
+			IMX8QM_CTRL_PERST_N);
 	regmap_update_bits(imxpriv->gpr,
 			val,
 			IMX8QM_CTRL_POWER_UP_RST_N,
@@ -598,17 +746,33 @@ static int imx8_sata_enable(struct ahci_host_priv *hpriv)
 	 * the clock source can be turned off. In this case,
 	 * if this clock source is required to be toggling by
 	 * SATA, then SATA functions will be abnormal.
+	 * Set the override here to avoid it.
 	 */
 	regmap_update_bits(imxpriv->gpr,
 			IMX8QM_CSR_MISC_OFFSET,
-			IMX8QM_MISC_CLKREQN_OUT_OVERRIDE_1
-			| IMX8QM_MISC_CLKREQN_OUT_OVERRIDE_0
-			| IMX8QM_MISC_CLKREQN_IN_OVERRIDE_1
-			| IMX8QM_MISC_CLKREQN_IN_OVERRIDE_0,
-			IMX8QM_MISC_CLKREQN_OUT_OVERRIDE_1
-			| IMX8QM_MISC_CLKREQN_OUT_OVERRIDE_0
-			| IMX8QM_MISC_CLKREQN_IN_OVERRIDE_1
-			| IMX8QM_MISC_CLKREQN_IN_OVERRIDE_0);
+			IMX8QM_MISC_CLKREQN_OUT_OVERRIDE_1 |
+			IMX8QM_MISC_CLKREQN_OUT_OVERRIDE_0 |
+			IMX8QM_MISC_CLKREQN_IN_OVERRIDE_1 |
+			IMX8QM_MISC_CLKREQN_IN_OVERRIDE_0,
+			IMX8QM_MISC_CLKREQN_OUT_OVERRIDE_1 |
+			IMX8QM_MISC_CLKREQN_OUT_OVERRIDE_0 |
+			IMX8QM_MISC_CLKREQN_IN_OVERRIDE_1 |
+			IMX8QM_MISC_CLKREQN_IN_OVERRIDE_0);
+
+	/* APB reset */
+	regmap_update_bits(imxpriv->gpr,
+			IMX8QM_CSR_PHYX1_OFFSET,
+			IMX8QM_PHY_APB_RSTN_0,
+			IMX8QM_PHY_APB_RSTN_0);
+
+	regmap_update_bits(imxpriv->gpr,
+			IMX8QM_CSR_SATA_OFFSET,
+			IMX8QM_SATA_CTRL_EPCS_TXDEEMP,
+			IMX8QM_SATA_CTRL_EPCS_TXDEEMP);
+	regmap_update_bits(imxpriv->gpr,
+			IMX8QM_CSR_SATA_OFFSET,
+			IMX8QM_SATA_CTRL_EPCS_TXDEEMP_SEL,
+			IMX8QM_SATA_CTRL_EPCS_TXDEEMP_SEL);
 
 	/* clear PHY RST, then set it */
 	regmap_update_bits(imxpriv->gpr,
@@ -620,14 +784,6 @@ static int imx8_sata_enable(struct ahci_host_priv *hpriv)
 			IMX8QM_CSR_SATA_OFFSET,
 			IMX8QM_SATA_CTRL_EPCS_PHYRESET_N,
 			IMX8QM_SATA_CTRL_EPCS_PHYRESET_N);
-	regmap_update_bits(imxpriv->gpr,
-			IMX8QM_CSR_SATA_OFFSET,
-			IMX8QM_SATA_CTRL_EPCS_TXDEEMP,
-			IMX8QM_SATA_CTRL_EPCS_TXDEEMP);
-	regmap_update_bits(imxpriv->gpr,
-			IMX8QM_CSR_SATA_OFFSET,
-			IMX8QM_SATA_CTRL_EPCS_TXDEEMP_SEL,
-			IMX8QM_SATA_CTRL_EPCS_TXDEEMP_SEL);
 
 	/* CTRL RST: SET -> delay 1 us -> CLEAR -> SET */
 	regmap_update_bits(imxpriv->gpr,
@@ -644,15 +800,9 @@ static int imx8_sata_enable(struct ahci_host_priv *hpriv)
 			IMX8QM_SATA_CTRL_RESET_N,
 			IMX8QM_SATA_CTRL_RESET_N);
 
-	/* APB reset */
-	regmap_update_bits(imxpriv->gpr,
-			IMX8QM_CSR_PHYX1_OFFSET,
-			IMX8QM_PHY_APB_RSTN_0,
-			IMX8QM_PHY_APB_RSTN_0);
-
 	for (i = 0; i < 100; i++) {
-		reg = IMX8QM_CSR_PHYX1_OFFSET
-			+ IMX8QM_CSR_PHYX_STTS0_OFFSET;
+		reg = IMX8QM_CSR_PHYX1_OFFSET +
+			IMX8QM_CSR_PHYX_STTS0_OFFSET;
 		regmap_read(imxpriv->gpr, reg, &val);
 		val &= IMX8QM_STTS0_LANE0_TX_PLL_LOCK;
 		if (val == IMX8QM_STTS0_LANE0_TX_PLL_LOCK)
@@ -689,6 +839,12 @@ static int imx8_sata_enable(struct ahci_host_priv *hpriv)
 				+ IMX8QM_SATA_PHY_REG09_TX_IMPED_RATIO);
 		if (unlikely(reg != imxpriv->imped_ratio))
 			dev_info(dev, "Can't set PHY TX impedance ratio.\n");
+
+		/* RxWaterMark setting */
+		val = readl(hpriv->mmio + IMX8QM_SATA_AHCI_VEND_PTC);
+		val &= ~IMX8QM_SATA_AHCI_VEND_PTC_RXWM_MASK;
+		val |= IMX8QM_SATA_AHCI_VEND_PTC_RXWM;
+		writel(val, hpriv->mmio + IMX8QM_SATA_AHCI_VEND_PTC);
 
 		/* Configure the tx_amplitude to pass the tests. */
 		writeb(IMX8QM_SATA_PHY_TX_AMP_RATIO_MARGIN0, imxpriv->phy_base +
@@ -734,14 +890,9 @@ static int imx8_sata_enable(struct ahci_host_priv *hpriv)
 
 err_out:
 	clk_disable_unprepare(imxpriv->phy_apbclk);
-disable_epcs_rx_clk:
-	clk_disable_unprepare(imxpriv->epcs_rx_clk);
-disable_epcs_tx_clk:
-	clk_disable_unprepare(imxpriv->epcs_tx_clk);
-disable_phy_pclk1:
 	clk_disable_unprepare(imxpriv->phy_pclk1);
-disable_phy_pclk0:
 	clk_disable_unprepare(imxpriv->phy_pclk0);
+	imx8_sata_clk_disable(imxpriv);
 
 	return ret;
 }
@@ -787,28 +938,17 @@ static int imx_sata_enable(struct ahci_host_priv *hpriv)
 				   IMX6Q_GPR13_SATA_MPLL_CLK_EN);
 
 		usleep_range(100, 200);
-	}
 
-
-	if (imxpriv->type == AHCI_IMX6Q) {
 		ret = imx_sata_phy_reset(hpriv);
-	} else if (imxpriv->type == AHCI_IMX6QP) {
-		/* 6qp adds the sata reset mechanism, use it for 6qp sata */
-		regmap_update_bits(imxpriv->gpr, IOMUXC_GPR5,
-				   BIT(10), 0);
-
-		regmap_update_bits(imxpriv->gpr, IOMUXC_GPR5,
-				   BIT(11), 0);
-		udelay(50);
-		regmap_update_bits(imxpriv->gpr, IOMUXC_GPR5,
-				   BIT(11), BIT(11));
+		if (ret) {
+			dev_err(dev, "failed to reset phy: %d\n", ret);
+			goto disable_clk;
+		}
 	} else if (imxpriv->type == AHCI_IMX8QM) {
 		ret = imx8_sata_enable(hpriv);
-	}
+		if (ret)
+			goto disable_clk;
 
-	if (ret) {
-		dev_err(dev, "failed to reset phy: %d\n", ret);
-		goto disable_clk;
 	}
 
 	usleep_range(1000, 2000);
@@ -830,20 +970,30 @@ static void imx_sata_disable(struct ahci_host_priv *hpriv)
 	if (imxpriv->no_device)
 		return;
 
-	if (imxpriv->type == AHCI_IMX6QP)
+	switch (imxpriv->type) {
+	case AHCI_IMX6QP:
 		regmap_update_bits(imxpriv->gpr, IOMUXC_GPR5,
-				   BIT(10), BIT(10));
-
-	if (imxpriv->type == AHCI_IMX6Q || imxpriv->type == AHCI_IMX6QP) {
+				   IMX6Q_GPR5_SATA_SW_PD,
+				   IMX6Q_GPR5_SATA_SW_PD);
 		regmap_update_bits(imxpriv->gpr, IOMUXC_GPR13,
 				   IMX6Q_GPR13_SATA_MPLL_CLK_EN,
 				   !IMX6Q_GPR13_SATA_MPLL_CLK_EN);
+		break;
+
+	case AHCI_IMX6Q:
+		regmap_update_bits(imxpriv->gpr, IOMUXC_GPR13,
+				   IMX6Q_GPR13_SATA_MPLL_CLK_EN,
+				   !IMX6Q_GPR13_SATA_MPLL_CLK_EN);
+		break;
+
+	case AHCI_IMX8QM:
+		imx8_sata_clk_disable(imxpriv);
+		break;
+
+	default:
+		break;
 	}
 
-	if (imxpriv->type == AHCI_IMX8QM) {
-		clk_disable_unprepare(imxpriv->epcs_rx_clk);
-		clk_disable_unprepare(imxpriv->epcs_tx_clk);
-	}
 	clk_disable_unprepare(imxpriv->sata_ref_clk);
 
 	ahci_platform_disable_regulators(hpriv);
@@ -860,8 +1010,8 @@ static void ahci_imx_error_handler(struct ata_port *ap)
 
 	ahci_error_handler(ap);
 
-	if (!(imxpriv->first_time) || ahci_imx_hotplug
-			|| (imxpriv->type == AHCI_IMX8QM))
+	if (!(imxpriv->first_time) || ahci_imx_hotplug ||
+			(imxpriv->type == AHCI_IMX8QM))
 		return;
 
 	imxpriv->first_time = false;
@@ -1087,11 +1237,16 @@ static struct scsi_host_template ahci_platform_sht = {
 
 static int imx8_sata_probe(struct device *dev, struct imx_ahci_priv *imxpriv)
 {
-	int ret;
-	struct resource *phy_res;
+	void __iomem *iomem;
+	struct resource *res, *phy_res;
 	struct platform_device *pdev = imxpriv->ahci_pdev;
 	struct device_node *np = dev->of_node;
+	struct regmap_config regconfig = imx_sata_regconfig;
 
+	if (!(dev->bus_dma_mask)) {
+		dev->bus_dma_mask = DMA_BIT_MASK(32);
+		dev_info(dev, "imx8qm sata only supports 32bit dma.\n");
+	}
 	if (of_property_read_u32(np, "ext_osc", &imxpriv->ext_osc) < 0) {
 		dev_info(dev, "ext_osc is not specified.\n");
 		/* Use the external osc as ref clk defaultly. */
@@ -1099,13 +1254,8 @@ static int imx8_sata_probe(struct device *dev, struct imx_ahci_priv *imxpriv)
 	}
 
 	if (of_property_read_u32(np, "fsl,phy-imp", &imxpriv->imped_ratio)) {
-		/*
-		 * Regarding to the differnet Hw designs,
-		 * Set the impedance ratio to 0x6c when 85OHM is used.
-		 * Keep it to default value 0x80, when 100OHM is used.
-		 */
 		dev_info(dev, "phy impedance ratio is not specified.\n");
-		imxpriv->imped_ratio = IMX8QM_SATA_PHY_IMPED_RATIO_85OHM;
+		imxpriv->imped_ratio = IMX8QM_SATA_PHY_IMPED_RATIO_100OHM;
 	}
 	phy_res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "phy");
 	if (phy_res) {
@@ -1119,54 +1269,83 @@ static int imx8_sata_probe(struct device *dev, struct imx_ahci_priv *imxpriv)
 		dev_err(dev, "missing *phy* reg region.\n");
 		return -ENOMEM;
 	}
-	imxpriv->gpr =
-		 syscon_regmap_lookup_by_phandle(np, "hsio");
-	if (IS_ERR(imxpriv->gpr)) {
-		dev_err(dev, "unable to find gpr registers\n");
-		return PTR_ERR(imxpriv->gpr);
+	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "hsio");
+	if (res) {
+		iomem = devm_ioremap(dev, res->start, resource_size(res));
+		if (IS_ERR(iomem))
+			return PTR_ERR(iomem);
+		imxpriv->gpr = devm_regmap_init_mmio(dev, iomem, &regconfig);
+		if (IS_ERR(imxpriv->gpr)) {
+			dev_err(dev, "failed to init register map\n");
+			return PTR_ERR(imxpriv->gpr);
+		}
+	} else {
+		dev_err(dev, "missing *hsio* reg region.\n");
+		return -ENOMEM;
 	}
+
 	imxpriv->epcs_tx_clk = devm_clk_get(dev, "epcs_tx");
 	if (IS_ERR(imxpriv->epcs_tx_clk)) {
-		dev_err(dev, "can't get sata_epcs tx clock.\n");
+		dev_err(dev, "can't get epcs_tx_clk clock.\n");
 		return PTR_ERR(imxpriv->epcs_tx_clk);
 	}
-
 	imxpriv->epcs_rx_clk = devm_clk_get(dev, "epcs_rx");
 	if (IS_ERR(imxpriv->epcs_rx_clk)) {
-		dev_err(dev, "can't get sata_epcs rx clock.\n");
+		dev_err(dev, "can't get epcs_rx_clk clock.\n");
 		return PTR_ERR(imxpriv->epcs_rx_clk);
 	}
-
 	imxpriv->phy_pclk0 = devm_clk_get(dev, "phy_pclk0");
 	if (IS_ERR(imxpriv->phy_pclk0)) {
-		dev_err(dev, "can't get sata_phy_pclk0 clock.\n");
+		dev_err(dev, "can't get phy_pclk0 clock.\n");
 		return PTR_ERR(imxpriv->phy_pclk0);
 	}
-
 	imxpriv->phy_pclk1 = devm_clk_get(dev, "phy_pclk1");
 	if (IS_ERR(imxpriv->phy_pclk1)) {
-		dev_err(dev, "can't get sata_phy_pclk1 clock.\n");
+		dev_err(dev, "can't get phy_pclk1 clock.\n");
 		return PTR_ERR(imxpriv->phy_pclk1);
 	}
-
 	imxpriv->phy_apbclk = devm_clk_get(dev, "phy_apbclk");
 	if (IS_ERR(imxpriv->phy_apbclk)) {
-		dev_err(dev, "can't get sata_phy_apbclk clock.\n");
+		dev_err(dev, "can't get phy_apbclk clock.\n");
 		return PTR_ERR(imxpriv->phy_apbclk);
+	}
+	imxpriv->per_clk0 = devm_clk_get(dev, "per_clk0");
+	if (IS_ERR(imxpriv->per_clk0)) {
+		dev_err(dev, "can't get per_clk0 clock.\n");
+		return PTR_ERR(imxpriv->per_clk0);
+	}
+	imxpriv->per_clk1 = devm_clk_get(dev, "per_clk1");
+	if (IS_ERR(imxpriv->per_clk1)) {
+		dev_err(dev, "can't get per_clk1 clock.\n");
+		return PTR_ERR(imxpriv->per_clk1);
+	}
+	imxpriv->per_clk2 = devm_clk_get(dev, "per_clk2");
+	if (IS_ERR(imxpriv->per_clk2)) {
+		dev_err(dev, "can't get per_clk2 clock.\n");
+		return PTR_ERR(imxpriv->per_clk2);
+	}
+	imxpriv->per_clk3 = devm_clk_get(dev, "per_clk3");
+	if (IS_ERR(imxpriv->per_clk3)) {
+		dev_err(dev, "can't get per_clk3 clock.\n");
+		return PTR_ERR(imxpriv->per_clk3);
+	}
+	imxpriv->per_clk4 = devm_clk_get(dev, "per_clk4");
+	if (IS_ERR(imxpriv->per_clk4)) {
+		dev_err(dev, "can't get per_clk4 clock.\n");
+		return PTR_ERR(imxpriv->per_clk4);
+	}
+	imxpriv->per_clk5 = devm_clk_get(dev, "per_clk5");
+	if (IS_ERR(imxpriv->per_clk5)) {
+		dev_err(dev, "can't get per_clk5 clock.\n");
+		return PTR_ERR(imxpriv->per_clk5);
 	}
 
 	/* Fetch GPIO, then enable the external OSC */
 	imxpriv->clkreq_gpio = of_get_named_gpio(np, "clkreq-gpio", 0);
 	if (gpio_is_valid(imxpriv->clkreq_gpio)) {
-		ret = devm_gpio_request_one(dev, imxpriv->clkreq_gpio,
+		devm_gpio_request_one(dev, imxpriv->clkreq_gpio,
 					    GPIOF_OUT_INIT_LOW,
 					    "SATA CLKREQ");
-		if (ret == -EBUSY) {
-			dev_info(dev, "clkreq had been initialized.\n");
-		} else if (ret) {
-			dev_err(dev, "%d unable to get clkreq.\n", ret);
-			return ret;
-		}
 	} else if (imxpriv->clkreq_gpio == -EPROBE_DEFER) {
 		return imxpriv->clkreq_gpio;
 	}
@@ -1174,7 +1353,7 @@ static int imx8_sata_probe(struct device *dev, struct imx_ahci_priv *imxpriv)
 	return 0;
 }
 
-static ssize_t imx_ahci_bist_pattern_info(struct device *dev,
+static ssize_t ahci_bist_pattern_show(struct device *dev,
 		struct device_attribute *devattr, char *buf)
 {
 	u32 bist_pattern;
@@ -1190,7 +1369,7 @@ static ssize_t imx_ahci_bist_pattern_info(struct device *dev,
 		       (BIT(0) << bist_pattern) & BIT(3) ? "HFTP " : "");
 }
 
-static ssize_t imx_ahci_bist_pattern(struct device *dev,
+static ssize_t ahci_bist_pattern_store(struct device *dev,
 		struct device_attribute *attr, const char *buf, size_t count)
 {
 	int ret;
@@ -1262,8 +1441,7 @@ static ssize_t imx_ahci_bist_pattern(struct device *dev,
 	return count;
 }
 
-static DEVICE_ATTR(ahci_bist_pattern, 0644, imx_ahci_bist_pattern_info,
-		imx_ahci_bist_pattern);
+static DEVICE_ATTR_RW(ahci_bist_pattern);
 
 static struct attribute *imx_ahci_attrs[] = {
 	&dev_attr_ahci_bist_pattern.attr,
@@ -1332,7 +1510,7 @@ static int imx_ahci_probe(struct platform_device *pdev)
 			return ret;
 	}
 
-	hpriv = ahci_platform_get_resources(pdev);
+	hpriv = ahci_platform_get_resources(pdev, 0);
 	if (IS_ERR(hpriv))
 		return PTR_ERR(hpriv);
 
@@ -1396,16 +1574,16 @@ static int imx_ahci_probe(struct platform_device *pdev)
 	}
 
 	/*
-	* Due to IP bug on the Synopsis 3.00 SATA version,
-	* which is present on mx6q, and not on mx53,
-	* we should use sg_tablesize = 1 for reliable operation
-	*/
+	 * Due to IP bug on the Synopsis 3.00 SATA version,
+	 * which is present on mx6q, and not on mx53,
+	 * we should use sg_tablesize = 1 for reliable operation
+	 */
 	if (imxpriv->type == AHCI_IMX6Q || imxpriv->type == AHCI_IMX6QP) {
 		dma_addr_t dma;
 
 		ahci_platform_sht.sg_tablesize = 1;
 
-		sg_io_buffer_hack = dma_alloc_coherent(NULL, 0x10000,
+		sg_io_buffer_hack = dma_alloc_coherent(dev, 0x10000,
 				&dma, GFP_KERNEL);
 		if (!sg_io_buffer_hack) {
 			ret = -ENOMEM;
@@ -1444,6 +1622,7 @@ disable_sata:
 	imx_sata_disable(hpriv);
 disable_clk:
 	clk_disable_unprepare(imxpriv->sata_clk);
+
 	return ret;
 }
 
@@ -1497,7 +1676,21 @@ static struct platform_driver imx_ahci_driver = {
 		.pm = &ahci_imx_pm_ops,
 	},
 };
-module_platform_driver(imx_ahci_driver);
+
+static int __init imx_ahci_init(void)
+{
+	int ret;
+
+	ret = platform_driver_register(&imx_ahci_driver);
+	if (ret)
+		pr_err("Unable to initialize imx ahci driver\n");
+	else
+		pr_info("imx ahci driver is registered.\n");
+
+	return ret;
+}
+
+device_initcall(imx_ahci_init);
 
 MODULE_DESCRIPTION("Freescale i.MX AHCI SATA platform driver");
 MODULE_AUTHOR("Richard Zhu <Hong-Xing.Zhu@freescale.com>");

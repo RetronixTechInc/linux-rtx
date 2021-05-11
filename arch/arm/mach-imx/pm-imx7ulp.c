@@ -1,13 +1,8 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * Copyright (C) 2016 Freescale Semiconductor, Inc.
  * Copyright 2017-2018 NXP
- *
- * The code contained herein is licensed under the GNU General Public
- * License. You may obtain a copy of the GNU General Public License
- * Version 2 or later at the following locations:
- *
- * http://www.opensource.org/licenses/gpl-license.html
- * http://www.gnu.org/copyleft/gpl.html
+ *   Author: Dong Aisheng <aisheng.dong@nxp.com>
  */
 
 #include <linux/delay.h>
@@ -52,18 +47,16 @@
 #define CSRE	0x34
 #define MR	0x40
 
-#define PMC_HSRUN		0x4
-#define PMC_RUN			0x8
-#define PMC_VLPR		0xc
-#define PMC_STOP		0x10
-#define PMC_VLPS		0x14
-#define PMC_LLS			0x18
-#define PMC_VLLS		0x1c
-#define PMC_STATUS		0x20
-#define PMC_CTRL		0x24
-#define PMC_SRAMCTRL_0		0x28
-#define PMC_SRAMCTRL_1		0x2c
-#define PMC_SRAMCTRL_2		0x30
+#define PMC1_HSRUN		0x4
+#define PMC1_RUN		0x8
+#define PMC1_VLPR		0xc
+#define PMC1_STOP		0x10
+#define PMC1_VLPS		0x14
+#define PMC1_LLS		0x18
+#define PMC1_VLLS		0x1c
+#define PMC1_STATUS		0x20
+#define PMC1_CTRL		0x24
+#define PMC0_CTRL		0x28
 
 #define BM_PMPROT_AHSRUN	(1 << 7)
 #define BM_PMPROT_AVLP		(1 << 5)
@@ -124,6 +117,13 @@
 
 #define ADDR_1M_MASK	0xFFF00000
 
+#define WDOG_CS			0x0
+#define WDOG_CS_CMD32EN		BIT(13)
+#define WDOG_CNT	0x4
+#define REFRESH_SEQ0	0xA602
+#define REFRESH_SEQ1	0xB480
+#define REFRESH		((REFRESH_SEQ1 << 16) | REFRESH_SEQ0)
+
 static void __iomem *smc1_base;
 static void __iomem *pmc0_base;
 static void __iomem *pmc1_base;
@@ -134,6 +134,7 @@ static void __iomem *pcc2_base;
 static void __iomem *pcc3_base;
 static void __iomem *mu_base;
 static void __iomem *scg1_base;
+static void __iomem *wdog1_base;
 static void __iomem *gpio_base[4];
 static void __iomem *suspend_ocram_base;
 static void (*imx7ulp_suspend_in_ocram_fn)(void __iomem *sram_base);
@@ -402,33 +403,33 @@ static void imx7ulp_set_dgo(u32 val)
 	writel_relaxed(val, pm_info->sim_base + DGO_GPR4);
 }
 
-int imx7ulp_set_lpm(enum imx7ulp_cpu_pwr_mode mode)
+int imx7ulp_set_lpm(enum ulp_cpu_pwr_mode mode)
 {
 	u32 val1 = BM_PMPROT_AHSRUN | BM_PMPROT_AVLP | BM_PMPROT_AVLLS;
 	u32 val2 = readl_relaxed(smc1_base + PMCTRL);
-	u32 val3 = readl_relaxed(pmc0_base + PMC_CTRL);
+	u32 val3 = readl_relaxed(pmc0_base + PMC0_CTRL);
 
 	val2 &= ~(BM_PMCTRL_RUNM |
 		BM_PMCTRL_STOPM | BM_PMCTRL_PSTOPO);
 	val3 |= BM_CTRL_LDOOKDIS;
 
 	switch (mode) {
-	case RUN:
+	case ULP_PM_RUN:
 		/* system/bus clock enabled */
 		val2 |= 0x3 << BP_PMCTRL_PSTOPO;
 		break;
-	case WAIT:
+	case ULP_PM_WAIT:
 		/* system clock disabled, bus clock enabled */
 		val2 |= 0x2 << BP_PMCTRL_PSTOPO;
 		break;
-	case STOP:
+	case ULP_PM_STOP:
 		/* system/bus clock disabled */
 		val2 |= 0x1 << BP_PMCTRL_PSTOPO;
 		break;
-	case VLPS:
+	case ULP_PM_VLPS:
 		val2 |= 0x2 << BP_PMCTRL_STOPM;
 		break;
-	case VLLS:
+	case ULP_PM_VLLS:
 		val2 |= 0x4 << BP_PMCTRL_STOPM;
 		break;
 	default:
@@ -437,7 +438,7 @@ int imx7ulp_set_lpm(enum imx7ulp_cpu_pwr_mode mode)
 
 	writel_relaxed(val1, smc1_base + PMPROT);
 	writel_relaxed(val2, smc1_base + PMCTRL);
-	writel_relaxed(val3, pmc0_base + PMC_CTRL);
+	writel_relaxed(val3, pmc0_base + PMC0_CTRL);
 
 	return 0;
 }
@@ -461,35 +462,48 @@ static int imx7ulp_suspend_finish(unsigned long val)
 	else
 		state = MX7ULP_SUSPEND_STANDBY_PARAM;
 
-	if (psci_ops.cpu_suspend) {
+	if (psci_ops.cpu_suspend)
 		return psci_ops.cpu_suspend(state, __pa(cpu_resume));
-	}
 
 	imx7ulp_suspend_in_ocram_fn(suspend_ocram_base);
 
 	return 0;
 }
 
+static void imx7ulp_wdog_refresh(void)
+{
+	/*
+	 * On revision 2.2, wdog2 is by default disabled when out of
+	 * reset, so here, we ONLY refresh wdog1.
+	 */
+	if (readl_relaxed(wdog1_base + WDOG_CS) & WDOG_CS_CMD32EN) {
+		writel(REFRESH, wdog1_base + WDOG_CNT);
+	} else {
+		writel_relaxed(REFRESH_SEQ0, wdog1_base + WDOG_CNT);
+		writel_relaxed(REFRESH_SEQ1, wdog1_base + WDOG_CNT);
+	}
+}
+
 static int imx7ulp_pm_enter(suspend_state_t state)
 {
 	switch (state) {
 	case PM_SUSPEND_STANDBY:
-		if (psci_ops.cpu_suspend) {
+		if (psci_ops.cpu_suspend)
 			/* Zzz ... */
 			cpu_suspend(1, imx7ulp_suspend_finish);
-		} else {
-			imx7ulp_set_lpm(VLPS);
+		else {
+			imx7ulp_set_lpm(ULP_PM_VLPS);
 			writel_relaxed(
-				readl_relaxed(pmc1_base + PMC_VLPS) | BM_VLPS_RBBEN,
-				pmc1_base + PMC_VLPS);
+				readl_relaxed(pmc1_base + PMC1_VLPS) | BM_VLPS_RBBEN,
+				pmc1_base + PMC1_VLPS);
 
 			/* Zzz ... */
 			cpu_suspend(0, imx7ulp_suspend_finish);
 
 			writel_relaxed(
-				readl_relaxed(pmc1_base + PMC_VLPS) & ~BM_VLPS_RBBEN,
-				pmc1_base + PMC_VLPS);
-			imx7ulp_set_lpm(RUN);
+				readl_relaxed(pmc1_base + PMC1_VLPS) & ~BM_VLPS_RBBEN,
+				pmc1_base + PMC1_VLPS);
+			imx7ulp_set_lpm(ULP_PM_RUN);
 		}
 		break;
 	case PM_SUSPEND_MEM:
@@ -505,7 +519,7 @@ static int imx7ulp_pm_enter(suspend_state_t state)
 			if (!console_suspend_enabled)
 				imx7ulp_lpuart_save();
 			imx7ulp_iomuxc_save();
-			imx7ulp_set_lpm(VLLS);
+			imx7ulp_set_lpm(ULP_PM_VLLS);
 
 			/* Zzz ... */
 			cpu_suspend(0, imx7ulp_suspend_finish);
@@ -516,12 +530,14 @@ static int imx7ulp_pm_enter(suspend_state_t state)
 				imx7ulp_lpuart_restore();
 			imx7ulp_set_dgo(0);
 			imx7ulp_tpm_restore();
-			imx7ulp_set_lpm(RUN);
+			imx7ulp_set_lpm(ULP_PM_RUN);
 	}
 		break;
 	default:
 		return -EINVAL;
 	}
+
+	imx7ulp_wdog_refresh();
 
 	return 0;
 }
@@ -529,7 +545,7 @@ static int imx7ulp_pm_enter(suspend_state_t state)
 /* Put CA7 into VLLS mode before M4 power off CA7 */
 void imx7ulp_poweroff(void)
 {
-	imx7ulp_set_lpm(VLLS);
+	imx7ulp_set_lpm(ULP_PM_VLLS);
 	cpu_suspend(0, imx7ulp_suspend_finish);
 }
 
@@ -704,13 +720,17 @@ void __init imx7ulp_pm_common_init(const struct imx7ulp_pm_socdata
 	pcc3_base = of_iomap(np, 0);
 	WARN_ON(!pcc3_base);
 
-	np = of_find_compatible_node(NULL, NULL, "fsl,imx7ulp-iomuxc-1");
+	np = of_find_compatible_node(NULL, NULL, "fsl,imx7ulp-iomuxc1");
 	iomuxc1_base = of_iomap(np, 0);
 	WARN_ON(!iomuxc1_base);
 
 	np = of_find_compatible_node(NULL, NULL, "fsl,imx7ulp-scg1");
 	scg1_base = of_iomap(np, 0);
 	WARN_ON(!scg1_base);
+
+	np = of_find_compatible_node(NULL, NULL, "fsl,imx7ulp-wdt");
+	wdog1_base = of_iomap(np, 0);
+	WARN_ON(!wdog1_base);
 
 	np = NULL;
 	for (i = 0; i < 4; i++) {
@@ -795,7 +815,7 @@ void __init imx7ulp_pm_common_init(const struct imx7ulp_pm_socdata
 void __init imx7ulp_pm_init(void)
 {
 	imx7ulp_pm_common_init(&imx7ulp_lpddr3_pm_data);
-	imx7ulp_set_lpm(RUN);
+	imx7ulp_set_lpm(ULP_PM_RUN);
 }
 
 static irqreturn_t imx7ulp_nmi_isr(int irq, void *param)

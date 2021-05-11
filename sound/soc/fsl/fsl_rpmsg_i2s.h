@@ -384,6 +384,11 @@ struct work_of_rpmsg {
 	struct work_struct       work;
 };
 
+struct stream_timer {
+	struct timer_list        timer;
+	struct snd_pcm_substream *substream;
+};
+
 typedef void (*dma_callback)(void *arg);
 struct i2s_info {
 	struct rpmsg_device     *rpdev;
@@ -407,9 +412,10 @@ struct i2s_info {
 	int (*send_message)(struct i2s_rpmsg *msg, struct i2s_info *info);
 	dma_callback             callback[2];
 	spinlock_t               lock[2];
+	spinlock_t               wq_lock;
 	struct mutex             tx_lock;
 	struct mutex             i2c_lock;
-	struct timer_list        stream_timer[2];
+	struct stream_timer      stream_timer[2];
 	int                      prealloc_buffer_size;
 };
 
@@ -421,6 +427,7 @@ struct fsl_rpmsg_i2s {
 	int codec_wm8960;
 	int codec_cs42888;
 	int codec_ak4497;
+	int codec_in_dt;
 	int force_lpa;
 	int version;
 	int rates;

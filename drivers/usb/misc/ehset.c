@@ -1,14 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (c) 2010-2013, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
  */
 
 #include <linux/kernel.h>
@@ -17,7 +9,6 @@
 #include <linux/slab.h>
 #include <linux/usb.h>
 #include <linux/usb/ch11.h>
-#include <linux/usb/otg-fsm.h>
 
 #define TEST_SE0_NAK_PID			0x0101
 #define TEST_J_PID				0x0102
@@ -26,7 +17,6 @@
 #define TEST_HS_HOST_PORT_SUSPEND_RESUME	0x0106
 #define TEST_SINGLE_STEP_GET_DEV_DESC		0x0107
 #define TEST_SINGLE_STEP_SET_FEATURE		0x0108
-#define TEST_OTG_TEST_DEVICE_SUPPORT		0x0200
 
 static int ehset_probe(struct usb_interface *intf,
 		       const struct usb_device_id *id)
@@ -37,7 +27,6 @@ static int ehset_probe(struct usb_interface *intf,
 	struct usb_device_descriptor *buf;
 	u8 portnum = dev->portnum;
 	u16 test_pid = le16_to_cpu(dev->descriptor.idProduct);
-	struct otg_fsm *fsm = dev->bus->otg_fsm;
 
 	switch (test_pid) {
 	case TEST_SE0_NAK_PID:
@@ -118,27 +107,6 @@ static int ehset_probe(struct usb_interface *intf,
 					NULL, 0, 60 * 1000);
 
 		break;
-	case TEST_OTG_TEST_DEVICE_SUPPORT:
-		if (!fsm)
-			return ret;
-
-		/* B host enumerate test device */
-		if (dev->bus->is_b_host) {
-			otg_add_timer(fsm, B_TST_SUSP);
-			ret = 0;
-			break;
-		}
-
-		mutex_lock(&fsm->lock);
-		fsm->tst_maint = 1;
-		if (le16_to_cpu(dev->descriptor.bcdDevice) & 0x1)
-			fsm->otg_vbus_off = 1;
-		else
-			fsm->otg_vbus_off = 0;
-		mutex_unlock(&fsm->lock);
-		otg_add_timer(fsm, A_TST_MAINT);
-		ret = 0;
-		break;
 	default:
 		dev_err(&intf->dev, "%s: unsupported PID: 0x%x\n",
 			__func__, test_pid);
@@ -159,7 +127,6 @@ static const struct usb_device_id ehset_id_table[] = {
 	{ USB_DEVICE(0x1a0a, TEST_HS_HOST_PORT_SUSPEND_RESUME) },
 	{ USB_DEVICE(0x1a0a, TEST_SINGLE_STEP_GET_DEV_DESC) },
 	{ USB_DEVICE(0x1a0a, TEST_SINGLE_STEP_SET_FEATURE) },
-	{ USB_DEVICE(0x1a0a, TEST_OTG_TEST_DEVICE_SUPPORT) },
 	{ }			/* Terminating entry */
 };
 MODULE_DEVICE_TABLE(usb, ehset_id_table);

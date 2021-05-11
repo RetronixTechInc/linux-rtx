@@ -1,7 +1,7 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (C) STMicroelectronics SA 2014
  * Authors: Fabien Dessenne <fabien.dessenne@st.com> for STMicroelectronics.
- * License terms:  GNU General Public License (GPL), version 2
  */
 
 #include <linux/errno.h>
@@ -651,8 +651,7 @@ static int bdisp_release(struct file *file)
 
 	dev_dbg(bdisp->dev, "%s\n", __func__);
 
-	if (mutex_lock_interruptible(&bdisp->lock))
-		return -ERESTARTSYS;
+	mutex_lock(&bdisp->lock);
 
 	v4l2_m2m_ctx_release(ctx->fh.m2m_ctx);
 
@@ -688,15 +687,10 @@ static int bdisp_querycap(struct file *file, void *fh,
 	struct bdisp_ctx *ctx = fh_to_ctx(fh);
 	struct bdisp_dev *bdisp = ctx->bdisp_dev;
 
-	strlcpy(cap->driver, bdisp->pdev->name, sizeof(cap->driver));
-	strlcpy(cap->card, bdisp->pdev->name, sizeof(cap->card));
+	strscpy(cap->driver, bdisp->pdev->name, sizeof(cap->driver));
+	strscpy(cap->card, bdisp->pdev->name, sizeof(cap->card));
 	snprintf(cap->bus_info, sizeof(cap->bus_info), "platform:%s%d",
 		 BDISP_NAME, bdisp->id);
-
-	cap->device_caps = V4L2_CAP_STREAMING | V4L2_CAP_VIDEO_M2M;
-
-	cap->capabilities = cap->device_caps | V4L2_CAP_DEVICE_CAPS;
-
 	return 0;
 }
 
@@ -723,7 +717,7 @@ static int bdisp_enum_fmt(struct file *file, void *fh, struct v4l2_fmtdesc *f)
 static int bdisp_g_fmt(struct file *file, void *fh, struct v4l2_format *f)
 {
 	struct bdisp_ctx *ctx = fh_to_ctx(fh);
-	struct v4l2_pix_format *pix = &f->fmt.pix;
+	struct v4l2_pix_format *pix;
 	struct bdisp_frame *frame  = ctx_get_frame(ctx, f->type);
 
 	if (IS_ERR(frame)) {
@@ -1059,6 +1053,7 @@ static int bdisp_register_device(struct bdisp_dev *bdisp)
 	bdisp->vdev.lock        = &bdisp->lock;
 	bdisp->vdev.vfl_dir     = VFL_DIR_M2M;
 	bdisp->vdev.v4l2_dev    = &bdisp->v4l2_dev;
+	bdisp->vdev.device_caps = V4L2_CAP_STREAMING | V4L2_CAP_VIDEO_M2M;
 	snprintf(bdisp->vdev.name, sizeof(bdisp->vdev.name), "%s.%d",
 		 BDISP_NAME, bdisp->id);
 
@@ -1296,6 +1291,10 @@ static int bdisp_probe(struct platform_device *pdev)
 	bdisp = devm_kzalloc(dev, sizeof(struct bdisp_dev), GFP_KERNEL);
 	if (!bdisp)
 		return -ENOMEM;
+
+	ret = dma_coerce_mask_and_coherent(dev, DMA_BIT_MASK(32));
+	if (ret)
+		return ret;
 
 	bdisp->pdev = pdev;
 	bdisp->dev = dev;

@@ -1,13 +1,8 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 /*
- * Copyright 2018 NXP
- */
-/*
- * The code contained herein is licensed under the GNU General Public
- * License. You may obtain a copy of the GNU General Public License
- * Version 2 or later at the following locations:
+ * i.MX8QXP/i.MX8QM JPEG encoder/decoder v4l2 driver
  *
- * http://www.opensource.org/licenses/gpl-license.html
- * http://www.gnu.org/copyleft/gpl.html
+ * Copyright 2018-2019 NXP
  */
 
 #include <media/v4l2-ctrls.h>
@@ -21,22 +16,32 @@
 #define MXC_JPEG_NAME			"mxc-jpeg"
 #define MXC_IN_FORMAT			0
 #define MXC_OUT_FORMAT			1
-#define MXC_JPEG_INIT			0
-#define MXC_JPEG_RUNNING		1
 #define MXC_JPEG_FMT_TYPE_ENC		0
 #define MXC_JPEG_FMT_TYPE_RAW		1
-#define MXC_JPEG_MIN_HEIGHT		0x8
-#define MXC_JPEG_MIN_WIDTH		0x8
-#define MXC_JPEG_MAX_HEIGHT		0x2000
+#define MXC_JPEG_DEFAULT_WIDTH		1280
+#define MXC_JPEG_DEFAULT_HEIGHT		720
+#define MXC_JPEG_DEFAULT_PFMT		V4L2_PIX_FMT_RGB24
+#define MXC_JPEG_MIN_WIDTH		64
+#define MXC_JPEG_MIN_HEIGHT		64
 #define MXC_JPEG_MAX_WIDTH		0x2000
+#define MXC_JPEG_MAX_HEIGHT		0x2000
+#define MXC_JPEG_MAX_CFG_STREAM		0x1000
 #define MXC_JPEG_H_ALIGN		3
 #define MXC_JPEG_W_ALIGN		3
-#define MXC_JPEG_DEFAULT_SIZEIMAGE	10000
+#define MXC_JPEG_DEFAULT_SIZEIMAGE	(6 * MXC_JPEG_DEFAULT_WIDTH * \
+					 MXC_JPEG_DEFAULT_HEIGHT)
+#define MXC_JPEG_MAX_SIZEIMAGE		0xFFFFFC00
 #define MXC_JPEG_ENC_CONF		1
 #define MXC_JPEG_ENC_DONE		0
 #define SOF0				0xC0
+#define SOF1				0xC1
 #define SOF2				0xC2
+#define SOS				0xDA
+#define DHT				0xC4
+#define APP14				0xEE
 #define MXC_JPEG_ENC_CONF_DONE		1
+#define MXC_JPEG_MAX_PLANES		2
+#define MXC_JPEG_NUM_PD			6
 
 
 /**
@@ -73,11 +78,12 @@ struct mxc_jpeg_desc {
 
 struct mxc_jpeg_q_data {
 	struct mxc_jpeg_fmt	*fmt;
-	u32			sizeimage[1];
-	u32			bytesperline[2];
+	u32			sizeimage[MXC_JPEG_MAX_PLANES];
+	u32			bytesperline[MXC_JPEG_MAX_PLANES];
 	int w;
+	int w_adjusted;
 	int h;
-	u32			stride;
+	int h_adjusted;
 };
 struct mxc_jpeg_ctx {
 	struct mxc_jpeg_dev		*mxc_jpeg;
@@ -90,13 +96,20 @@ struct mxc_jpeg_ctx {
 	unsigned int			enc_state;
 	unsigned int			aborting;
 	unsigned int			stopping;
+	unsigned int			dht_needed;
+	unsigned int			slot;
+	enum v4l2_colorspace colorspace;
+	enum v4l2_ycbcr_encoding ycbcr_enc;
+	enum v4l2_quantization quantization;
+	enum v4l2_xfer_func xfer_func;
 };
 
 struct mxc_jpeg_slot_data {
-	int used;
+	bool used;
 	struct mxc_jpeg_desc *desc; // enc/dec descriptor
 	struct mxc_jpeg_desc *cfg_desc; // configuration descriptor
 	void *cfg_stream_vaddr; // configuration bitstream virtual address
+	unsigned int cfg_stream_size;
 	int flags;
 	dma_addr_t desc_handle;
 	dma_addr_t cfg_desc_handle; // configuration descriptor dma address
@@ -104,24 +117,25 @@ struct mxc_jpeg_slot_data {
 };
 
 struct mxc_jpeg_dev {
-	spinlock_t				hw_lock;
-	unsigned int				mode;
+	spinlock_t			hw_lock;
+	unsigned int			mode;
 	struct mutex			lock;
-	bool					enc;
-	bool					dec;
-	struct clk				*clk_ipg;
-	struct clk				*clk_per;
-	struct platform_device			*pdev;
-	struct device				*dev;
-	void __iomem				*base_reg;
-	void __iomem				*enc_reg;
-	struct v4l2_device			v4l2_dev;
-	struct v4l2_m2m_dev			*m2m_dev;
-	struct video_device			*dec_vdev;
-	unsigned int				irq;
-	int					id;
-
-	struct mxc_jpeg_slot_data slot_data[MXC_MAX_SLOTS];
+	bool				enc;
+	bool				dec;
+	struct clk			*clk_ipg;
+	struct clk			*clk_per;
+	struct platform_device		*pdev;
+	struct device			*dev;
+	void __iomem			*base_reg;
+	void __iomem			*enc_reg;
+	struct v4l2_device		v4l2_dev;
+	struct v4l2_m2m_dev		*m2m_dev;
+	struct video_device		*dec_vdev;
+	unsigned int			irq;
+	int				id;
+	struct mxc_jpeg_slot_data	slot_data[MXC_MAX_SLOTS];
+	struct device			*pd_dev[MXC_JPEG_NUM_PD];
+	struct device_link		*pd_link[MXC_JPEG_NUM_PD];
 };
 
 #define MXC_JPEG_MAX_COMPONENTS 4
@@ -139,6 +153,18 @@ struct mxc_jpeg_sof {
 	u16 height, width;
 	u8 components_no;
 	struct mxc_jpeg_sof_comp comp[MXC_JPEG_MAX_COMPONENTS];
+} __packed;
+
+/* JPEG Start Of Scan marker fields*/
+struct mxc_jpeg_sos_comp {
+	u8 id; /*component id*/
+	u8 huffman_table_no;
+} __packed;
+struct mxc_jpeg_sos {
+	u16 length;
+	u8 components_no;
+	struct mxc_jpeg_sos_comp comp[MXC_JPEG_MAX_COMPONENTS];
+	u8 ignorable_bytes[3];
 } __packed;
 
 #endif

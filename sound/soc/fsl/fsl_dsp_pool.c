@@ -6,7 +6,6 @@
 // Copyright (c) 2012-2013 by Tensilica Inc.
 
 #include <linux/slab.h>
-#include <soc/imx8/sc/ipc.h>
 
 #include "fsl_dsp_pool.h"
 #include "fsl_dsp.h"

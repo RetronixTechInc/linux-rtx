@@ -111,17 +111,11 @@ static int imx7ulp_set_target(struct cpufreq_policy *policy, unsigned int index)
 
 static int imx7ulp_cpufreq_init(struct cpufreq_policy *policy)
 {
-	int ret;
 	policy->clk = arm_clk;
 	policy->cur = clk_get_rate(arm_clk) / 1000;
 	policy->suspend_freq = freq_table[0].frequency;
 
-	ret = cpufreq_generic_init(policy, freq_table, transition_latency);
-
-	if (ret) {
-		dev_err(cpu_dev, "imx7ulp cpufreq init failed\n");
-		return ret;
-	}
+	cpufreq_generic_init(policy, freq_table, transition_latency);
 
 	return 0;
 }
@@ -176,9 +170,10 @@ static int imx7ulp_cpufreq_probe(struct platform_device *pdev)
 
 	arm_reg = regulator_get(cpu_dev, "arm");
 	if (IS_ERR(arm_reg)) {
-		dev_err(cpu_dev, "failed to get regulator\n");
-		ret = -ENOENT;
-		goto put_reg;
+		if (PTR_ERR(arm_reg) != -EPROBE_DEFER)
+			dev_err(cpu_dev, "failed to get regulator\n");
+		ret = PTR_ERR(arm_reg);
+		goto put_clk;
 	}
 
 	ret = dev_pm_opp_of_add_table(cpu_dev);

@@ -1,13 +1,10 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * ci.h - common structures, functions, and macros of the ChipIdea driver
  *
  * Copyright (C) 2008 Chipidea - MIPS Technologies, Inc. All rights reserved.
  *
  * Author: David Lopo
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
  */
 
 #ifndef __DRIVERS_USB_CHIPIDEA_CI_H
@@ -19,6 +16,7 @@
 #include <linux/usb/gadget.h>
 #include <linux/usb/otg-fsm.h>
 #include <linux/usb/otg.h>
+#include <linux/usb/role.h>
 #include <linux/ulpi/interface.h>
 
 /******************************************************************************
@@ -27,6 +25,7 @@
 #define TD_PAGE_COUNT      5
 #define CI_HDRC_PAGE_SIZE  4096ul /* page size for TD's */
 #define ENDPT_MAX          32
+#define CI_MAX_BUF_SIZE	(TD_PAGE_COUNT * CI_HDRC_PAGE_SIZE)
 
 /******************************************************************************
  * REGISTERS
@@ -203,7 +202,6 @@ struct hw_bank {
  * @debugfs: root dentry for this controller in debugfs
  * @id_event: indicates there is an id event, and handled at ci_otg_work
  * @b_sess_valid_event: indicates there is a vbus event, and handled
- * @vbus_glitch_check_event: check if vbus change is a glitch
  * at ci_otg_work
  * @imx28_write_fix: Freescale imx28 needs swp instruction for writing
  * @supports_runtime_pm: if runtime pm is supported
@@ -228,6 +226,7 @@ struct ci_hdrc {
 	ktime_t				hr_timeouts[NUM_OTG_FSM_TIMERS];
 	unsigned			enabled_otg_timer_bits;
 	enum otg_fsm_timer		next_otg_timer;
+	struct usb_role_switch		*role_switch;
 	struct work_struct		work;
 	struct workqueue_struct		*wq;
 
@@ -251,10 +250,8 @@ struct ci_hdrc {
 
 	struct ci_hdrc_platform_data	*platdata;
 	int				vbus_active;
-#ifdef CONFIG_USB_CHIPIDEA_ULPI
 	struct ulpi			*ulpi;
 	struct ulpi_ops 		ulpi_ops;
-#endif
 	struct phy			*phy;
 	/* old usb_phy interface */
 	struct usb_phy			*usb_phy;
@@ -262,7 +259,6 @@ struct ci_hdrc {
 	struct dentry			*debugfs;
 	bool				id_event;
 	bool				b_sess_valid_event;
-	bool				vbus_glitch_check_event;
 	bool				imx28_write_fix;
 	bool				supports_runtime_pm;
 	bool				in_lpm;
@@ -309,10 +305,10 @@ static inline int ci_role_start(struct ci_hdrc *ci, enum ci_role role)
 	if (ci->usb_phy) {
 		if (role == CI_ROLE_HOST)
 			usb_phy_set_mode(ci->usb_phy,
-					USB_MODE_HOST);
+					CUR_USB_MODE_HOST);
 		else
 			usb_phy_set_mode(ci->usb_phy,
-					USB_MODE_DEVICE);
+					CUR_USB_MODE_DEVICE);
 	}
 
 	return 0;
@@ -330,7 +326,27 @@ static inline void ci_role_stop(struct ci_hdrc *ci)
 	ci->roles[role]->stop(ci);
 
 	if (ci->usb_phy)
-		usb_phy_set_mode(ci->usb_phy, USB_MODE_NONE);
+		usb_phy_set_mode(ci->usb_phy, CUR_USB_MODE_NONE);
+}
+
+static inline enum usb_role ci_role_to_usb_role(struct ci_hdrc *ci)
+{
+	if (ci->role == CI_ROLE_HOST)
+		return USB_ROLE_HOST;
+	else if (ci->role == CI_ROLE_GADGET && ci->vbus_active)
+		return USB_ROLE_DEVICE;
+	else
+		return USB_ROLE_NONE;
+}
+
+static inline enum ci_role usb_role_to_ci_role(enum usb_role role)
+{
+	if (role == USB_ROLE_HOST)
+		return CI_ROLE_HOST;
+	else if (role == USB_ROLE_DEVICE)
+		return CI_ROLE_GADGET;
+	else
+		return CI_ROLE_END;
 }
 
 /**
@@ -467,15 +483,9 @@ static inline bool ci_otg_is_fsm_mode(struct ci_hdrc *ci)
 #endif
 }
 
-#if IS_ENABLED(CONFIG_USB_CHIPIDEA_ULPI)
 int ci_ulpi_init(struct ci_hdrc *ci);
 void ci_ulpi_exit(struct ci_hdrc *ci);
 int ci_ulpi_resume(struct ci_hdrc *ci);
-#else
-static inline int ci_ulpi_init(struct ci_hdrc *ci) { return 0; }
-static inline void ci_ulpi_exit(struct ci_hdrc *ci) { }
-static inline int ci_ulpi_resume(struct ci_hdrc *ci) { return 0; }
-#endif
 
 u32 hw_read_intr_enable(struct ci_hdrc *ci);
 
@@ -492,7 +502,8 @@ void hw_phymode_configure(struct ci_hdrc *ci);
 void ci_platform_configure(struct ci_hdrc *ci);
 int hw_controller_reset(struct ci_hdrc *ci);
 
-int dbg_create_files(struct ci_hdrc *ci);
+void dbg_create_files(struct ci_hdrc *ci);
 
 void dbg_remove_files(struct ci_hdrc *ci);
+void ci_hdrc_enter_lpm(struct ci_hdrc *ci, bool enable);
 #endif	/* __DRIVERS_USB_CHIPIDEA_CI_H */

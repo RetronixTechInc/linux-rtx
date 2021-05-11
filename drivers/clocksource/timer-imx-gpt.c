@@ -1,25 +1,9 @@
-/*
- *  linux/arch/arm/plat-mxc/time.c
- *
- *  Copyright (C) 2000-2001 Deep Blue Solutions
- *  Copyright (C) 2002 Shane Nay (shane@minirl.com)
- *  Copyright (C) 2006-2007 Pavel Pisa (ppisa@pikron.com)
- *  Copyright (C) 2008 Juergen Beisert (kernel@pengutronix.de)
- *
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License
- * as published by the Free Software Foundation; either version 2
- * of the License, or (at your option) any later version.
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston,
- * MA 02110-1301, USA.
- */
+// SPDX-License-Identifier: GPL-2.0+
+//
+//  Copyright (C) 2000-2001 Deep Blue Solutions
+//  Copyright (C) 2002 Shane Nay (shane@minirl.com)
+//  Copyright (C) 2006-2007 Pavel Pisa (ppisa@pikron.com)
+//  Copyright (C) 2008 Juergen Beisert (kernel@pengutronix.de)
 
 #include <linux/interrupt.h>
 #include <linux/irq.h>
@@ -157,7 +141,7 @@ static u64 notrace mxc_read_sched_clock(void)
 	return sched_clock_reg ? readl_relaxed(sched_clock_reg) : 0;
 }
 
-#ifndef CONFIG_ARM64
+#if defined(CONFIG_ARM)
 static struct delay_timer imx_delay_timer;
 
 static unsigned long imx_read_current_timer(void)
@@ -171,10 +155,7 @@ static int __init mxc_clocksource_init(struct imx_timer *imxtm)
 	unsigned int c = clk_get_rate(imxtm->clk_per);
 	void __iomem *reg = imxtm->base + imxtm->gpt->reg_tcn;
 
-	if (c == 0)
-		return -EINVAL;
-
-#ifndef CONFIG_ARM64
+#if defined(CONFIG_ARM)
 	imx_delay_timer.read_current_timer = &imx_read_current_timer;
 	imx_delay_timer.freq = c;
 	register_current_timer_delay(&imx_delay_timer);
@@ -221,14 +202,7 @@ static int v2_set_next_event(unsigned long evt,
 static int mxc_shutdown(struct clock_event_device *ced)
 {
 	struct imx_timer *imxtm = to_imx_timer(ced);
-	unsigned long flags;
 	u32 tcn;
-
-	/*
-	 * The timer interrupt generation is disabled at least
-	 * for enough time to call mxc_set_next_event()
-	 */
-	local_irq_save(flags);
 
 	/* Disable interrupt in GPT module */
 	imxtm->gpt->gpt_irq_disable(imxtm);
@@ -244,21 +218,12 @@ static int mxc_shutdown(struct clock_event_device *ced)
 	printk(KERN_INFO "%s: changing mode\n", __func__);
 #endif /* DEBUG */
 
-	local_irq_restore(flags);
-
 	return 0;
 }
 
 static int mxc_set_oneshot(struct clock_event_device *ced)
 {
 	struct imx_timer *imxtm = to_imx_timer(ced);
-	unsigned long flags;
-
-	/*
-	 * The timer interrupt generation is disabled at least
-	 * for enough time to call mxc_set_next_event()
-	 */
-	local_irq_save(flags);
 
 	/* Disable interrupt in GPT module */
 	imxtm->gpt->gpt_irq_disable(imxtm);
@@ -283,7 +248,6 @@ static int mxc_set_oneshot(struct clock_event_device *ced)
 	 * mode switching
 	 */
 	imxtm->gpt->gpt_irq_enable(imxtm);
-	local_irq_restore(flags);
 
 	return 0;
 }
@@ -496,16 +460,12 @@ static int __init mxc_timer_init_dt(struct device_node *np,  enum imx_gpt_type t
 		return -ENOMEM;
 
 	imxtm->base = of_iomap(np, 0);
-	if (!imxtm->base) {
-		kfree(imxtm);
+	if (!imxtm->base)
 		return -ENXIO;
-	}
 
 	imxtm->irq = irq_of_parse_and_map(np, 0);
-	if (imxtm->irq <= 0) {
-		kfree(imxtm);
+	if (imxtm->irq <= 0)
 		return -EINVAL;
-	}
 
 	imxtm->clk_ipg = of_clk_get_by_name(np, "ipg");
 
@@ -556,19 +516,6 @@ static int __init imx6dl_timer_init_dt(struct device_node *np)
 	return mxc_timer_init_dt(np, GPT_TYPE_IMX6DL);
 }
 
-#ifdef CONFIG_ARM64
-static int __init imx8qxp_timer_init(void)
-{
-	struct device_node *np;
-
-	np = of_find_compatible_node(NULL, NULL, "fsl,imx8qxp-gpt");
-	if (!np)
-		return -ENOENT;
-
-	return mxc_timer_init_dt(np, GPT_TYPE_IMX6DL);
-}
-#endif
-
 TIMER_OF_DECLARE(imx1_timer, "fsl,imx1-gpt", imx1_timer_init_dt);
 TIMER_OF_DECLARE(imx21_timer, "fsl,imx21-gpt", imx21_timer_init_dt);
 TIMER_OF_DECLARE(imx27_timer, "fsl,imx27-gpt", imx21_timer_init_dt);
@@ -580,10 +527,4 @@ TIMER_OF_DECLARE(imx53_timer, "fsl,imx53-gpt", imx31_timer_init_dt);
 TIMER_OF_DECLARE(imx6q_timer, "fsl,imx6q-gpt", imx31_timer_init_dt);
 TIMER_OF_DECLARE(imx6dl_timer, "fsl,imx6dl-gpt", imx6dl_timer_init_dt);
 TIMER_OF_DECLARE(imx6sl_timer, "fsl,imx6sl-gpt", imx6dl_timer_init_dt);
-TIMER_OF_DECLARE(imx6sll_timer, "fsl,imx6sll-gpt", imx6dl_timer_init_dt);
 TIMER_OF_DECLARE(imx6sx_timer, "fsl,imx6sx-gpt", imx6dl_timer_init_dt);
-TIMER_OF_DECLARE(imx6ul_timer, "fsl,imx6ul-gpt", imx6dl_timer_init_dt);
-TIMER_OF_DECLARE(mx7d_timer, "fsl,imx7d-gpt", imx6dl_timer_init_dt);
-#ifdef CONFIG_ARM64
-subsys_initcall(imx8qxp_timer_init);
-#endif

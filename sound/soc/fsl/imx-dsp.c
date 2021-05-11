@@ -17,6 +17,7 @@
 #include <sound/control.h>
 #include <sound/pcm_params.h>
 #include <sound/soc-dapm.h>
+#include <linux/string.h>
 
 struct imx_dsp_audio_data {
 	struct snd_soc_dai_link dai[2];
@@ -29,22 +30,13 @@ static int imx_dsp_hw_params(struct snd_pcm_substream *substream,
 	struct snd_soc_pcm_runtime *rtd = substream->private_data;
 	struct snd_soc_dai *codec_dai = rtd->codec_dai;
 	int ret;
-	u32 dai_format = SND_SOC_DAIFMT_NB_NF | SND_SOC_DAIFMT_LEFT_J |
-			SND_SOC_DAIFMT_CBS_CFS;
 
 	ret = snd_soc_dai_set_sysclk(codec_dai, 0,
-					24576000, SND_SOC_CLOCK_IN);
+				     clk_get_rate(devm_clk_get(codec_dai->dev, "mclk")), SND_SOC_CLOCK_IN);
 	if (ret) {
 		dev_err(rtd->dev, "failed to set codec sysclk: %d\n", ret);
 		return ret;
 	}
-
-	ret = snd_soc_dai_set_fmt(codec_dai, dai_format);
-	if (ret) {
-		dev_err(rtd->dev, "failed to set codec dai fmt: %d\n", ret);
-		return ret;
-	}
-
 	return 0;
 }
 
@@ -74,18 +66,25 @@ static int be_hw_params_fixup(struct snd_soc_pcm_runtime *rtd,
 
 static const struct snd_soc_dapm_route imx_dsp_audio_map[] = {
 	{"Playback",  NULL, "Compress Playback"},/* dai route for be and fe */
-	{"Playback",  NULL, "Playback"},
 };
 
 static int imx_dsp_audio_probe(struct platform_device *pdev)
 {
+	struct device_node *np = pdev->dev.of_node;
 	struct device_node *cpu_np=NULL, *codec_np=NULL, *platform_np=NULL;
+	struct snd_soc_dai_link_component *comp;
 	struct platform_device *cpu_pdev;
 	struct imx_dsp_audio_data *data;
 	int ret;
 
 	data = devm_kzalloc(&pdev->dev, sizeof(*data), GFP_KERNEL);
 	if (!data) {
+		ret = -ENOMEM;
+		goto fail;
+	}
+
+	comp = devm_kzalloc(&pdev->dev, 6 * sizeof(*comp), GFP_KERNEL);
+	if (!comp) {
 		ret = -ENOMEM;
 		goto fail;
 	}
@@ -118,13 +117,22 @@ static int imx_dsp_audio_probe(struct platform_device *pdev)
                 goto fail;
         }
 
+
+	data->dai[0].cpus          = &comp[0];
+	data->dai[0].codecs        = &comp[1];
+	data->dai[0].platforms     = &comp[2];
+
+	data->dai[0].num_cpus      = 1;
+	data->dai[0].num_codecs    = 1;
+	data->dai[0].num_platforms = 1;
+
 	data->dai[0].name = "dsp hifi fe";
 	data->dai[0].stream_name = "dsp hifi fe";
-	data->dai[0].codec_dai_name = "snd-soc-dummy-dai";
-	data->dai[0].codec_name = "snd-soc-dummy";
-	data->dai[0].cpu_dai_name = dev_name(&cpu_pdev->dev);
-	data->dai[0].cpu_of_node = cpu_np;
-	data->dai[0].platform_of_node = platform_np;
+	data->dai[0].codecs->dai_name = "snd-soc-dummy-dai";
+	data->dai[0].codecs->name = "snd-soc-dummy";
+	data->dai[0].cpus->dai_name = dev_name(&cpu_pdev->dev);
+	data->dai[0].cpus->of_node = cpu_np;
+	data->dai[0].platforms->of_node = platform_np;
 	data->dai[0].playback_only = true;
 	data->dai[0].capture_only = false;
 	data->dai[0].dpcm_playback = 1;
@@ -135,22 +143,42 @@ static int imx_dsp_audio_probe(struct platform_device *pdev)
 			    SND_SOC_DAIFMT_NB_NF |
 			    SND_SOC_DAIFMT_CBS_CFS;
 
+	data->dai[1].cpus          = &comp[3];
+	data->dai[1].codecs        = &comp[4];
+	data->dai[1].platforms     = &comp[5];
+
+	data->dai[1].num_cpus      = 1;
+	data->dai[1].num_codecs    = 1;
+	data->dai[1].num_platforms = 1;
+
 	data->dai[1].name = "dsp hifi be";
 	data->dai[1].stream_name = "dsp hifi be";
-	data->dai[1].codec_dai_name = "cs42888";
-	data->dai[1].codec_of_node = codec_np;
-	data->dai[1].cpu_dai_name = "snd-soc-dummy-dai";
-	data->dai[1].cpu_name = "snd-soc-dummy";
-	data->dai[1].platform_name = "snd-soc-dummy";
+	if (sysfs_streq(codec_np->name, "wm8960")) {
+		if (of_device_is_compatible(np, "fsl,imx-dsp-audio-lpa"))
+			data->dai[1].codecs->dai_name = "rpmsg-wm8960-hifi";
+		else
+			data->dai[1].codecs->dai_name = "wm8960-hifi";
+		data->dai[1].dai_fmt = SND_SOC_DAIFMT_NB_NF |
+				       SND_SOC_DAIFMT_I2S |
+				       SND_SOC_DAIFMT_CBS_CFS;
+	} else {
+		data->dai[1].codecs->dai_name = "cs42888";
+		data->dai[1].dai_fmt = SND_SOC_DAIFMT_LEFT_J |
+				       SND_SOC_DAIFMT_NB_NF |
+				       SND_SOC_DAIFMT_CBS_CFS;
+	}
+	data->dai[1].codecs->of_node = codec_np;
+	data->dai[1].cpus->dai_name = "snd-soc-dummy-dai";
+	data->dai[1].cpus->name = "snd-soc-dummy";
+	data->dai[1].platforms->name = "snd-soc-dummy";
 	data->dai[1].playback_only = true;
 	data->dai[1].capture_only = false;
 	data->dai[1].dpcm_playback = 1;
+	if (of_device_is_compatible(np, "fsl,imx-dsp-audio-lpa"))
+		data->dai[1].ignore_suspend = 1;
 	data->dai[1].dpcm_capture = 0;
 	data->dai[1].no_pcm = 1,
 	data->dai[1].ignore_pmdown_time = 1,
-	data->dai[1].dai_fmt = SND_SOC_DAIFMT_LEFT_J |
-			    SND_SOC_DAIFMT_NB_NF |
-			    SND_SOC_DAIFMT_CBS_CFS;
 	data->dai[1].ops = &imx_dsp_ops_be;
 	data->dai[1].be_hw_params_fixup = be_hw_params_fixup;
 
@@ -185,6 +213,7 @@ fail:
 
 static const struct of_device_id imx_dsp_audio_dt_ids[] = {
 	{ .compatible = "fsl,imx-dsp-audio", },
+	{ .compatible = "fsl,imx-dsp-audio-lpa", },
 	{ /* sentinel */ }
 };
 MODULE_DEVICE_TABLE(of, imx_dsp_audio_dt_ids);

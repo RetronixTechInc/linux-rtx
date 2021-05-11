@@ -44,7 +44,8 @@
 #define CODEC_DRM_DEC		6
 #define CODEC_SBC_DEC		7
 #define CODEC_SBC_ENC		8
-#define CODEC_DEMO_DEC		9
+#define CODEC_PCM_DEC		9
+#define CODEC_DEMO_DEC		10
 
 #define RENDER_ESAI		0x10
 #define RENDER_SAI		0x11
@@ -78,7 +79,7 @@ enum DSP_ParaType {
 	XA_DOWNMIX_STEREO,
 	XA_STREAM_TYPE,
 	XA_CHAN_MAP_TABLE,
-	//UNIA_CHANNEL_MASK,
+	/*UNIA_CHANNEL_MASK,*/
 	XA_TO_STEREO,
 
 /* dedicate for mp3 dec */

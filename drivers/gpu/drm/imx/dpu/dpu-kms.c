@@ -1,5 +1,5 @@
 /*
- * Copyright 2017-2019 NXP
+ * Copyright 2017-2020 NXP
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the
@@ -15,22 +15,12 @@
 #include <drm/drmP.h>
 #include <drm/drm_atomic.h>
 #include <drm/drm_atomic_helper.h>
-#include <drm/drm_fb_cma_helper.h>
-#include <drm/drm_gem_cma_helper.h>
-#include <linux/dma-buf.h>
-#include <linux/reservation.h>
+#include <drm/drm_gem_framebuffer_helper.h>
 #include <linux/sort.h>
 #include <video/dpu.h>
 #include "dpu-crtc.h"
 #include "dpu-plane.h"
-#include "imx-drm.h"
-
-static void dpu_drm_output_poll_changed(struct drm_device *dev)
-{
-	struct imx_drm_device *imxdrm = dev->dev_private;
-
-	drm_fbdev_cma_hotplug_event(imxdrm->fbhelper);
-}
+#include "../imx-drm.h"
 
 static struct drm_plane_state **
 dpu_atomic_alloc_tmp_planes_per_crtc(struct drm_device *dev)
@@ -74,97 +64,34 @@ static int dpu_atomic_sort_planes_per_crtc(struct drm_crtc_state *crtc_state,
 	return n;
 }
 
-static int
-dpu_atomic_compute_plane_base_per_crtc(struct drm_crtc_state *crtc_state,
-				       struct drm_plane_state **states, int n,
-				       bool use_pc)
+static void
+dpu_atomic_compute_plane_lrx_per_crtc(struct drm_crtc_state *crtc_state,
+				      struct drm_plane_state **states, int n)
 {
 	struct dpu_plane_state *dpstate;
-	int i, left, right, top, bottom, tmp;
-	int base_x, base_y, base_w, base_h;
+	struct drm_plane_state *plane_state;
+	int i;
 	int half_hdisplay = crtc_state->adjusted_mode.hdisplay >> 1;
 	bool lo, ro, bo;
 
-	/* compute the plane base */
-	left   = states[0]->crtc_x;
-	top    = states[0]->crtc_y;
-	right  = states[0]->crtc_x + states[0]->crtc_w;
-	bottom = states[0]->crtc_y + states[0]->crtc_h;
-
-	for (i = 1; i < n; i++) {
-		left = min(states[i]->crtc_x, left);
-		top =  min(states[i]->crtc_y, top);
-
-		tmp = states[i]->crtc_x + states[i]->crtc_w;
-		right = max(tmp, right);
-
-		tmp = states[i]->crtc_y + states[i]->crtc_h;
-		bottom = max(tmp, bottom);
-	}
-
-	/* BTW, be smart to compute the layer offset */
+	/* compute left/right_crtc_x if pixel combiner is needed */
 	for (i = 0; i < n; i++) {
-		dpstate = to_dpu_plane_state(states[i]);
-		dpstate->layer_x = states[i]->crtc_x - left;
-		dpstate->layer_y = states[i]->crtc_y - top;
-	}
-
-	/* store the base in plane state */
-	dpstate = to_dpu_plane_state(states[0]);
-	base_x = left;
-	base_y = top;
-	base_w = right - left;
-	base_h = bottom - top;
-	dpstate->base_x = base_x;
-	dpstate->base_y = base_y;
-	dpstate->base_w = base_w;
-	dpstate->base_h = base_h;
-
-	if (!use_pc)
-		return 0;
-
-	/* compute left/right_layer/base_x/w if pixel combiner is needed */
-	for (i = 0; i < n; i++) {
-		dpstate = to_dpu_plane_state(states[i]);
+		plane_state = states[i];
+		dpstate = to_dpu_plane_state(plane_state);
 
 		lo =  dpstate->left_src_w && !dpstate->right_src_w;
 		ro = !dpstate->left_src_w &&  dpstate->right_src_w;
 		bo =  dpstate->left_src_w &&  dpstate->right_src_w;
 
 		if (lo || bo) {
-			dpstate->left_layer_x = dpstate->layer_x;
-			dpstate->right_layer_x = 0;
+			dpstate->left_crtc_x = plane_state->crtc_x;
+			dpstate->right_crtc_x = 0;
 		} else if (ro) {
-			dpstate->left_layer_x = 0;
-			dpstate->right_layer_x =
-					states[i]->crtc_x - half_hdisplay;
-		}
-
-		if (i)
-			continue;
-
-		if (base_x < half_hdisplay) {
-			dpstate->left_base_x = base_x;
-			dpstate->right_base_x = 0;
-
-			if ((base_x + base_w) < half_hdisplay) {
-				dpstate->left_base_w = base_w;
-				dpstate->right_base_w = 0;
-			} else {
-				dpstate->left_base_w = half_hdisplay - base_x;
-				dpstate->right_base_w =
-						base_x + base_w - half_hdisplay;
-			}
-		} else {
-			dpstate->left_base_x = 0;
-			dpstate->right_base_x = base_x - half_hdisplay;
-
-			dpstate->left_base_w = 0;
-			dpstate->right_base_w = base_w;
+			dpstate->left_crtc_x = 0;
+			dpstate->right_crtc_x =
+					plane_state->crtc_x - half_hdisplay;
 		}
 	}
-
-	return 0;
 }
 
 static void
@@ -213,7 +140,8 @@ dpu_atomic_assign_plane_source_per_crtc(struct drm_plane_state **states,
 	dpu_block_id_t blend;
 	unsigned int sid, src_sid;
 	unsigned int num_planes;
-	int i, j, k, l, m;
+	int bit;
+	int i, j, k = 0, m;
 	int total_asrc_num;
 	int s0_layer_cnt = 0, s1_layer_cnt = 0;
 	int s0_n = 0, s1_n = 0;
@@ -242,7 +170,7 @@ dpu_atomic_assign_plane_source_per_crtc(struct drm_plane_state **states,
 		dpstate = to_dpu_plane_state(states[i]);
 		dplane = to_dpu_plane(states[i]->plane);
 		fb = states[i]->fb;
-		num_planes = drm_format_num_planes(fb->format->format);
+		num_planes = fb->format->num_planes;
 		fmt_is_yuv = drm_format_is_yuv(fb->format->format);
 		grp = dplane->grp;
 		alloc_aux_source = false;
@@ -266,17 +194,17 @@ again:
 		hs_mask = 0;
 		vs_mask = 0;
 
-		for (l = 0; l < (sizeof(grp->src_a_mask) * 8); l++) {
-			if (grp->src_a_mask & BIT(l))
-				total_asrc_num++;
-		}
+		for_each_set_bit(bit, (unsigned long *)&src_a_mask, 32)
+			total_asrc_num++;
 
 		/* assign source */
 		mutex_lock(&grp->mutex);
-		for (k = 0; k < total_asrc_num; k++) {
-			m = ffs(src_a_mask) - 1;
+		for (j = 0; j < total_asrc_num; j++) {
+			k = ffs(src_a_mask) - 1;
+			if (k < 0)
+				return -EINVAL;
 
-			fu = source_to_fu(&grp->res, sources[m]);
+			fu = source_to_fu(&grp->res, sources[k]);
 			if (!fu)
 				return -EINVAL;
 
@@ -353,30 +281,30 @@ again:
 					goto next;
 			}
 
-			grp->src_a_mask &= ~BIT(m);
+			grp->src_a_mask &= ~BIT(k);
 			grp->src_use_vproc_mask |= fe_mask | hs_mask | vs_mask;
 			break;
 next:
-			src_a_mask &= ~BIT(m);
+			src_a_mask &= ~BIT(k);
 			fe_mask = 0;
 			hs_mask = 0;
 			vs_mask = 0;
 		}
 		mutex_unlock(&grp->mutex);
 
-		if (k == total_asrc_num)
+		if (j == total_asrc_num)
 			return -EINVAL;
 
 		if (alloc_aux_source)
-			dpstate->aux_source = sources[m];
+			dpstate->aux_source = sources[k];
 		else
-			dpstate->source = sources[m];
+			dpstate->source = sources[k];
 
 		/* assign stage and blend */
 		if (sid) {
-			j = grp->hw_plane_num - (s1_n - s1_layer_cnt);
-			stage = s1_layer_cnt ? stages[j - 1] : cf_stages[sid];
-			blend = blends[j];
+			m = grp->hw_plane_num - (s1_n - s1_layer_cnt);
+			stage = s1_layer_cnt ? stages[m - 1] : cf_stages[sid];
+			blend = blends[m];
 
 			s1_layer_cnt++;
 		} else {
@@ -416,9 +344,8 @@ dpu_atomic_mark_pipe_states_prone_to_put_per_crtc(struct drm_crtc *crtc,
 	int i;
 
 	if ((crtc_mask & drm_crtc_mask(crtc)) == 0) {
-		for_each_plane_in_state(state, plane, plane_state, i) {
-			if (plane->possible_crtcs &
-			    drm_crtc_mask(crtc)) {
+		for_each_new_plane_in_state(state, plane, plane_state, i) {
+			if (plane->possible_crtcs & drm_crtc_mask(crtc)) {
 				found_pstate = true;
 				break;
 			}
@@ -488,7 +415,8 @@ dpu_atomic_put_possible_states_per_crtc(struct drm_crtc_state *crtc_state)
 			plane_state =
 				drm_atomic_get_existing_plane_state(state,
 									plane);
-			WARN_ON(!plane_state);
+			if (WARN_ON(!plane_state))
+				return;
 
 			new_dpstate = to_dpu_plane_state(plane_state);
 
@@ -497,13 +425,12 @@ dpu_atomic_put_possible_states_per_crtc(struct drm_crtc_state *crtc_state)
 			/*
 			 * Should be enough to check the below real HW plane
 			 * resources only.
-			 * Vproc resources and things like layer_x/y should
-			 * be fine.
+			 * Things like vproc resources should be fine.
 			 */
-			if (old_dpstate->stage  != new_dpstate->stage ||
+			if (old_dpstate->stage  != new_dpstate->stage  ||
 			    old_dpstate->source != new_dpstate->source ||
-			    old_dpstate->blend  != new_dpstate->blend ||
-			    old_dpstate->aux_stage  != new_dpstate->aux_stage ||
+			    old_dpstate->blend  != new_dpstate->blend  ||
+			    old_dpstate->aux_stage  != new_dpstate->aux_stage  ||
 			    old_dpstate->aux_source != new_dpstate->aux_source ||
 			    old_dpstate->aux_blend  != new_dpstate->aux_blend)
 				return;
@@ -542,8 +469,10 @@ static int dpu_drm_atomic_check(struct drm_device *dev,
 	u32 crtc_mask_in_state = 0;
 
 	ret = drm_atomic_helper_check_modeset(dev, state);
-	if (ret)
+	if (ret) {
+		DRM_DEBUG_KMS("%s: failed to check modeset\n", __func__);
 		return ret;
+	}
 
 	for (i = 0; i < MAX_CRTC; i++)
 		pipe_states_prone_to_put[i] = false;
@@ -557,7 +486,7 @@ static int dpu_drm_atomic_check(struct drm_device *dev,
 		grp[i] = NULL;
 	}
 
-	for_each_crtc_in_state(state, crtc, crtc_state, i)
+	for_each_new_crtc_in_state(state, crtc, crtc_state, i)
 		crtc_mask_in_state |= drm_crtc_mask(crtc);
 
 	drm_for_each_crtc(crtc, dev) {
@@ -580,18 +509,16 @@ static int dpu_drm_atomic_check(struct drm_device *dev,
 		dcstate = to_dpu_crtc_state(imx_crtc_state);
 
 		if (crtc_state->enable) {
-			if (use_pc[dpu_crtc->crtc_grp_id])
+			if (use_pc[dpu_crtc->crtc_grp_id]) {
+				DRM_DEBUG_KMS("other crtc needs pixel combiner\n");
 				return -EINVAL;
+			}
 
 			if (crtc_state->adjusted_mode.clock >
 					dpu_crtc->syncmode_min_prate ||
 			    crtc_state->adjusted_mode.hdisplay >
-					dpu_crtc->singlemode_max_width) {
-				if (!dpu_crtc->has_pc)
-					return -EINVAL;
-
+					dpu_crtc->singlemode_max_width)
 				use_pc_per_crtc = true;
-			}
 		}
 
 		if (use_pc_per_crtc) {
@@ -603,6 +530,11 @@ static int dpu_drm_atomic_check(struct drm_device *dev,
 
 		drm_for_each_plane_mask(plane, dev, crtc_state->plane_mask) {
 			plane_state = drm_atomic_get_plane_state(state, plane);
+			if (IS_ERR(plane_state)) {
+				DRM_DEBUG_KMS("failed to get plane state\n");
+				return PTR_ERR(plane_state);
+			}
+
 			dpstate = to_dpu_plane_state(plane_state);
 			fb = plane_state->fb;
 			dpu_plane = to_dpu_plane(plane);
@@ -654,7 +586,7 @@ static int dpu_drm_atomic_check(struct drm_device *dev,
 				dpstate->right_src_w = 0;
 			}
 
-			if (drm_format_num_planes(fb->format->format) > 1) {
+			if (fb->format->num_planes > 1) {
 				active_plane_fetcheco[grp_id]++;
 				if (need_aux_source)
 					active_plane_fetcheco[grp_id]++;
@@ -683,49 +615,62 @@ static int dpu_drm_atomic_check(struct drm_device *dev,
 
 	/* enough resources? */
 	for (i = 0; i < MAX_DPU_PLANE_GRP; i++) {
-		if (grp[i]) {
-			if (active_plane[i] > grp[i]->hw_plane_num)
-				return -EINVAL;
+		if (!grp[i])
+			continue;
 
-			if (active_plane_fetcheco[i] >
-			    grp[i]->hw_plane_fetcheco_num)
-				return -EINVAL;
+		if (active_plane[i] > grp[i]->hw_plane_num) {
+			DRM_DEBUG_KMS("no enough fetch units\n");
+			return -EINVAL;
+		}
 
-			if (active_plane_hscale[i] >
-			    grp[i]->hw_plane_hscaler_num)
-				return -EINVAL;
+		if (active_plane_fetcheco[i] > grp[i]->hw_plane_fetcheco_num) {
+			DRM_DEBUG_KMS("no enough FetchEcos\n");
+			return -EINVAL;
+		}
 
-			if (active_plane_vscale[i] >
-			    grp[i]->hw_plane_vscaler_num)
-				return -EINVAL;
+		if (active_plane_hscale[i] > grp[i]->hw_plane_hscaler_num) {
+			DRM_DEBUG_KMS("no enough Hscalers\n");
+			return -EINVAL;
+		}
+
+		if (active_plane_vscale[i] > grp[i]->hw_plane_vscaler_num) {
+			DRM_DEBUG_KMS("no enough Vscalers\n");
+			return -EINVAL;
 		}
 	}
 
-	/* clear resource mask */
+	/* initialize resource mask */
 	for (i = 0; i < MAX_DPU_PLANE_GRP; i++) {
-		if (grp[i]) {
-			mutex_lock(&grp[i]->mutex);
-			grp[i]->src_a_mask = ~grp[i]->src_na_mask;
-			grp[i]->src_use_vproc_mask = 0;
-			mutex_unlock(&grp[i]->mutex);
-		}
+		if (!grp[i])
+			continue;
+
+		mutex_lock(&grp[i]->mutex);
+		grp[i]->src_a_mask = grp[i]->src_mask;
+		grp[i]->src_use_vproc_mask = 0;
+		mutex_unlock(&grp[i]->mutex);
 	}
 
 	ret = drm_atomic_normalize_zpos(dev, state);
 	if (ret)
 		return ret;
 
-	for_each_crtc_in_state(state, crtc, crtc_state, i) {
+	for_each_new_crtc_in_state(state, crtc, crtc_state, i) {
 		struct dpu_crtc *dpu_crtc = to_dpu_crtc(crtc);
 		struct drm_plane_state **states;
 		int n;
 
 		states = dpu_atomic_alloc_tmp_planes_per_crtc(dev);
-		if (IS_ERR(states))
+		if (IS_ERR(states)) {
+			DRM_DEBUG_KMS(
+				"[CRTC:%d:%s] cannot alloc plane state ptrs\n",
+					crtc->base.id, crtc->name);
 			return PTR_ERR(states);
+		}
 
 		n = dpu_atomic_sort_planes_per_crtc(crtc_state, states);
 		if (n < 0) {
+			DRM_DEBUG_KMS("[CRTC:%d:%s] failed to sort planes\n",
+					crtc->base.id, crtc->name);
 			kfree(states);
 			return n;
 		}
@@ -736,18 +681,9 @@ static int dpu_drm_atomic_check(struct drm_device *dev,
 			continue;
 		}
 
-		/* 'zpos = 0' means primary plane */
-		if (states[0]->plane->type != DRM_PLANE_TYPE_PRIMARY) {
-			kfree(states);
-			return -EINVAL;
-		}
-
-		ret = dpu_atomic_compute_plane_base_per_crtc(crtc_state, states,
-					n, use_pc[dpu_crtc->crtc_grp_id]);
-		if (ret) {
-			kfree(states);
-			return ret;
-		}
+		if (use_pc[dpu_crtc->crtc_grp_id])
+			dpu_atomic_compute_plane_lrx_per_crtc(crtc_state,
+								states, n);
 
 		dpu_atomic_set_top_plane_per_crtc(states, n,
 					use_pc[dpu_crtc->crtc_grp_id]);
@@ -755,106 +691,36 @@ static int dpu_drm_atomic_check(struct drm_device *dev,
 		ret = dpu_atomic_assign_plane_source_per_crtc(states, n,
 						use_pc[dpu_crtc->crtc_grp_id]);
 		if (ret) {
+			DRM_DEBUG_KMS("[CRTC:%d:%s] cannot assign plane rscs\n",
+					crtc->base.id, crtc->name);
 			kfree(states);
 			return ret;
 		}
 
 		kfree(states);
+	}
 
-		if (pipe_states_prone_to_put[drm_crtc_index(crtc)])
+	drm_for_each_crtc(crtc, dev) {
+		if (pipe_states_prone_to_put[drm_crtc_index(crtc)]) {
+			crtc_state = drm_atomic_get_crtc_state(state, crtc);
+			if (WARN_ON(IS_ERR(crtc_state)))
+				return PTR_ERR(crtc_state);
+
 			dpu_atomic_put_possible_states_per_crtc(crtc_state);
+		}
 	}
 
 	ret = drm_atomic_helper_check_planes(dev, state);
-	if (ret)
+	if (ret) {
+		DRM_DEBUG_KMS("%s: failed to check planes\n", __func__);
 		return ret;
-
-	return ret;
-}
-
-static void dpu_drm_commit_tail(struct drm_atomic_state *old_state)
-{
-	struct drm_device *dev = old_state->dev;
-
-	drm_atomic_helper_wait_for_fences(dev, old_state, false);
-
-	drm_atomic_helper_wait_for_dependencies(old_state);
-
-	drm_atomic_helper_commit_tail(old_state);
-
-	drm_atomic_helper_commit_cleanup_done(old_state);
-
-	drm_atomic_state_put(old_state);
-}
-
-static void dpu_drm_commit_work(struct work_struct *work)
-{
-	struct drm_atomic_state *state = container_of(work,
-						      struct drm_atomic_state,
-						      commit_work);
-	dpu_drm_commit_tail(state);
-}
-
-/*
- * This is almost a copy of drm_atomic_helper_commit().
- * For nonblock commits, we queue the work on a freezable and unbound work queue
- * of our own instead of system_unbound_wq to make sure work items on the work
- * queue are drained in the freeze phase of the system suspend operations.
- */
-static int dpu_drm_atomic_commit(struct drm_device *dev,
-				 struct drm_atomic_state *state,
-				 bool nonblock)
-{
-	struct imx_drm_device *imxdrm = dev->dev_private;
-	int ret;
-
-	if (state->async_update) {
-		ret = drm_atomic_helper_prepare_planes(dev, state);
-		if (ret)
-			return ret;
-
-		drm_atomic_helper_async_commit(dev, state);
-		drm_atomic_helper_cleanup_planes(dev, state);
-
-		return 0;
 	}
 
-	ret = drm_atomic_helper_setup_commit(state, nonblock);
-	if (ret)
-		return ret;
-
-	INIT_WORK(&state->commit_work, dpu_drm_commit_work);
-
-	ret = drm_atomic_helper_prepare_planes(dev, state);
-	if (ret)
-		return ret;
-
-	if (!nonblock) {
-		ret = drm_atomic_helper_wait_for_fences(dev, state, true);
-		if (ret)
-			goto err;
-	}
-
-	ret = drm_atomic_helper_swap_state(state, true);
-	if (ret)
-		goto err;
-
-	drm_atomic_state_get(state);
-	if (nonblock)
-		queue_work(imxdrm->dpu_nonblock_commit_wq, &state->commit_work);
-	else
-		dpu_drm_commit_tail(state);
-
-	return 0;
-
-err:
-	drm_atomic_helper_cleanup_planes(dev, state);
 	return ret;
 }
 
 const struct drm_mode_config_funcs dpu_drm_mode_config_funcs = {
-	.fb_create = drm_fb_cma_create,
-	.output_poll_changed = dpu_drm_output_poll_changed,
+	.fb_create = drm_gem_fb_create,
 	.atomic_check = dpu_drm_atomic_check,
-	.atomic_commit = dpu_drm_atomic_commit,
+	.atomic_commit = drm_atomic_helper_commit,
 };

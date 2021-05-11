@@ -5,7 +5,7 @@
 // Copyright 2018 NXP
 // Copyright (C) 2017 Cadence Design Systems, Inc.
 
-#include <soc/imx8/sc/ipc.h>
+#include <linux/suspend.h>
 #include "fsl_dsp_proxy.h"
 #include "fsl_dsp.h"
 
@@ -144,7 +144,7 @@ u32 icm_intr_send(struct xf_proxy *proxy, u32 msg)
 	struct fsl_dsp *dsp_priv = container_of(proxy,
 					struct fsl_dsp, proxy);
 
-	MU_SendMessage(dsp_priv->mu_base_virtaddr, 0, msg);
+	MU_SendMessageTimeout(dsp_priv->mu_base_virtaddr, 0, msg, 800);
 	return 0;
 }
 
@@ -161,9 +161,9 @@ int icm_intr_extended_send(struct xf_proxy *proxy,
 	if (msghdr.size != 8)
 		dev_err(dev, "too much ext msg\n");
 
-	MU_SendMessage(dsp_priv->mu_base_virtaddr, 1, ext_msg->phys);
-	MU_SendMessage(dsp_priv->mu_base_virtaddr, 2, ext_msg->size);
-	MU_SendMessage(dsp_priv->mu_base_virtaddr, 0, msg);
+	MU_SendMessageTimeout(dsp_priv->mu_base_virtaddr, 1, ext_msg->phys, 800);
+	MU_SendMessageTimeout(dsp_priv->mu_base_virtaddr, 2, ext_msg->size, 800);
+	MU_SendMessageTimeout(dsp_priv->mu_base_virtaddr, 0, msg, 800);
 
 	return 0;
 }
@@ -234,6 +234,9 @@ irqreturn_t fsl_dsp_mu_isr(int irq, void *dev_id)
 	MU_ReceiveMsg(dsp_priv->mu_base_virtaddr, 0, &reg);
 	msghdr = (union icm_header_t)reg;
 
+	if (dsp_priv->dsp_is_lpa)
+		pm_system_wakeup();
+
 	if (msghdr.intr == 1) {
 		dev_dbg(dev, "INTR: Received ICM intr, msg 0x%08x\n",
 						msghdr.allbits);
@@ -247,6 +250,8 @@ irqreturn_t fsl_dsp_mu_isr(int irq, void *dev_id)
 			break;
 		case XF_SUSPEND:
 		case XF_RESUME:
+		case XF_PAUSE:
+		case XF_PAUSE_RELEASE:
 			complete(&proxy->cmd_complete);
 			break;
 		default:
@@ -283,6 +288,9 @@ u32 xf_proxy_b2a(struct xf_proxy *proxy, void *b)
 	else if ((u32)(b - dsp_priv->scratch_buf_virt) <
 					dsp_priv->scratch_buf_size)
 		return (u32)(b - dsp_priv->scratch_buf_virt);
+	else if (dsp_priv->dsp_is_lpa && ((u32)(b - dsp_priv->dram_reserved_vir_addr) <
+					dsp_priv->dram_reserved_size))
+		return (u32)(b - dsp_priv->dram_reserved_vir_addr + dsp_priv->scratch_buf_size);
 	else
 		return XF_PROXY_BADADDR;
 }
@@ -295,6 +303,8 @@ void *xf_proxy_a2b(struct xf_proxy *proxy, u32 address)
 
 	if (address < dsp_priv->scratch_buf_size)
 		return dsp_priv->scratch_buf_virt + address;
+	else if (dsp_priv->dsp_is_lpa && (address < dsp_priv->scratch_buf_size + dsp_priv->dram_reserved_size))
+		return dsp_priv->dram_reserved_vir_addr + address - dsp_priv->scratch_buf_size;
 	else if (address == XF_PROXY_NULL)
 		return NULL;
 	else
@@ -762,6 +772,48 @@ int xf_cmd_send_resume(struct xf_proxy *proxy)
 	msghdr.ack  = 0;
 	msghdr.intr = 1;
 	msghdr.msg  = XF_RESUME;
+	msghdr.size = 0;
+	icm_intr_send(proxy, msghdr.allbits);
+
+	/* wait for response here */
+	ret = icm_ack_wait(proxy, msghdr.allbits);
+
+	return ret;
+}
+/*
+ * pause & pause_release functions
+ */
+int xf_cmd_send_pause(struct xf_proxy *proxy)
+{
+	union icm_header_t msghdr;
+	int ret = 0;
+
+	init_completion(&proxy->cmd_complete);
+
+	msghdr.allbits = 0;	/* clear all bits; */
+	msghdr.ack  = 0;
+	msghdr.intr = 1;
+	msghdr.msg  = XF_PAUSE;
+	msghdr.size = 0;
+	icm_intr_send(proxy, msghdr.allbits);
+
+	/* wait for response here */
+	ret = icm_ack_wait(proxy, msghdr.allbits);
+
+	return ret;
+}
+
+int xf_cmd_send_pause_release(struct xf_proxy *proxy)
+{
+	union icm_header_t msghdr;
+	int ret = 0;
+
+	init_completion(&proxy->cmd_complete);
+
+	msghdr.allbits = 0;	/* clear all bits; */
+	msghdr.ack  = 0;
+	msghdr.intr = 1;
+	msghdr.msg  = XF_PAUSE_RELEASE;
 	msghdr.size = 0;
 	icm_intr_send(proxy, msghdr.allbits);
 

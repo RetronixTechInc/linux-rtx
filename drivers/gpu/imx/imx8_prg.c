@@ -1,5 +1,5 @@
 /*
- * Copyright 2017-2018 NXP
+ * Copyright 2017-2019 NXP
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the
@@ -370,7 +370,8 @@ prg_lookup_by_phandle(struct device *dev, const char *name, int index)
 	list_for_each_entry(prg, &prg_list, list) {
 		if (prg_node == prg->dev->of_node) {
 			mutex_unlock(&prg_list_mutex);
-			device_link_add(dev, prg->dev, DL_FLAG_AUTOREMOVE);
+			device_link_add(dev, prg->dev,
+					DL_FLAG_AUTOREMOVE_CONSUMER);
 			return prg;
 		}
 	}

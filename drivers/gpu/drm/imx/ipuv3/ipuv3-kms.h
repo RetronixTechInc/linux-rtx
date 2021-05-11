@@ -1,5 +1,5 @@
 /*
- * Copyright 2017 NXP
+ * Copyright 2019 NXP
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the
@@ -11,6 +11,7 @@
  * or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
  * for more details.
  */
+
 #ifndef _IPUV3_KMS_H_
 #define _IPUV3_KMS_H_
 

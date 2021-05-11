@@ -47,7 +47,7 @@ int xaf_comp_set_config(struct xf_client *client, struct xaf_comp *p_comp,
 
 	for (i = 0; i < num_param; i++) {
 		smsg[i].id = param[i].id;
-		smsg[i].value = param[i].value;
+		smsg[i].mixData.value = param[i].mixData.value;
 	}
 
 	/* ...set command parameters */
@@ -129,7 +129,7 @@ int xaf_comp_get_config(struct xf_client *client, struct xaf_comp *p_comp,
 	}
 
 	for (i = 0; i < num_param; i++)
-		param[i].value = smsg[i].value;
+		param[i].mixData.value = smsg[i].mixData.value;
 
 	return 0;
 }
@@ -178,8 +178,9 @@ int xaf_comp_create(struct xf_client *client, struct xf_proxy *proxy,
 	char   lib_wrap_path[200];
 	struct xf_handle *p_handle;
 	struct xf_buffer *buf;
-	int    ret = 0;
+	int    ret = 0, size;
 	bool   loadlib = true;
+	bool   request_inbuf = true;
 
 	memset((void *)p_comp, 0, sizeof(struct xaf_comp));
 
@@ -190,8 +191,13 @@ int xaf_comp_create(struct xf_client *client, struct xf_proxy *proxy,
 
 	p_comp->comp_type = comp_type;
 
-	if (comp_type == RENDER_ESAI)
+	/* No need to load library for PCM */
+	if (comp_type == RENDER_ESAI || comp_type == RENDER_SAI || comp_type == CODEC_PCM_DEC)
 		loadlib = false;
+
+	/* Need to allocate in buffer for PCM */
+	if (comp_type == RENDER_ESAI || comp_type == RENDER_SAI)
+		request_inbuf = false;
 
 	if (loadlib) {
 		p_comp->codec_lib.filename      = lib_path;
@@ -199,10 +205,18 @@ int xaf_comp_create(struct xf_client *client, struct xf_proxy *proxy,
 		p_comp->codec_lib.lib_type      = DSP_CODEC_LIB;
 	}
 
+	size = INBUF_SIZE;
 	switch (comp_type) {
+	case CODEC_PCM_DEC:
+		p_comp->dec_id = "audio-decoder/pcm";
+		if (dsp_priv->dsp_is_lpa)
+			size = INBUF_SIZE_LPA_PCM;
+		break;
 	case CODEC_MP3_DEC:
 		p_comp->dec_id = "audio-decoder/mp3";
 		strcat(lib_path, "lib_dsp_mp3_dec.so");
+		if (dsp_priv->dsp_is_lpa)
+			size = INBUF_SIZE_LPA;
 		break;
 	case CODEC_AAC_DEC:
 		p_comp->dec_id = "audio-decoder/aac";
@@ -210,6 +224,9 @@ int xaf_comp_create(struct xf_client *client, struct xf_proxy *proxy,
 		break;
 	case RENDER_ESAI:
 		p_comp->dec_id = "renderer/esai";
+		break;
+	case RENDER_SAI:
+		p_comp->dec_id = "renderer/sai";
 		break;
 
 	default:
@@ -242,9 +259,11 @@ int xaf_comp_create(struct xf_client *client, struct xf_proxy *proxy,
 			dev_err(dsp_priv->dev, "load codec lib error\n");
 			goto err_codec_load;
 		}
+	}
 
+	if (request_inbuf) {
 		/* ...allocate input buffer */
-		ret = xf_pool_alloc(client, proxy, 1, INBUF_SIZE,
+		ret = xf_pool_alloc(client, proxy, 1, size,
 				    XF_POOL_INPUT, &p_comp->inpool);
 		if (ret) {
 			dev_err(dsp_priv->dev, "alloc input buf error\n");
@@ -283,7 +302,7 @@ int xaf_comp_delete(struct xf_client *client, struct xaf_comp *p_comp)
 	/* mark component as unusable from this point */
 	p_comp->active = false;
 
-	if (p_comp->comp_type == RENDER_ESAI)
+	if (p_comp->comp_type == RENDER_ESAI || p_comp->comp_type == RENDER_SAI)
 		loadlib = false;
 
 	p_handle = &p_comp->handle;
@@ -449,7 +468,7 @@ int xaf_connect(struct xf_client *client,
 		u32 buf_length)
 {
 	/* ...connect p_src output port with p_dest input port */
-	return xf_route(client, &p_src->handle, 0, &p_dest->handle, 0,
+	return xf_route(client, &p_src->handle, 1, &p_dest->handle, 0,
 			num_buf, buf_length, 8);
 }
 

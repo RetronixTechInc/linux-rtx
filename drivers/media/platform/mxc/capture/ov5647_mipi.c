@@ -1,14 +1,7 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 /*
  * Copyright (C) 2011-2015 Freescale Semiconductor, Inc. All Rights Reserved.
- */
-
-/*
- * The code contained herein is licensed under the GNU General Public
- * License. You may obtain a copy of the GNU General Public License
- * Version 2 or later at the following locations:
- *
- * http://www.opensource.org/licenses/gpl-license.html
- * http://www.gnu.org/copyleft/gpl.html
+ * Copyright 2019 NXP
  */
 
 #include <linux/module.h>
@@ -1441,7 +1434,7 @@ static int ov5647_enum_frameintervals(struct v4l2_subdev *sd,
 {
 	int i, j, count;
 
-	if (fie->index < 0 || fie->index > ov5647_mode_MAX)
+	if (fie->index > ov5647_mode_MAX)
 		return -EINVAL;
 
 	if (fie->width == 0 || fie->height == 0 ||

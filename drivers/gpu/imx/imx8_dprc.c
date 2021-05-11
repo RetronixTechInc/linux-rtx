@@ -1,5 +1,5 @@
 /*
- * Copyright 2017-2018 NXP
+ * Copyright 2017-2020 NXP
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the
@@ -12,14 +12,15 @@
  * for more details.
  */
 #include <drm/drm_fourcc.h>
+#include <dt-bindings/firmware/imx/rsrc.h>
 #include <linux/clk.h>
 #include <linux/delay.h>
+#include <linux/firmware/imx/sci.h>
 #include <linux/io.h>
 #include <linux/module.h>
 #include <linux/of.h>
 #include <linux/of_device.h>
 #include <linux/platform_device.h>
-#include <soc/imx8/sc/sci.h>
 #include <video/imx8-prefetch.h>
 
 #define SET					0x4
@@ -153,6 +154,7 @@ struct dprc {
 	struct clk *clk_apb;
 	struct clk *clk_b;
 	struct clk *clk_rtram;
+	struct imx_sc_ipc *ipc_handle;
 	spinlock_t spin_lock;
 	u32 sc_resource;
 	bool is_blit_chan;
@@ -293,61 +295,26 @@ void dprc_disable(struct dprc *dprc)
 }
 EXPORT_SYMBOL_GPL(dprc_disable);
 
-static void dprc_dpu_gpr_configure(struct dprc *dprc, unsigned int stream_id)
+static inline void
+dprc_dpu_gpr_configure(struct dprc *dprc, unsigned int stream_id)
 {
-	sc_err_t sciErr;
-	sc_ipc_t ipcHndl = 0;
-	u32 mu_id;
+	int ret;
 
-	if (WARN_ON(!dprc))
-		return;
-
-	sciErr = sc_ipc_getMuID(&mu_id);
-	if (sciErr != SC_ERR_NONE) {
-		dev_err(dprc->dev, "cannot obtain MU ID %d\n", sciErr);
-		return;
-	}
-
-	sciErr = sc_ipc_open(&ipcHndl, mu_id);
-	if (sciErr != SC_ERR_NONE) {
-		dev_err(dprc->dev, "sc_ipc_open failed %d\n", sciErr);
-		return;
-	}
-
-	sciErr = sc_misc_set_control(ipcHndl, dprc->sc_resource,
-					SC_C_KACHUNK_SEL, stream_id);
-	if (sciErr != SC_ERR_NONE)
-		dev_err(dprc->dev, "sc_misc_set_control failed %d\n", sciErr);
-
-	sc_ipc_close(mu_id);
+	ret = imx_sc_misc_set_control(dprc->ipc_handle,
+		dprc->sc_resource, IMX_SC_C_KACHUNK_SEL, stream_id);
+	if (ret)
+		dev_warn(dprc->dev, "failed to set KACHUNK_SEL: %d\n", ret);
 }
 
-static void dprc_prg_sel_configure(struct dprc *dprc, u32 resource, bool enable)
+static inline void
+dprc_prg_sel_configure(struct dprc *dprc, u32 resource, bool enable)
 {
-	sc_err_t sciErr;
-	sc_ipc_t ipcHndl = 0;
-	u32 mu_id;
+	int ret;
 
-	if (WARN_ON(!dprc))
-		return;
-
-	sciErr = sc_ipc_getMuID(&mu_id);
-	if (sciErr != SC_ERR_NONE) {
-		dev_err(dprc->dev, "cannot obtain MU ID %d\n", sciErr);
-		return;
-	}
-
-	sciErr = sc_ipc_open(&ipcHndl, mu_id);
-	if (sciErr != SC_ERR_NONE) {
-		dev_err(dprc->dev, "sc_ipc_open failed %d\n", sciErr);
-		return;
-	}
-
-	sciErr = sc_misc_set_control(ipcHndl, resource, SC_C_SEL0, enable);
-	if (sciErr != SC_ERR_NONE)
-		dev_err(dprc->dev, "sc_misc_set_control failed %d\n", sciErr);
-
-	sc_ipc_close(mu_id);
+	ret = imx_sc_misc_set_control(dprc->ipc_handle,
+				resource, IMX_SC_C_SEL0, enable);
+	if (ret)
+		dev_warn(dprc->dev, "failed to set SEL0: %d\n", ret);
 }
 
 void dprc_configure(struct dprc *dprc, unsigned int stream_id,
@@ -402,25 +369,25 @@ void dprc_configure(struct dprc *dprc, unsigned int stream_id,
 		preq = modifier ? BYTE_64 : BYTE_1K;
 
 		dprc_write(dprc, preq, FRAME_2P_CTRL0);
-		if (dprc->sc_resource == SC_R_DC_0_BLIT1 ||
-		    dprc->sc_resource == SC_R_DC_1_BLIT1) {
+		if (dprc->sc_resource == IMX_SC_R_DC_0_BLIT1 ||
+		    dprc->sc_resource == IMX_SC_R_DC_1_BLIT1) {
 			dprc_prg_sel_configure(dprc,
-					dprc->sc_resource == SC_R_DC_0_BLIT1 ?
-					SC_R_DC_0_BLIT0 : SC_R_DC_1_BLIT0,
-					true);
+				dprc->sc_resource == IMX_SC_R_DC_0_BLIT1 ?
+				IMX_SC_R_DC_0_BLIT0 : IMX_SC_R_DC_1_BLIT0,
+				true);
 			prg_set_auxiliary(dprc->prgs[1]);
 			dprc->has_aux_prg = true;
 		}
 		dprc_write(dprc, uv_baddr, FRAME_2P_BASE_ADDR_CTRL0);
 	} else {
 		switch (dprc->sc_resource) {
-		case SC_R_DC_0_BLIT0:
-		case SC_R_DC_1_BLIT0:
+		case IMX_SC_R_DC_0_BLIT0:
+		case IMX_SC_R_DC_1_BLIT0:
 			dprc_prg_sel_configure(dprc, dprc->sc_resource, false);
 			prg_set_primary(dprc->prgs[0]);
 			break;
-		case SC_R_DC_0_BLIT1:
-		case SC_R_DC_1_BLIT1:
+		case IMX_SC_R_DC_0_BLIT1:
+		case IMX_SC_R_DC_1_BLIT1:
 			dprc->has_aux_prg = false;
 			break;
 		default:
@@ -582,6 +549,15 @@ void dprc_configure(struct dprc *dprc, unsigned int stream_id,
 }
 EXPORT_SYMBOL_GPL(dprc_configure);
 
+void dprc_disable_repeat_en(struct dprc *dprc)
+{
+	if (WARN_ON(!dprc))
+		return;
+
+	dprc_write(dprc, REPEAT_EN, SYSTEM_CTRL0 + CLR);
+}
+EXPORT_SYMBOL_GPL(dprc_disable_repeat_en);
+
 void dprc_reg_update(struct dprc *dprc)
 {
 	if (WARN_ON(!dprc))
@@ -687,23 +663,23 @@ bool dprc_format_supported(struct dprc *dprc, u32 format, u64 modifier)
 	case DRM_FORMAT_YUYV:
 	case DRM_FORMAT_UYVY:
 		switch (dprc->sc_resource) {
-		case SC_R_DC_0_FRAC0:
-		case SC_R_DC_1_FRAC0:
-		case SC_R_DC_0_WARP:
-		case SC_R_DC_1_WARP:
+		case IMX_SC_R_DC_0_FRAC0:
+		case IMX_SC_R_DC_1_FRAC0:
+		case IMX_SC_R_DC_0_WARP:
+		case IMX_SC_R_DC_1_WARP:
 			return false;
 		}
 		return modifier == DRM_FORMAT_MOD_NONE;
 	case DRM_FORMAT_NV12:
 	case DRM_FORMAT_NV21:
 		switch (dprc->sc_resource) {
-		case SC_R_DC_0_FRAC0:
-		case SC_R_DC_1_FRAC0:
-		case SC_R_DC_0_WARP:
-		case SC_R_DC_1_WARP:
+		case IMX_SC_R_DC_0_FRAC0:
+		case IMX_SC_R_DC_1_FRAC0:
+		case IMX_SC_R_DC_0_WARP:
+		case IMX_SC_R_DC_1_WARP:
 			return false;
-		case SC_R_DC_0_BLIT1:
-		case SC_R_DC_1_BLIT1:
+		case IMX_SC_R_DC_0_BLIT1:
+		case IMX_SC_R_DC_1_BLIT1:
 			return (modifier == DRM_FORMAT_MOD_NONE ||
 				modifier == DRM_FORMAT_MOD_AMPHION_TILED);
 		}
@@ -772,7 +748,8 @@ dprc_lookup_by_phandle(struct device *dev, const char *name, int index)
 	list_for_each_entry(dprc, &dprc_list, list) {
 		if (dprc_node == dprc->dev->of_node) {
 			mutex_unlock(&dprc_list_mutex);
-			device_link_add(dev, dprc->dev, DL_FLAG_AUTOREMOVE);
+			device_link_add(dev, dprc->dev,
+					DL_FLAG_AUTOREMOVE_CONSUMER);
 			return dprc;
 		}
 	}
@@ -798,6 +775,10 @@ static int dprc_probe(struct platform_device *pdev)
 	dprc = devm_kzalloc(dev, sizeof(*dprc), GFP_KERNEL);
 	if (!dprc)
 		return -ENOMEM;
+
+	ret = imx_scu_get_handle(&dprc->ipc_handle);
+	if (ret)
+		return ret;
 
 	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
 	dprc->base = devm_ioremap_resource(&pdev->dev, res);
@@ -827,23 +808,23 @@ static int dprc_probe(struct platform_device *pdev)
 	}
 
 	switch (dprc->sc_resource) {
-	case SC_R_DC_0_BLIT1:
-	case SC_R_DC_1_BLIT1:
+	case IMX_SC_R_DC_0_BLIT1:
+	case IMX_SC_R_DC_1_BLIT1:
 		dprc->has_aux_prg = true;
 		/* fall-through */
-	case SC_R_DC_0_BLIT0:
-	case SC_R_DC_1_BLIT0:
+	case IMX_SC_R_DC_0_BLIT0:
+	case IMX_SC_R_DC_1_BLIT0:
 		dprc->is_blit_chan = true;
 		/* fall-through */
-	case SC_R_DC_0_FRAC0:
-	case SC_R_DC_1_FRAC0:
+	case IMX_SC_R_DC_0_FRAC0:
+	case IMX_SC_R_DC_1_FRAC0:
 		break;
-	case SC_R_DC_0_VIDEO0:
-	case SC_R_DC_0_VIDEO1:
-	case SC_R_DC_1_VIDEO0:
-	case SC_R_DC_1_VIDEO1:
-	case SC_R_DC_0_WARP:
-	case SC_R_DC_1_WARP:
+	case IMX_SC_R_DC_0_VIDEO0:
+	case IMX_SC_R_DC_0_VIDEO1:
+	case IMX_SC_R_DC_1_VIDEO0:
+	case IMX_SC_R_DC_1_VIDEO1:
+	case IMX_SC_R_DC_0_WARP:
+	case IMX_SC_R_DC_1_WARP:
 		dprc->has_aux_prg = true;
 		break;
 	default:

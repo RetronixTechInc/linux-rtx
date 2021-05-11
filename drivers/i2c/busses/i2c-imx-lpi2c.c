@@ -1,18 +1,8 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * This is i.MX low power i2c controller driver.
  *
  * Copyright 2016 Freescale Semiconductor, Inc.
- *
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License
- * as published by the Free Software Foundation; either version 2
- * of the License, or (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
  */
 
 #include <linux/clk.h>
@@ -28,6 +18,7 @@
 #include <linux/module.h>
 #include <linux/of.h>
 #include <linux/of_device.h>
+#include <linux/of_gpio.h>
 #include <linux/pinctrl/consumer.h>
 #include <linux/platform_device.h>
 #include <linux/pm_runtime.h>
@@ -82,23 +73,23 @@
 #define MCFGR1_IGNACK	BIT(9)
 #define MRDR_RXEMPTY	BIT(14)
 
-#define I2C_CLK_RATIO	2
+#define I2C_CLK_RATIO	24 / 59
 #define CHUNK_DATA	256
 
-#define LPI2C_DEFAULT_RATE	200000
-#define STARDARD_MAX_BITRATE	400000
-#define FAST_MAX_BITRATE	1000000
-#define FAST_PLUS_MAX_BITRATE	3400000
-#define HIGHSPEED_MAX_BITRATE	5000000
+#define STARDARD_MAX_BITRATE	100000
+#define FAST_MAX_BITRATE	400000
+#define FAST_PLUS_MAX_BITRATE	1000000
+#define HIGHSPEED_MAX_BITRATE	3400000
+#define ULTRA_FAST_MAX_BITRATE	5000000
 
-#define I2C_PM_TIMEOUT		10 /* ms */
+#define I2C_PM_TIMEOUT		1000 /* ms */
 
 enum lpi2c_imx_mode {
-	STANDARD,	/* 100+Kbps */
-	FAST,		/* 400+Kbps */
-	FAST_PLUS,	/* 1.0+Mbps */
-	HS,		/* 3.4+Mbps */
-	ULTRA_FAST,	/* 5.0+Mbps */
+	STANDARD,	/* <=100Kbps */
+	FAST,		/* <=400Kbps */
+	FAST_PLUS,	/* <=1.0Mbps */
+	HS,		/* <=3.4Mbps */
+	ULTRA_FAST,	/* <=5.0Mbps */
 };
 
 enum lpi2c_imx_pincfg {
@@ -124,6 +115,11 @@ struct lpi2c_imx_struct {
 	unsigned int		txfifosize;
 	unsigned int		rxfifosize;
 	enum lpi2c_imx_mode	mode;
+
+	struct i2c_bus_recovery_info rinfo;
+	struct pinctrl *pinctrl;
+	struct pinctrl_state *pinctrl_pins_default;
+	struct pinctrl_state *pinctrl_pins_gpio;
 };
 
 static void lpi2c_imx_intctrl(struct lpi2c_imx_struct *lpi2c_imx,
@@ -151,6 +147,8 @@ static int lpi2c_imx_bus_busy(struct lpi2c_imx_struct *lpi2c_imx)
 
 		if (time_after(jiffies, orig_jiffies + msecs_to_jiffies(500))) {
 			dev_dbg(&lpi2c_imx->adapter.dev, "bus not work\n");
+			if (lpi2c_imx->adapter.bus_recovery_info)
+				i2c_recover_bus(&lpi2c_imx->adapter);
 			return -ETIMEDOUT;
 		}
 		schedule();
@@ -164,13 +162,13 @@ static void lpi2c_imx_set_mode(struct lpi2c_imx_struct *lpi2c_imx)
 	unsigned int bitrate = lpi2c_imx->bitrate;
 	enum lpi2c_imx_mode mode;
 
-	if (bitrate < STARDARD_MAX_BITRATE)
+	if (bitrate <= STARDARD_MAX_BITRATE)
 		mode = STANDARD;
-	else if (bitrate < FAST_MAX_BITRATE)
+	else if (bitrate <= FAST_MAX_BITRATE)
 		mode = FAST;
-	else if (bitrate < FAST_PLUS_MAX_BITRATE)
+	else if (bitrate <= FAST_PLUS_MAX_BITRATE)
 		mode = FAST_PLUS;
-	else if (bitrate < HIGHSPEED_MAX_BITRATE)
+	else if (bitrate <= HIGHSPEED_MAX_BITRATE)
 		mode = HS;
 	else
 		mode = ULTRA_FAST;
@@ -182,15 +180,13 @@ static int lpi2c_imx_start(struct lpi2c_imx_struct *lpi2c_imx,
 			   struct i2c_msg *msgs)
 {
 	unsigned int temp;
-	u8 read;
 
 	temp = readl(lpi2c_imx->base + LPI2C_MCR);
 	temp |= MCR_RRF | MCR_RTF;
 	writel(temp, lpi2c_imx->base + LPI2C_MCR);
 	writel(0x7f00, lpi2c_imx->base + LPI2C_MSR);
 
-	read = msgs->flags & I2C_M_RD;
-	temp = (msgs->addr << 1 | read) | (GEN_START << 8);
+	temp = i2c_8bit_addr_from_msg(msgs) | (GEN_START << 8);
 	writel(temp, lpi2c_imx->base + LPI2C_MTDR);
 
 	return lpi2c_imx_bus_busy(lpi2c_imx);
@@ -210,6 +206,8 @@ static void lpi2c_imx_stop(struct lpi2c_imx_struct *lpi2c_imx)
 
 		if (time_after(jiffies, orig_jiffies + msecs_to_jiffies(500))) {
 			dev_dbg(&lpi2c_imx->adapter.dev, "stop timeout\n");
+			if (lpi2c_imx->adapter.bus_recovery_info)
+				i2c_recover_bus(&lpi2c_imx->adapter);
 			break;
 		}
 		schedule();
@@ -217,11 +215,12 @@ static void lpi2c_imx_stop(struct lpi2c_imx_struct *lpi2c_imx)
 	} while (1);
 }
 
-/* CLKLO = I2C_CLK_RATIO * CLKHI, SETHOLD = CLKHI, DATAVD = CLKHI/2 */
+/* CLKLO = (1 - I2C_CLK_RATIO) * clk_cycle, SETHOLD = CLKHI, DATAVD = CLKHI/2
+   CLKHI = I2C_CLK_RATIO * clk_cycle */
 static int lpi2c_imx_config(struct lpi2c_imx_struct *lpi2c_imx)
 {
-	u8 prescale, filt, sethold, clkhi, clklo, datavd;
-	unsigned int clk_rate, clk_cycle;
+	u8 prescale, filt, sethold, datavd;
+	unsigned int clk_rate, clk_cycle, clkhi, clklo;
 	enum lpi2c_imx_pincfg pincfg;
 	unsigned int temp;
 
@@ -240,8 +239,8 @@ static int lpi2c_imx_config(struct lpi2c_imx_struct *lpi2c_imx)
 
 	for (prescale = 0; prescale <= 7; prescale++) {
 		clk_cycle = clk_rate / ((1 << prescale) * lpi2c_imx->bitrate)
-			    - 3 - (filt >> 1);
-		clkhi = (clk_cycle + I2C_CLK_RATIO) / (I2C_CLK_RATIO + 1);
+			    - (2 + filt) / (1 << prescale);
+		clkhi = clk_cycle * I2C_CLK_RATIO;
 		clklo = clk_cycle - clkhi;
 		if (clklo < 64)
 			break;
@@ -347,6 +346,8 @@ static int lpi2c_imx_txfifo_empty(struct lpi2c_imx_struct *lpi2c_imx)
 
 		if (time_after(jiffies, orig_jiffies + msecs_to_jiffies(500))) {
 			dev_dbg(&lpi2c_imx->adapter.dev, "txfifo empty timeout\n");
+			if (lpi2c_imx->adapter.bus_recovery_info)
+				i2c_recover_bus(&lpi2c_imx->adapter);
 			return -ETIMEDOUT;
 		}
 		schedule();
@@ -546,6 +547,71 @@ ret:
 	return IRQ_HANDLED;
 }
 
+static void lpi2c_imx_prepare_recovery(struct i2c_adapter *adap)
+{
+	struct lpi2c_imx_struct *lpi2c_imx;
+
+	lpi2c_imx = container_of(adap, struct lpi2c_imx_struct, adapter);
+
+	pinctrl_select_state(lpi2c_imx->pinctrl, lpi2c_imx->pinctrl_pins_gpio);
+}
+
+static void lpi2c_imx_unprepare_recovery(struct i2c_adapter *adap)
+{
+	struct lpi2c_imx_struct *lpi2c_imx;
+
+	lpi2c_imx = container_of(adap, struct lpi2c_imx_struct, adapter);
+
+	pinctrl_select_state(lpi2c_imx->pinctrl, lpi2c_imx->pinctrl_pins_default);
+}
+
+/*
+ * We switch SCL and SDA to their GPIO function and do some bitbanging
+ * for bus recovery. These alternative pinmux settings can be
+ * described in the device tree by a separate pinctrl state "gpio". If
+ * this is missing this is not a big problem, the only implication is
+ * that we can't do bus recovery.
+ */
+static int lpi2c_imx_init_recovery_info(struct lpi2c_imx_struct *lpi2c_imx,
+		struct platform_device *pdev)
+{
+	struct i2c_bus_recovery_info *rinfo = &lpi2c_imx->rinfo;
+
+	lpi2c_imx->pinctrl = devm_pinctrl_get(&pdev->dev);
+	if (!lpi2c_imx->pinctrl || IS_ERR(lpi2c_imx->pinctrl)) {
+		dev_info(&pdev->dev, "can't get pinctrl, bus recovery not supported\n");
+		return PTR_ERR(lpi2c_imx->pinctrl);
+	}
+
+	lpi2c_imx->pinctrl_pins_default = pinctrl_lookup_state(lpi2c_imx->pinctrl,
+			PINCTRL_STATE_DEFAULT);
+	lpi2c_imx->pinctrl_pins_gpio = pinctrl_lookup_state(lpi2c_imx->pinctrl,
+			"gpio");
+	rinfo->sda_gpiod = devm_gpiod_get(&pdev->dev, "sda", GPIOD_IN);
+	rinfo->scl_gpiod = devm_gpiod_get(&pdev->dev, "scl", GPIOD_OUT_HIGH_OPEN_DRAIN);
+
+	if (PTR_ERR(rinfo->sda_gpiod) == -EPROBE_DEFER ||
+	    PTR_ERR(rinfo->scl_gpiod) == -EPROBE_DEFER) {
+		return -EPROBE_DEFER;
+	} else if (IS_ERR(rinfo->sda_gpiod) ||
+		   IS_ERR(rinfo->scl_gpiod) ||
+		   IS_ERR(lpi2c_imx->pinctrl_pins_default) ||
+		   IS_ERR(lpi2c_imx->pinctrl_pins_gpio)) {
+		dev_dbg(&pdev->dev, "recovery information incomplete\n");
+		return 0;
+	}
+
+	dev_info(&pdev->dev, "using scl%s for recovery\n",
+		 rinfo->sda_gpiod ? ",sda" : "");
+
+	rinfo->prepare_recovery = lpi2c_imx_prepare_recovery;
+	rinfo->unprepare_recovery = lpi2c_imx_unprepare_recovery;
+	rinfo->recover_bus = i2c_generic_scl_recovery;
+	lpi2c_imx->adapter.bus_recovery_info = rinfo;
+
+	return 0;
+}
+
 static u32 lpi2c_imx_func(struct i2c_adapter *adapter)
 {
 	return I2C_FUNC_I2C | I2C_FUNC_SMBUS_EMUL |
@@ -559,7 +625,6 @@ static const struct i2c_algorithm lpi2c_imx_algo = {
 
 static const struct of_device_id lpi2c_imx_of_match[] = {
 	{ .compatible = "fsl,imx7ulp-lpi2c" },
-	{ .compatible = "fsl,imx8qm-lpi2c" },
 	{ },
 };
 MODULE_DEVICE_TABLE(of, lpi2c_imx_of_match);
@@ -567,7 +632,6 @@ MODULE_DEVICE_TABLE(of, lpi2c_imx_of_match);
 static int lpi2c_imx_probe(struct platform_device *pdev)
 {
 	struct lpi2c_imx_struct *lpi2c_imx;
-	struct resource *res;
 	unsigned int temp;
 	int ret;
 
@@ -575,8 +639,7 @@ static int lpi2c_imx_probe(struct platform_device *pdev)
 	if (!lpi2c_imx)
 		return -ENOMEM;
 
-	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
-	lpi2c_imx->base = devm_ioremap_resource(&pdev->dev, res);
+	lpi2c_imx->base = devm_platform_ioremap_resource(pdev, 0);
 	if (IS_ERR(lpi2c_imx->base))
 		return PTR_ERR(lpi2c_imx->base);
 
@@ -608,7 +671,7 @@ static int lpi2c_imx_probe(struct platform_device *pdev)
 	ret = of_property_read_u32(pdev->dev.of_node,
 				   "clock-frequency", &lpi2c_imx->bitrate);
 	if (ret)
-		lpi2c_imx->bitrate = LPI2C_DEFAULT_RATE;
+		lpi2c_imx->bitrate = STARDARD_MAX_BITRATE;
 
 	i2c_set_adapdata(&lpi2c_imx->adapter, lpi2c_imx);
 	platform_set_drvdata(pdev, lpi2c_imx);
@@ -621,7 +684,14 @@ static int lpi2c_imx_probe(struct platform_device *pdev)
 	temp = readl(lpi2c_imx->base + LPI2C_PARAM);
 	lpi2c_imx->txfifosize = 1 << (temp & 0x0f);
 	lpi2c_imx->rxfifosize = 1 << ((temp >> 8) & 0x0f);
+
 	pm_runtime_put(&pdev->dev);
+
+	/* Init optional bus recovery function */
+	ret = lpi2c_imx_init_recovery_info(lpi2c_imx, pdev);
+	/* Give it another chance if pinctrl used is not ready yet */
+	if (ret == -EPROBE_DEFER)
+		goto rpm_disable;
 
 	ret = i2c_add_adapter(&lpi2c_imx->adapter);
 	if (ret)
@@ -650,8 +720,7 @@ static int lpi2c_imx_remove(struct platform_device *pdev)
 	return 0;
 }
 
-#ifdef CONFIG_PM_SLEEP
-static int lpi2c_runtime_suspend(struct device *dev)
+static int __maybe_unused lpi2c_runtime_suspend(struct device *dev)
 {
 	struct lpi2c_imx_struct *lpi2c_imx = dev_get_drvdata(dev);
 
@@ -663,7 +732,7 @@ static int lpi2c_runtime_suspend(struct device *dev)
 	return 0;
 }
 
-static int lpi2c_runtime_resume(struct device *dev)
+static int __maybe_unused lpi2c_runtime_resume(struct device *dev)
 {
 	struct lpi2c_imx_struct *lpi2c_imx = dev_get_drvdata(dev);
 	int ret;
@@ -682,12 +751,12 @@ static int lpi2c_runtime_resume(struct device *dev)
 	}
 
 	ret = devm_request_irq(dev, lpi2c_imx->irq, lpi2c_imx_isr,
-                               IRQF_NO_SUSPEND,
-                               dev_name(dev), lpi2c_imx);
-        if (ret) {
-                dev_err(dev, "can't claim irq %d\n", lpi2c_imx->irq);
-                return ret;
-        }
+			       IRQF_NO_SUSPEND,
+			       dev_name(dev), lpi2c_imx);
+	if (ret) {
+		dev_err(dev, "can't claim irq %d\n", lpi2c_imx->irq);
+		return ret;
+	}
 
 	return ret;
 }
@@ -716,10 +785,6 @@ static const struct dev_pm_ops lpi2c_pm_ops = {
 	SET_RUNTIME_PM_OPS(lpi2c_runtime_suspend,
 			   lpi2c_runtime_resume, NULL)
 };
-#define IMX_LPI2C_PM      (&lpi2c_pm_ops)
-#else
-#define IMX_LPI2C_PM      NULL
-#endif
 
 static struct platform_driver lpi2c_imx_driver = {
 	.probe = lpi2c_imx_probe,
@@ -727,7 +792,7 @@ static struct platform_driver lpi2c_imx_driver = {
 	.driver = {
 		.name = DRIVER_NAME,
 		.of_match_table = lpi2c_imx_of_match,
-		.pm = IMX_LPI2C_PM,
+		.pm = &lpi2c_pm_ops,
 	},
 };
 

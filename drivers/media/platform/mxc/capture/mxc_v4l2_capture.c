@@ -1,14 +1,7 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 /*
  * Copyright 2004-2015 Freescale Semiconductor, Inc. All Rights Reserved.
- */
-
-/*
- * The code contained herein is licensed under the GNU General Public
- * License. You may obtain a copy of the GNU General Public License
- * Version 2 or later at the following locations:
- *
- * http://www.opensource.org/licenses/gpl-license.html
- * http://www.gnu.org/copyleft/gpl.html
+ * Copyright 2019 NXP
  */
 
 /*!
@@ -244,7 +237,7 @@ static int mxc_free_frame_buf(cam_data *cam)
 
 	for (i = 0; i < FRAME_NUM; i++) {
 		if (cam->frame[i].vaddress != 0) {
-			dma_free_coherent(0, cam->frame[i].buffer.length,
+			dma_free_coherent(cam->dev, cam->frame[i].buffer.length,
 					  cam->frame[i].vaddress,
 					  cam->frame[i].paddress);
 			cam->frame[i].vaddress = 0;
@@ -271,7 +264,7 @@ static int mxc_allocate_frame_buf(cam_data *cam, int count)
 
 	for (i = 0; i < count; i++) {
 		cam->frame[i].vaddress =
-		    dma_alloc_coherent(0,
+		    dma_alloc_coherent(cam->dev,
 				       PAGE_ALIGN(cam->v2f.fmt.pix.sizeimage),
 				       &cam->frame[i].paddress,
 				       GFP_DMA | GFP_KERNEL);
@@ -328,7 +321,7 @@ static int mxc_v4l2_buffer_status(cam_data *cam, struct v4l2_buffer *buf)
 {
 	pr_debug("In MVC:mxc_v4l2_buffer_status\n");
 
-	if (buf->index < 0 || buf->index >= FRAME_NUM) {
+	if (buf->index >= FRAME_NUM) {
 		pr_err("ERROR: v4l2 capture: mxc_v4l2_buffer_status buffers "
 		       "not allocated\n");
 		return -EINVAL;
@@ -348,7 +341,7 @@ static int mxc_v4l2_prepare_bufs(cam_data *cam, struct v4l2_buffer *buf)
 {
 	pr_debug("In MVC:mxc_v4l2_prepare_bufs\n");
 
-	if (buf->index < 0 || buf->index >= FRAME_NUM || buf->length <
+	if (buf->index >= FRAME_NUM || buf->length <
 			PAGE_ALIGN(cam->v2f.fmt.pix.sizeimage)) {
 		pr_err("ERROR: v4l2 capture: mxc_v4l2_prepare_bufs buffers "
 			"not allocated,index=%d, length=%d\n", buf->index,
@@ -579,7 +572,7 @@ static int verify_preview(cam_data *cam, struct v4l2_window *win)
 		}
 	} while (++i < FB_MAX);
 
-	if (foregound_fb) {
+	if (foregound_fb && bg_fbi) {
 		width_bound = bg_fbi->var.xres;
 		height_bound = bg_fbi->var.yres;
 
@@ -1817,12 +1810,12 @@ static ssize_t mxc_v4l_read(struct file *file, char *buf, size_t count,
 	if (cam->overlay_on == true)
 		stop_preview(cam);
 
-	v_address[0] = dma_alloc_coherent(0,
+	v_address[0] = dma_alloc_coherent(cam->dev,
 				       PAGE_ALIGN(cam->v2f.fmt.pix.sizeimage),
 				       &cam->still_buf[0],
 				       GFP_DMA | GFP_KERNEL);
 
-	v_address[1] = dma_alloc_coherent(0,
+	v_address[1] = dma_alloc_coherent(cam->dev,
 				       PAGE_ALIGN(cam->v2f.fmt.pix.sizeimage),
 				       &cam->still_buf[1],
 				       GFP_DMA | GFP_KERNEL);
@@ -1860,10 +1853,10 @@ exit1:
 
 exit0:
 	if (v_address[0] != 0)
-		dma_free_coherent(0, cam->v2f.fmt.pix.sizeimage, v_address[0],
+		dma_free_coherent(cam->dev, cam->v2f.fmt.pix.sizeimage, v_address[0],
 				  cam->still_buf[0]);
 	if (v_address[1] != 0)
-		dma_free_coherent(0, cam->v2f.fmt.pix.sizeimage, v_address[1],
+		dma_free_coherent(cam->dev, cam->v2f.fmt.pix.sizeimage, v_address[1],
 				  cam->still_buf[1]);
 
 	cam->still_buf[0] = cam->still_buf[1] = 0;
@@ -1999,19 +1992,17 @@ static long mxc_v4l_do_ioctl(struct file *file,
 			break;
 		}
 
-		if (buf->memory & V4L2_MEMORY_MMAP) {
-			memset(buf, 0, sizeof(buf));
-			buf->index = index;
-		}
-
 		down(&cam->param_lock);
 		if (buf->memory & V4L2_MEMORY_USERPTR) {
 			mxc_v4l2_release_bufs(cam);
 			retval = mxc_v4l2_prepare_bufs(cam, buf);
 		}
 
-		if (buf->memory & V4L2_MEMORY_MMAP)
+		if (buf->memory & V4L2_MEMORY_MMAP) {
+			memset(buf, 0, sizeof(*buf));
+			buf->index = index;
 			retval = mxc_v4l2_buffer_status(cam, buf);
+		}
 		up(&cam->param_lock);
 		break;
 	}
@@ -2520,6 +2511,7 @@ static struct video_device mxc_v4l_template = {
 	.name = "Mxc Camera",
 	.fops = &mxc_v4l_fops,
 	.release = video_device_release,
+	.device_caps = V4L2_CAP_VIDEO_CAPTURE | V4L2_CAP_STREAMING,
 };
 
 /*!
@@ -2542,7 +2534,7 @@ static void camera_callback(u32 mask, void *dev)
 {
 	struct mxc_v4l_frame *done_frame;
 	struct mxc_v4l_frame *ready_frame;
-	struct timeval cur_time;
+	struct timespec64 ts;
 
 	cam_data *cam = (cam_data *) dev;
 	if (cam == NULL)
@@ -2553,7 +2545,7 @@ static void camera_callback(u32 mask, void *dev)
 	spin_lock(&cam->queue_int_lock);
 	spin_lock(&cam->dqueue_int_lock);
 	if (!list_empty(&cam->working_q)) {
-		do_gettimeofday(&cur_time);
+		ktime_get_real_ts64(&ts);
 
 		done_frame = list_entry(cam->working_q.next,
 					struct mxc_v4l_frame,
@@ -2567,7 +2559,8 @@ static void camera_callback(u32 mask, void *dev)
 		 * timestamp. Users can use this information to judge
 		 * the frame's usage.
 		 */
-		done_frame->buffer.timestamp = cur_time;
+		done_frame->buffer.timestamp =
+			ns_to_timeval(ts.tv_sec * 1000000000ULL + ts.tv_nsec);
 
 		if (done_frame->buffer.flags & V4L2_BUF_FLAG_QUEUED) {
 			done_frame->buffer.flags |= V4L2_BUF_FLAG_DONE;
@@ -2812,6 +2805,7 @@ static int mxc_v4l2_probe(struct platform_device *pdev)
 	init_camera_struct(cam, pdev);
 	pdev->dev.release = camera_platform_release;
 
+	cam->dev = &pdev->dev;
 	/* Set up the v4l2 device and register it*/
 	cam->self->priv = cam;
 	v4l2_int_device_register(cam->self);

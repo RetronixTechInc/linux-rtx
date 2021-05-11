@@ -15,8 +15,8 @@ config MXC_SIMv2
 	will be called imx_sim.
 
 config MXC_EMVSIM
-	tristate "IMX EMVSIM support"
-	depends on ARCH_MXC_ARM64 && MXC_SIM
+	tristate "MXC EMVSIM support"
+	depends on ARCH_MXC && MXC_SIM
 	default n
 	---help---
 	Say Y here if you want to use the EMVSIM on NXP i.MX8 processors.

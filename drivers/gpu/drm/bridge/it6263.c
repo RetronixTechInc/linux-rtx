@@ -16,6 +16,7 @@
 #include <drm/drm_atomic_helper.h>
 #include <drm/drm_crtc_helper.h>
 #include <drm/drm_edid.h>
+#include <drm/drm_probe_helper.h>
 #include <linux/gpio/consumer.h>
 #include <linux/i2c.h>
 #include <linux/module.h>
@@ -457,24 +458,36 @@ static void it6263_hdmi_config(struct it6263 *it6263)
 						HDMI_COLOR_DEPTH_24);
 }
 
+static bool it6263_hpd_is_connected(struct it6263 *it6263)
+{
+	unsigned int status;
+
+	regmap_read(it6263->hdmi_regmap, HDMI_REG_SYS_STATUS, &status);
+
+	return !!(status & HPDETECT);
+}
+
 static enum drm_connector_status
 it6263_connector_detect(struct drm_connector *connector, bool force)
 {
 	struct it6263 *it6263 = connector_to_it6263(connector);
-	unsigned int status;
 	int i;
 
-	/*
-	 * FIXME: We read status tens of times to workaround
-	 * cable detection failure issue at boot time on some
-	 * platforms.
-	 * Spin on this for up to one second.
-	 */
-	for (i = 0; i < 100; i++) {
-		regmap_read(it6263->hdmi_regmap, HDMI_REG_SYS_STATUS, &status);
-		if (status & HPDETECT)
+	if (force) {
+		/*
+		 * FIXME: We read status tens of times to workaround
+		 * cable detection failure issue at boot time on some
+		 * platforms.
+		 * Spin on this for up to one second.
+		 */
+		for (i = 0; i < 100; i++) {
+			if (it6263_hpd_is_connected(it6263))
+				return connector_status_connected;
+			usleep_range(5000, 10000);
+		}
+	} else {
+		if (it6263_hpd_is_connected(it6263))
 			return connector_status_connected;
-		usleep_range(5000, 10000);
 	}
 
 	return connector_status_disconnected;
@@ -557,16 +570,13 @@ it6263_read_edid(void *data, u8 *buf, unsigned int block, size_t len)
 static int it6263_get_modes(struct drm_connector *connector)
 {
 	struct it6263 *it6263 = connector_to_it6263(connector);
-	struct regmap *regmap = it6263->hdmi_regmap;
 	u32 bus_format = MEDIA_BUS_FMT_RGB888_1X24;
 	struct edid *edid;
 	int num = 0;
 	int ret;
 
-	regmap_write(regmap, HDMI_REG_DDC_MASTER_CTRL, MASTER_SEL_HOST);
-
 	edid = drm_do_get_edid(connector, it6263_read_edid, it6263);
-	drm_mode_connector_update_edid_property(connector, edid);
+	drm_connector_update_edid_property(connector, edid);
 	if (edid) {
 		num = drm_add_edid_modes(connector, edid);
 		it6263->is_hdmi = drm_detect_hdmi_monitor(edid);
@@ -576,7 +586,8 @@ static int it6263_get_modes(struct drm_connector *connector)
 	ret = drm_display_info_set_bus_formats(&connector->display_info,
 					       &bus_format, 1);
 	if (ret)
-		return ret;
+		dev_dbg(&it6263->hdmi_i2c->dev,
+			"failed to set the supported bus format %d\n", ret);
 
 	return num;
 }
@@ -675,8 +686,8 @@ static void it6263_bridge_enable(struct drm_bridge *bridge)
 }
 
 static void it6263_bridge_mode_set(struct drm_bridge *bridge,
-				    struct drm_display_mode *mode,
-				    struct drm_display_mode *adj)
+				    const struct drm_display_mode *mode,
+				    const struct drm_display_mode *adj)
 {
 	struct it6263 *it6263 = bridge_to_it6263(bridge);
 	struct regmap *regmap = it6263->hdmi_regmap;
@@ -730,7 +741,7 @@ static int it6263_bridge_attach(struct drm_bridge *bridge)
 
 	drm_connector_helper_add(&it6263->connector,
 				 &it6263_connector_helper_funcs);
-	drm_mode_connector_attach_encoder(&it6263->connector, bridge->encoder);
+	drm_connector_attach_encoder(&it6263->connector, bridge->encoder);
 
 	return ret;
 }
@@ -848,11 +859,9 @@ static int it6263_probe(struct i2c_client *client,
 {
 	struct device *dev = &client->dev;
 	struct device_node *np = dev->of_node;
-#if IS_ENABLED(CONFIG_OF_DYNAMIC)
 	struct device_node *remote_node = NULL, *endpoint = NULL;
 	struct of_changeset ocs;
 	struct property *prop;
-#endif
 	struct it6263 *it6263;
 	int ret;
 
@@ -927,11 +936,7 @@ static int it6263_probe(struct i2c_client *client,
 
 	it6263->bridge.funcs = &it6263_bridge_funcs;
 	it6263->bridge.of_node = np;
-	ret = drm_bridge_add(&it6263->bridge);
-	if (ret) {
-		dev_err(dev, "Failed to add drm_bridge\n");
-		return ret;
-	}
+	drm_bridge_add(&it6263->bridge);
 
 	i2c_set_clientdata(client, it6263);
 
@@ -943,7 +948,6 @@ unregister_lvds_i2c:
 		return ret;
 
 of_reconfig:
-#if IS_ENABLED(CONFIG_OF_DYNAMIC)
 	endpoint = of_graph_get_next_endpoint(dev->of_node, NULL);
 	if (endpoint)
 		remote_node = of_graph_get_remote_port_parent(endpoint);
@@ -980,7 +984,6 @@ of_reconfig:
 
 		of_node_put(remote_node);
 	};
-#endif
 
 	return ret;
 }

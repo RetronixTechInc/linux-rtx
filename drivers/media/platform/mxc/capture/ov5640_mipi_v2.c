@@ -1,7 +1,7 @@
 /*
  * Copyright (C) 2011-2016 Freescale Semiconductor, Inc. All Rights Reserved.
  *
- * Copyright 2018 NXP
+ * Copyright 2018-2019 NXP
  *
  */
 
@@ -55,7 +55,7 @@ enum ov5640_mode {
 	ov5640_mode_720P_1280_720 = 3,
 	ov5640_mode_1080P_1920_1080 = 4,
 	ov5640_mode_QSXGA_2592_1944 = 5,
-	ov5640_mode_MAX = 6,
+	ov5640_mode_MAX = 5,
 	ov5640_mode_INIT = 0xff, /*only for sensor init*/
 };
 
@@ -428,6 +428,15 @@ static int ov5640_remove(struct i2c_client *client);
 
 static s32 ov5640_read_reg(struct ov5640 *sensor, u16 reg, u8 *val);
 static s32 ov5640_write_reg(struct ov5640 *sensor, u16 reg, u8 val);
+#ifdef CONFIG_OF
+static const struct of_device_id ov5640_mipi_v2_of_match[] = {
+	{ .compatible = "ovti,ov5640_mipi",
+	},
+	{ /* sentinel */ }
+};
+
+MODULE_DEVICE_TABLE(of, ov5640_mipi_v2_of_match);
+#endif
 
 static const struct i2c_device_id ov5640_id[] = {
 	{"ov5640_mipi", 0},
@@ -440,6 +449,9 @@ static struct i2c_driver ov5640_i2c_driver = {
 	.driver = {
 		  .owner = THIS_MODULE,
 		  .name  = "ov5640_mipi",
+#ifdef CONFIG_OF
+		  .of_match_table = of_match_ptr(ov5640_mipi_v2_of_match),
+#endif
 		  },
 	.probe  = ov5640_probe,
 	.remove = ov5640_remove,
@@ -614,6 +626,21 @@ static int ov5640_regulator_enable(struct device *dev)
 	return ret;
 }
 
+static void ov5640_regualtor_disable(void)
+{
+	if (analog_regulator)
+		regulator_disable(analog_regulator);
+
+	if (core_regulator)
+		regulator_disable(core_regulator);
+
+	if (io_regulator)
+		regulator_disable(io_regulator);
+
+	if (gpo_regulator)
+		regulator_disable(gpo_regulator);
+}
+
 static s32 ov5640_write_reg(struct ov5640 *sensor, u16 reg, u8 val)
 {
 	struct device *dev = &sensor->i2c_client->dev;
@@ -657,6 +684,40 @@ static s32 ov5640_read_reg(struct ov5640 *sensor, u16 reg, u8 *val)
 
 static int prev_sysclk, prev_HTS;
 static int AE_low, AE_high, AE_Target = 52;
+
+#ifdef CONFIG_VIDEO_ADV_DEBUG
+static int ov5640_get_register(struct v4l2_subdev *sd,
+			       struct v4l2_dbg_register *reg)
+{
+	struct i2c_client *client = v4l2_get_subdevdata(sd);
+	struct ov5640 *sensor = to_ov5640(client);
+	int ret;
+	u8 val;
+
+	if (reg->reg & ~0xffff)
+		return -EINVAL;
+
+	reg->size = 1;
+
+	ret = ov5640_read_reg(sensor, reg->reg, &val);
+	if (!ret)
+		reg->val = (__u64)val;
+
+	return ret;
+}
+
+static int ov5640_set_register(struct v4l2_subdev *sd,
+			       const struct v4l2_dbg_register *reg)
+{
+	struct i2c_client *client = v4l2_get_subdevdata(sd);
+	struct ov5640 *sensor = to_ov5640(client);
+
+	if (reg->reg & ~0xffff || reg->val & ~0xff)
+		return -EINVAL;
+
+	return ov5640_write_reg(sensor, reg->reg, reg->val);
+}
+#endif
 
 static void OV5640_stream_on(struct ov5640 *sensor)
 {
@@ -1247,14 +1308,7 @@ static int ov5640_s_power(struct v4l2_subdev *sd, int on)
 			if (regulator_enable(analog_regulator) != 0)
 				return -EIO;
 	} else if (!on && sensor->on) {
-		if (analog_regulator)
-			regulator_disable(analog_regulator);
-		if (core_regulator)
-			regulator_disable(core_regulator);
-		if (io_regulator)
-			regulator_disable(io_regulator);
-		if (gpo_regulator)
-			regulator_disable(gpo_regulator);
+		ov5640_regualtor_disable();
 	}
 
 	sensor->on = on;
@@ -1408,6 +1462,7 @@ static int ov5640_set_fmt(struct v4l2_subdev *sd,
 	if (!fmt) {
 		mf->code	= ov5640_colour_fmts[0].code;
 		mf->colorspace	= ov5640_colour_fmts[0].colorspace;
+		fmt		= &ov5640_colour_fmts[0];
 	}
 
 	mf->field	= V4L2_FIELD_NONE;
@@ -1648,6 +1703,8 @@ static int ov5640_probe(struct i2c_client *client,
 	struct ov5640 *sensor;
 
 	sensor = devm_kzalloc(dev, sizeof(*sensor), GFP_KERNEL);
+	if (!sensor)
+		return -ENOMEM;
 
 	/* ov5640 pinctrl */
 	pinctrl = devm_pinctrl_get_select_default(dev);
@@ -1745,12 +1802,14 @@ static int ov5640_probe(struct i2c_client *client,
 				 &chip_id_high);
 	if (retval < 0 || chip_id_high != 0x56) {
 		dev_warn(dev, "Camera is not found\n");
+		ov5640_regualtor_disable();
 		clk_disable_unprepare(sensor->sensor_clk);
 		return -ENODEV;
 	}
 	retval = ov5640_read_reg(sensor, OV5640_CHIP_ID_LOW_BYTE, &chip_id_low);
 	if (retval < 0 || chip_id_low != 0x40) {
 		dev_warn(dev, "Camera is not found\n");
+		ov5640_regualtor_disable();
 		clk_disable_unprepare(sensor->sensor_clk);
 		return -ENODEV;
 	}
@@ -1758,6 +1817,7 @@ static int ov5640_probe(struct i2c_client *client,
 
 	retval = init_device(sensor);
 	if (retval < 0) {
+		ov5640_regualtor_disable();
 		clk_disable_unprepare(sensor->sensor_clk);
 		dev_warn(dev, "Camera init failed\n");
 		ov5640_power_down(sensor, 1);
@@ -1794,17 +1854,7 @@ static int ov5640_remove(struct i2c_client *client)
 
 	ov5640_power_down(sensor, 1);
 
-	if (gpo_regulator)
-		regulator_disable(gpo_regulator);
-
-	if (analog_regulator)
-		regulator_disable(analog_regulator);
-
-	if (core_regulator)
-		regulator_disable(core_regulator);
-
-	if (io_regulator)
-		regulator_disable(io_regulator);
+	ov5640_regualtor_disable();
 
 	return 0;
 }

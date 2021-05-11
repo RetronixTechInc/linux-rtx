@@ -1,32 +1,26 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * i.MX drm driver - Television Encoder (TVEv2)
  *
  * Copyright (C) 2013 Philipp Zabel, Pengutronix
- *
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License
- * as published by the Free Software Foundation; either version 2
- * of the License, or (at your option) any later version.
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
  */
 
-#include <linux/clk.h>
 #include <linux/clk-provider.h>
+#include <linux/clk.h>
 #include <linux/component.h>
-#include <linux/module.h>
 #include <linux/i2c.h>
+#include <linux/module.h>
+#include <linux/platform_device.h>
 #include <linux/regmap.h>
 #include <linux/regulator/consumer.h>
 #include <linux/spinlock.h>
 #include <linux/videodev2.h>
-#include <drm/drmP.h>
+
+#include <video/imx-ipu-v3.h>
+
 #include <drm/drm_atomic_helper.h>
 #include <drm/drm_fb_helper.h>
-#include <drm/drm_crtc_helper.h>
-#include <video/imx-ipu-v3.h>
+#include <drm/drm_probe_helper.h>
 
 #include "imx-drm.h"
 
@@ -235,7 +229,7 @@ static int imx_tve_connector_get_modes(struct drm_connector *connector)
 
 	edid = drm_get_edid(connector, tve->ddc);
 	if (edid) {
-		drm_mode_connector_update_edid_property(connector, edid);
+		drm_connector_update_edid_property(connector, edid);
 		ret = drm_add_edid_modes(connector, edid);
 		kfree(edid);
 	}
@@ -293,11 +287,6 @@ static void imx_tve_encoder_mode_set(struct drm_encoder *encoder,
 	rounded_rate = clk_get_rate(tve->clk);
 	if (rounded_rate >= rate)
 		div = 2;
-	if (rounded_rate > 0)
-		clk_set_rate(tve->di_clk, rounded_rate / div);
-	else
-		dev_err(tve->dev,
-			"clk_get_rate(tve->clk) returned 0 for rate\n");
 	clk_set_rate(tve->di_clk, rounded_rate / div);
 
 	ret = clk_set_parent(tve->di_sel_clk, tve->di_clk);
@@ -447,7 +436,7 @@ static int clk_tve_di_set_rate(struct clk_hw *hw, unsigned long rate,
 	return 0;
 }
 
-static struct clk_ops clk_tve_di_ops = {
+static const struct clk_ops clk_tve_di_ops = {
 	.round_rate = clk_tve_di_round_rate,
 	.set_rate = clk_tve_di_set_rate,
 	.recalc_rate = clk_tve_di_recalc_rate,
@@ -495,12 +484,21 @@ static int imx_tve_register(struct drm_device *drm, struct imx_tve *tve)
 
 	drm_connector_helper_add(&tve->connector,
 			&imx_tve_connector_helper_funcs);
-	drm_connector_init(drm, &tve->connector, &imx_tve_connector_funcs,
-			   DRM_MODE_CONNECTOR_VGA);
+	drm_connector_init_with_ddc(drm, &tve->connector,
+				    &imx_tve_connector_funcs,
+				    DRM_MODE_CONNECTOR_VGA,
+				    tve->ddc);
 
-	drm_mode_connector_attach_encoder(&tve->connector, &tve->encoder);
+	drm_connector_attach_encoder(&tve->connector, &tve->encoder);
 
 	return 0;
+}
+
+static void imx_tve_disable_regulator(void *data)
+{
+	struct imx_tve *tve = data;
+
+	regulator_disable(tve->dac_reg);
 }
 
 static bool imx_tve_readable_reg(struct device *dev, unsigned int reg)
@@ -555,9 +553,8 @@ static int imx_tve_bind(struct device *dev, struct device *master, void *data)
 	int irq;
 	int ret;
 
-	tve = devm_kzalloc(dev, sizeof(*tve), GFP_KERNEL);
-	if (!tve)
-		return -ENOMEM;
+	tve = dev_get_drvdata(dev);
+	memset(tve, 0, sizeof(*tve));
 
 	tve->dev = dev;
 	spin_lock_init(&tve->lock);
@@ -627,6 +624,9 @@ static int imx_tve_bind(struct device *dev, struct device *master, void *data)
 		ret = regulator_enable(tve->dac_reg);
 		if (ret)
 			return ret;
+		ret = devm_add_action_or_reset(dev, imx_tve_disable_regulator, tve);
+		if (ret)
+			return ret;
 	}
 
 	tve->clk = devm_clk_get(dev, "tve");
@@ -668,27 +668,23 @@ static int imx_tve_bind(struct device *dev, struct device *master, void *data)
 	if (ret)
 		return ret;
 
-	dev_set_drvdata(dev, tve);
-
 	return 0;
-}
-
-static void imx_tve_unbind(struct device *dev, struct device *master,
-	void *data)
-{
-	struct imx_tve *tve = dev_get_drvdata(dev);
-
-	if (!IS_ERR(tve->dac_reg))
-		regulator_disable(tve->dac_reg);
 }
 
 static const struct component_ops imx_tve_ops = {
 	.bind	= imx_tve_bind,
-	.unbind	= imx_tve_unbind,
 };
 
 static int imx_tve_probe(struct platform_device *pdev)
 {
+	struct imx_tve *tve;
+
+	tve = devm_kzalloc(&pdev->dev, sizeof(*tve), GFP_KERNEL);
+	if (!tve)
+		return -ENOMEM;
+
+	platform_set_drvdata(pdev, tve);
+
 	return component_add(&pdev->dev, &imx_tve_ops);
 }
 

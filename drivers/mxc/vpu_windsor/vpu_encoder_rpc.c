@@ -130,6 +130,29 @@ void rpc_init_shared_memory_encoder(struct shared_addr *This,
 		*actual_size = phy_addr - base_phy_addr;
 }
 
+void rpc_restore_shared_memory_encoder(struct shared_addr *This,
+		unsigned long long base_phy_addr,
+		void *base_virt_addr)
+{
+	pENC_RPC_HOST_IFACE pSharedInterface;
+	unsigned int phy_addr;
+
+	This->shared_mem_phy = base_phy_addr;
+	This->shared_mem_vir = base_virt_addr;
+	This->base_offset = (unsigned long long)(base_virt_addr - base_phy_addr);
+
+	pSharedInterface = (pENC_RPC_HOST_IFACE)This->shared_mem_vir;
+	This->pSharedInterface = pSharedInterface;
+
+	phy_addr = base_phy_addr + sizeof(ENC_RPC_HOST_IFACE);
+	This->cmd_mem_phy = phy_addr;
+	This->cmd_mem_vir = This->shared_mem_vir + sizeof(ENC_RPC_HOST_IFACE);
+
+	phy_addr += CMD_SIZE;
+	This->msg_mem_phy = phy_addr;
+	This->msg_mem_vir = This->cmd_mem_vir + CMD_SIZE;
+}
+
 void rpc_set_system_cfg_value_encoder(void *Interface, u_int32 regs_base, u_int32 core_id)
 {
 	pENC_RPC_HOST_IFACE pSharedInterface;
@@ -185,7 +208,7 @@ u_int32 rpc_MediaIPFW_Video_buffer_space_check_encoder(BUFFER_DESCRIPTOR_TYPE *p
 			/* the updated write pointer.                     */
 			uTemp = uPtr1 + uSize;
 			if (uTemp >= end)
-				uTemp += (start - end);
+				uTemp -= (end - start);
 			*puUpdateAddress = uTemp;
 			return (end - start);
 		}
@@ -203,7 +226,7 @@ u_int32 rpc_MediaIPFW_Video_buffer_space_check_encoder(BUFFER_DESCRIPTOR_TYPE *p
 	end   = pBufDesc->end;
 	uTemp  = uPtr1 + uSize;
 	if (uTemp >= end)
-		uTemp += (start - end);
+		uTemp -= (end - start);
 	*puUpdateAddress = uTemp;
 	return ((end - uPtr1) + (uPtr2 - start));
 }
@@ -231,6 +254,18 @@ void rpc_send_cmd_buf_encoder(struct shared_addr *This,
 	u_int32 *cmddata;
 	u_int32 i;
 	u_int32 *cmdword = (u_int32 *)(This->cmd_mem_vir+pCmdDesc->wptr - pCmdDesc->start);
+	u_int32 uIgnore;
+	u_int32 uSpace;
+
+	uSpace = rpc_MediaIPFW_Video_buffer_space_check_encoder(pCmdDesc,
+								FALSE,
+								0,
+								&uIgnore);
+	if (uSpace < ((cmdnum + 1) << 2) + 16) {
+		pr_err("[VPU WINDSOR] CmdBuf is no space for [%d] %d\n",
+				idx, cmdid);
+		return;
+	}
 
 	*cmdword = 0;
 	*cmdword |= ((idx & 0x000000ff) << 24);

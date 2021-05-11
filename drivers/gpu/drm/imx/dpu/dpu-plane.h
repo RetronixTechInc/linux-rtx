@@ -1,5 +1,5 @@
 /*
- * Copyright 2017-2018 NXP
+ * Copyright 2017-2019 NXP
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the
@@ -16,7 +16,7 @@
 #define __DPU_PLANE_H__
 
 #include <video/dpu.h>
-#include "imx-drm.h"
+#include "../imx-drm.h"
 
 #define MAX_DPU_PLANE_GRP	(MAX_CRTC / 2)
 
@@ -41,12 +41,6 @@ struct dpu_plane_state {
 	lb_prim_sel_t		aux_stage;
 	lb_sec_sel_t		aux_source;
 	dpu_block_id_t		aux_blend;
-	unsigned int		layer_x;
-	unsigned int		layer_y;
-	unsigned int		base_x;
-	unsigned int		base_y;
-	unsigned int		base_w;
-	unsigned int		base_h;
 
 	bool			is_top;
 	bool			use_prefetch;
@@ -54,16 +48,12 @@ struct dpu_plane_state {
 	bool			need_aux_source;
 
 	/* used when pixel combiner is needed */
-	unsigned int		left_layer_x;
-	unsigned int		left_base_x;
-	unsigned int		left_base_w;
 	unsigned int		left_src_w;
 	unsigned int		left_crtc_w;
-	unsigned int		right_layer_x;
-	unsigned int		right_base_x;
-	unsigned int		right_base_w;
+	unsigned int		left_crtc_x;
 	unsigned int		right_src_w;
 	unsigned int		right_crtc_w;
+	unsigned int		right_crtc_x;
 
 	bool			is_left_top;
 	bool			is_right_top;
@@ -74,20 +64,14 @@ static const lb_prim_sel_t cf_stages[] = {LB_PRIM_SEL__CONSTFRAME0,
 static const lb_prim_sel_t stages[] = {LB_PRIM_SEL__LAYERBLEND0,
 				       LB_PRIM_SEL__LAYERBLEND1,
 				       LB_PRIM_SEL__LAYERBLEND2,
-				       LB_PRIM_SEL__LAYERBLEND3,
-				       LB_PRIM_SEL__LAYERBLEND4,
-				       LB_PRIM_SEL__LAYERBLEND5};
-/* FIXME: Correct the source entries for subsidiary layers. */
+				       LB_PRIM_SEL__LAYERBLEND3};
+/* TODO: Add source entries for subsidiary layers. */
 static const lb_sec_sel_t sources[] = {LB_SEC_SEL__FETCHLAYER0,
-				       LB_SEC_SEL__FETCHLAYER1,
 				       LB_SEC_SEL__FETCHWARP2,
 				       LB_SEC_SEL__FETCHDECODE0,
-				       LB_SEC_SEL__FETCHDECODE1,
-				       LB_SEC_SEL__FETCHDECODE2,
-				       LB_SEC_SEL__FETCHDECODE3};
+				       LB_SEC_SEL__FETCHDECODE1};
 static const dpu_block_id_t blends[] = {ID_LAYERBLEND0, ID_LAYERBLEND1,
-					ID_LAYERBLEND2, ID_LAYERBLEND3,
-					ID_LAYERBLEND4, ID_LAYERBLEND5};
+					ID_LAYERBLEND2, ID_LAYERBLEND3};
 
 static inline struct dpu_plane *to_dpu_plane(struct drm_plane *plane)
 {
@@ -104,14 +88,11 @@ static inline int source_to_type(lb_sec_sel_t source)
 {
 	switch (source) {
 	case LB_SEC_SEL__FETCHLAYER0:
-	case LB_SEC_SEL__FETCHLAYER1:
 		return DPU_PLANE_SRC_FL;
 	case LB_SEC_SEL__FETCHWARP2:
 		return DPU_PLANE_SRC_FW;
 	case LB_SEC_SEL__FETCHDECODE0:
 	case LB_SEC_SEL__FETCHDECODE1:
-	case LB_SEC_SEL__FETCHDECODE2:
-	case LB_SEC_SEL__FETCHDECODE3:
 		return DPU_PLANE_SRC_FD;
 	default:
 		break;
@@ -206,9 +187,9 @@ static inline bool drm_format_is_yuv(uint32_t format)
 	return false;
 }
 
-struct dpu_plane *dpu_plane_init(struct drm_device *drm,
-				 unsigned int possible_crtcs,
-				 unsigned int stream_id,
-				 struct dpu_plane_grp *grp,
-				 enum drm_plane_type type);
+struct dpu_plane *dpu_plane_create(struct drm_device *drm,
+				   unsigned int possible_crtcs,
+				   unsigned int stream_id,
+				   struct dpu_plane_grp *grp,
+				   enum drm_plane_type type);
 #endif

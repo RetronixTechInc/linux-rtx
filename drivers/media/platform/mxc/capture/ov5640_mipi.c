@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2011-2015 Freescale Semiconductor, Inc. All Rights Reserved.
+ * Copyright 2019 NXP
  */
 
 /*
@@ -662,6 +663,16 @@ static int ov5640_remove(struct i2c_client *client);
 static s32 ov5640_read_reg(u16 reg, u8 *val);
 static s32 ov5640_write_reg(u16 reg, u8 val);
 
+#ifdef CONFIG_OF
+static const struct of_device_id ov5640_of_match[] = {
+	{ .compatible = "ovti,ov564x_mipi",
+	},
+	{ /* sentinel */ }
+};
+
+MODULE_DEVICE_TABLE(of, ov5640_of_match);
+#endif
+
 static const struct i2c_device_id ov5640_id[] = {
 	{"ov564x_mipi", 0},
 	{},
@@ -673,6 +684,9 @@ static struct i2c_driver ov5640_i2c_driver = {
 	.driver = {
 		  .owner = THIS_MODULE,
 		  .name  = "ov564x_mipi",
+#ifdef CONFIG_OF
+		  .of_match_table = of_match_ptr(ov5640_of_match),
+#endif
 		  },
 	.probe  = ov5640_probe,
 	.remove = ov5640_remove,
@@ -770,6 +784,21 @@ static int ov5640_power_on(struct device *dev)
 	}
 
 	return ret;
+}
+
+static void ov5640_power_off(void)
+{
+	if (analog_regulator)
+		regulator_disable(analog_regulator);
+
+	if (core_regulator)
+		regulator_disable(core_regulator);
+
+	if (io_regulator)
+		regulator_disable(io_regulator);
+
+	if (gpo_regulator)
+		regulator_disable(gpo_regulator);
 }
 
 static s32 ov5640_write_reg(u16 reg, u8 val)
@@ -1489,14 +1518,8 @@ static int ioctl_s_power(struct v4l2_int_device *s, int on)
 		/* Make sure power on */
 		ov5640_standby(0);
 	} else if (!on && sensor->on) {
-		if (analog_regulator)
-			regulator_disable(analog_regulator);
-		if (core_regulator)
-			regulator_disable(core_regulator);
-		if (io_regulator)
-			regulator_disable(io_regulator);
-		if (gpo_regulator)
-			regulator_disable(gpo_regulator);
+
+		ov5640_power_off();
 
 		ov5640_standby(1);
 	}
@@ -2057,12 +2080,14 @@ static int ov5640_probe(struct i2c_client *client,
 	retval = ov5640_read_reg(OV5640_CHIP_ID_HIGH_BYTE, &chip_id_high);
 	if (retval < 0 || chip_id_high != 0x56) {
 		pr_warning("camera ov5640_mipi is not found\n");
+		ov5640_power_off();
 		clk_disable_unprepare(ov5640_data.sensor_clk);
 		return -ENODEV;
 	}
 	retval = ov5640_read_reg(OV5640_CHIP_ID_LOW_BYTE, &chip_id_low);
 	if (retval < 0 || chip_id_low != 0x40) {
 		pr_warning("camera ov5640_mipi is not found\n");
+		ov5640_power_off();
 		clk_disable_unprepare(ov5640_data.sensor_clk);
 		return -ENODEV;
 	}
@@ -2088,17 +2113,7 @@ static int ov5640_remove(struct i2c_client *client)
 {
 	v4l2_int_device_unregister(&ov5640_int_device);
 
-	if (gpo_regulator)
-		regulator_disable(gpo_regulator);
-
-	if (analog_regulator)
-		regulator_disable(analog_regulator);
-
-	if (core_regulator)
-		regulator_disable(core_regulator);
-
-	if (io_regulator)
-		regulator_disable(io_regulator);
+	ov5640_power_off();
 
 	return 0;
 }

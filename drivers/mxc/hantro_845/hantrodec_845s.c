@@ -1,7 +1,7 @@
 /*****************************************************************************
  *    The GPL License (GPL)
  *
- *    Copyright (c) 2015-2018, VeriSilicon Inc.
+ *    Copyright (c) 2015-2020, VeriSilicon Inc.
  *    Copyright (c) 2011-2014, Google Inc.
  *
  *    This program is free software; you can redistribute it and/or
@@ -169,6 +169,7 @@ typedef struct {
 	volatile u8 *hwregs;
 	int irq;
 	int hw_id;
+	int hw_active;
 	int core_id;
 	//int cores;
 	//struct fasync_struct *async_queue_dec;
@@ -322,23 +323,26 @@ static int hantro_power_on_disirq(hantrodec_t *hantrodev)
 static int hantro_new_instance(void)
 {
 	int idx;
+	unsigned long flags;
 
-	spin_lock(&owner_lock);
+	spin_lock_irqsave(&owner_lock, flags);
 	if (instance_mask  == ((1UL << MAX_HANTRODEC_INSTANCE) - 1)) {
-		spin_unlock(&owner_lock);
+		spin_unlock_irqrestore(&owner_lock, flags);
 		return -1;
 	}
 	idx = ffz(instance_mask);
 	set_bit(idx, &instance_mask);
-	spin_unlock(&owner_lock);
+	spin_unlock_irqrestore(&owner_lock, flags);
 	return idx;
 }
 
 static int hantro_free_instance(int idx)
 {
-	spin_lock(&owner_lock);
+	unsigned long flags;
+
+	spin_lock_irqsave(&owner_lock, flags);
 	clear_bit(idx, &instance_mask);
-	spin_unlock(&owner_lock);
+	spin_unlock_irqrestore(&owner_lock, flags);
 
 	return 0;
 }
@@ -770,6 +774,8 @@ static long DecFlushRegs(hantrodec_t *dev, struct core_desc *Core)
 			iowrite32(dev->dec_regs[i], dev->hwregs + i*4);
 	}
 
+	if (dev->dec_regs[1] & 0x1)
+		dev->hw_active = 1;
 	/* write the status register, which may start the decoder */
 	iowrite32(dev->dec_regs[1], dev->hwregs + 4);
 
@@ -843,6 +849,49 @@ static long DecRefreshRegs(hantrodec_t *dev, struct core_desc *Core)
 	}
 	return 0;
 }
+
+static long DecRestoreRegs(hantrodec_t *dev)
+{
+	long i;
+
+	if (IS_G1(dev->hw_id)) {
+		/* write dec regs to hardware */
+		/* both original and extended regs need to be written */
+		for (i = 1; i <= HANTRO_DEC_ORG_LAST_REG; i++)
+			iowrite32(dev->dec_regs[i], dev->hwregs + i*4);
+#ifdef USE_64BIT_ENV
+		for (i = HANTRO_DEC_EXT_FIRST_REG; i <= HANTRO_DEC_EXT_LAST_REG; i++)
+			iowrite32(dev->dec_regs[i], dev->hwregs + i*4);
+#endif
+	} else {
+		/* write all regs to hardware */
+		for (i = 1; i <= HANTRO_G2_DEC_LAST_REG; i++)
+			iowrite32(dev->dec_regs[i], dev->hwregs + i*4);
+	}
+	return 0;
+}
+
+static long DecStoreRegs(hantrodec_t *dev)
+{
+	long i;
+
+	if (IS_G1(dev->hw_id)) {
+		/* read all registers from hardware */
+		/* both original and extended regs need to be read */
+		for (i = 0; i <= HANTRO_DEC_ORG_LAST_REG; i++)
+			dev->dec_regs[i] = ioread32(dev->hwregs + i*4);
+#ifdef USE_64BIT_ENV
+		for (i = HANTRO_DEC_EXT_FIRST_REG; i <= HANTRO_DEC_EXT_LAST_REG; i++)
+			dev->dec_regs[i] = ioread32(dev->hwregs + i*4);
+#endif
+	} else {
+		/* read all registers from hardware */
+		for (i = 0; i <= HANTRO_G2_DEC_LAST_REG; i++)
+			dev->dec_regs[i] = ioread32(dev->hwregs + i*4);
+	}
+	return 0;
+}
+
 
 static int CheckDecIrq(hantrodec_t *dev)
 {
@@ -1086,9 +1135,9 @@ static long hantrodec_ioctl(struct file *filp, unsigned int cmd, unsigned long a
 	 * "write" is reversed
 	 */
 	if (_IOC_DIR(cmd) & _IOC_READ)
-		err = !access_ok(VERIFY_WRITE, (void *) arg, _IOC_SIZE(cmd));
+		err = !access_ok((void *) arg, _IOC_SIZE(cmd));
 	else if (_IOC_DIR(cmd) & _IOC_WRITE)
-		err = !access_ok(VERIFY_READ, (void *) arg, _IOC_SIZE(cmd));
+		err = !access_ok((void *) arg, _IOC_SIZE(cmd));
 
 	if (err)
 		return -EFAULT;
@@ -1327,6 +1376,7 @@ static long hantrodec_ioctl(struct file *filp, unsigned int cmd, unsigned long a
 			PDEBUG("hantrodec: pp_core[%li]  %s\n",
 					tmp, hantrodec_data[tmp].pp_owner == NULL ? "FREE" : "RESERVED");
 		}
+		break;
 	}
 	default:
 		return -ENOTTY;
@@ -1346,7 +1396,7 @@ static int get_hantro_core_desc32(struct core_desc *kp, struct core_desc_32 __us
 {
 	u32 tmp;
 
-	if (!access_ok(VERIFY_READ, up, sizeof(struct core_desc_32)) ||
+	if (!access_ok(up, sizeof(struct core_desc_32)) ||
 				get_user(kp->id, &up->id) ||
 				get_user(kp->size, &up->size) ||
 				get_user(tmp, &up->regs)) {
@@ -1360,7 +1410,7 @@ static int put_hantro_core_desc32(struct core_desc *kp, struct core_desc_32 __us
 {
 	u32 tmp = (u32)((unsigned long)kp->regs);
 
-	if (!access_ok(VERIFY_WRITE, up, sizeof(struct core_desc_32)) ||
+	if (!access_ok(up, sizeof(struct core_desc_32)) ||
 				put_user(kp->id, &up->id) ||
 				put_user(kp->size, &up->size) ||
 				put_user(tmp, &up->regs)) {
@@ -1794,6 +1844,7 @@ static irqreturn_t hantrodec_isr(int irq, void *dev_id)
 			iowrite32(irq_status_dec, hwregs + HANTRODEC_IRQ_STAT_DEC_OFF);
 
 			PDEBUG("decoder IRQ received! Core %d\n", dev->core_id);
+			dev->hw_active = 0;
 
 			atomic_inc(&hantrodec_data[dev->core_id].irq_rx);
 
@@ -1941,19 +1992,14 @@ static int hantro_dev_remove(struct platform_device *pdev)
 
 	hantro_clk_enable(&dev->clk);
 	pm_runtime_get_sync(&pdev->dev);
-
 	hantrodec_cleanup(dev->core_id);
-#if 1 // FIXME: need to identify core id
-	if (hantrodec_major > 0) {
-		device_destroy(hantro_class, MKDEV(hantrodec_major, 0));
-		class_destroy(hantro_class);
-		unregister_chrdev(hantrodec_major, "hantrodec");
-		hantrodec_major = 0;
-	}
-#endif
 	pm_runtime_put_sync(&pdev->dev);
 	pm_runtime_disable(&pdev->dev);
 	hantro_clk_disable(&dev->clk);
+	if (!IS_ERR(dev->clk.dec))
+		clk_put(dev->clk.dec);
+	if (!IS_ERR(dev->clk.bus))
+		clk_put(dev->clk.bus);
 
 #ifdef CONFIG_DEVICE_THERMAL_HANTRO
 	HANTRO_UNREG_THERMAL_NOTIFIER(&hantro_thermal_hot_notifier);
@@ -1963,17 +2009,35 @@ static int hantro_dev_remove(struct platform_device *pdev)
 }
 
 #ifdef CONFIG_PM
-static int hantro_suspend(struct device *dev)
+static int __maybe_unused hantro_suspend(struct device *dev)
 {
+	hantrodec_t *hantrodev = dev_get_drvdata(dev);
+
+	if (hantrodev->dec_owner) {
+		/* polling until hw is idle */
+		while (hantrodev->hw_active) {
+			pr_info("DEC[%d] is still in active when suspend !\n", hantrodev->core_id);
+			usleep_range(5000, 10000);
+		}
+		/* let's backup all registers from H/W to shadow register to support suspend */
+		DecStoreRegs(hantrodev);
+	}
+
 	pm_runtime_put_sync_suspend(dev);   //power off
 	return 0;
 }
-static int hantro_resume(struct device *dev)
+static int __maybe_unused hantro_resume(struct device *dev)
 {
 	hantrodec_t *hantrodev = dev_get_drvdata(dev);
 
 	hantro_power_on_disirq(hantrodev);
 	hantro_ctrlblk_reset(hantrodev);
+
+	if (hantrodev->dec_owner) {
+		/* let's restore registers from shadow register to H/W to support resume */
+		DecRestoreRegs(hantrodev);
+	}
+
 	return 0;
 }
 static int hantro_runtime_suspend(struct device *dev)
@@ -2025,8 +2089,13 @@ static int __init hantro_init(void)
 
 static void __exit hantro_exit(void)
 {
-	//clk_put(hantro_clk);
 	platform_driver_unregister(&mxchantro_driver);
+	if (hantrodec_major > 0) {
+		device_destroy(hantro_class, MKDEV(hantrodec_major, 0));
+		class_destroy(hantro_class);
+		unregister_chrdev(hantrodec_major, "hantrodec");
+		hantrodec_major = 0;
+	}
 }
 
 module_init(hantro_init);

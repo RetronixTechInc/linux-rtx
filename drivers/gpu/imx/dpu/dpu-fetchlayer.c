@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2016 Freescale Semiconductor, Inc.
- * Copyright 2017-2018 NXP
+ * Copyright 2017-2019 NXP
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the
@@ -44,14 +44,9 @@
 #define STATUS				0x170
 #define HIDDENSTATUS			0x174
 
-static const shadow_load_req_t fl_shdlreqs[] = {
-	SHLDREQID_FETCHLAYER0, SHLDREQID_FETCHLAYER1,
-};
-
 struct dpu_fetchlayer {
 	struct dpu_fetchunit fu;
 	fetchtype_t fetchtype;
-	shadow_load_req_t shdlreq;
 };
 
 static void
@@ -64,11 +59,15 @@ fetchlayer_set_src_buf_dimensions(struct dpu_fetchunit *fu,
 	val = LINEWIDTH(w) | LINECOUNT(h);
 
 	mutex_lock(&fu->mutex);
-	dpu_fu_write(fu, val, SOURCEBUFFERDIMENSION(fu->sub_id));
+	dpu_fu_write(fu, SOURCEBUFFERDIMENSION(fu->sub_id), val);
 	mutex_unlock(&fu->mutex);
 }
 
-static void fetchlayer_set_fmt(struct dpu_fetchunit *fu, u32 fmt, bool unused)
+static void fetchlayer_set_fmt(struct dpu_fetchunit *fu,
+			       u32 fmt,
+			       enum drm_color_encoding color_encoding,
+			       enum drm_color_range color_range,
+			       bool unused)
 {
 	u32 val, bits, shift;
 	int i, sub_id = fu->sub_id;
@@ -77,7 +76,7 @@ static void fetchlayer_set_fmt(struct dpu_fetchunit *fu, u32 fmt, bool unused)
 	val = dpu_fu_read(fu, LAYERPROPERTY(sub_id));
 	val &= ~YUVCONVERSIONMODE_MASK;
 	val |= YUVCONVERSIONMODE(YUVCONVERSIONMODE__OFF);
-	dpu_fu_write(fu, val, LAYERPROPERTY(sub_id));
+	dpu_fu_write(fu, LAYERPROPERTY(sub_id), val);
 	mutex_unlock(&fu->mutex);
 
 	for (i = 0; i < ARRAY_SIZE(dpu_pixel_format_matrix); i++) {
@@ -86,8 +85,8 @@ static void fetchlayer_set_fmt(struct dpu_fetchunit *fu, u32 fmt, bool unused)
 			shift = dpu_pixel_format_matrix[i].shift;
 
 			mutex_lock(&fu->mutex);
-			dpu_fu_write(fu, bits, COLORCOMPONENTBITS(sub_id));
-			dpu_fu_write(fu, shift, COLORCOMPONENTSHIFT(sub_id));
+			dpu_fu_write(fu, COLORCOMPONENTBITS(sub_id), bits);
+			dpu_fu_write(fu, COLORCOMPONENTSHIFT(sub_id), shift);
 			mutex_unlock(&fu->mutex);
 			return;
 		}
@@ -105,7 +104,7 @@ fetchlayer_set_framedimensions(struct dpu_fetchunit *fu, unsigned int w,
 	val = FRAMEWIDTH(w) | FRAMEHEIGHT(h);
 
 	mutex_lock(&fu->mutex);
-	dpu_fu_write(fu, val, FRAMEDIMENSIONS);
+	dpu_fu_write(fu, FRAMEDIMENSIONS, val);
 	mutex_unlock(&fu->mutex);
 }
 
@@ -117,7 +116,7 @@ void fetchlayer_rgb_constantcolor(struct dpu_fetchunit *fu,
 	val = rgb_color(r, g, b, a);
 
 	mutex_lock(&fu->mutex);
-	dpu_fu_write(fu, val, CONSTANTCOLOR(fu->id));
+	dpu_fu_write(fu, CONSTANTCOLOR(fu->id), val);
 	mutex_unlock(&fu->mutex);
 }
 EXPORT_SYMBOL_GPL(fetchlayer_rgb_constantcolor);
@@ -129,7 +128,7 @@ void fetchlayer_yuv_constantcolor(struct dpu_fetchunit *fu, u8 y, u8 u, u8 v)
 	val = yuv_color(y, u, v);
 
 	mutex_lock(&fu->mutex);
-	dpu_fu_write(fu, val, CONSTANTCOLOR(fu->id));
+	dpu_fu_write(fu, CONSTANTCOLOR(fu->id), val);
 	mutex_unlock(&fu->mutex);
 }
 EXPORT_SYMBOL_GPL(fetchlayer_yuv_constantcolor);
@@ -137,7 +136,7 @@ EXPORT_SYMBOL_GPL(fetchlayer_yuv_constantcolor);
 static void fetchlayer_set_controltrigger(struct dpu_fetchunit *fu)
 {
 	mutex_lock(&fu->mutex);
-	dpu_fu_write(fu, SHDTOKGEN, CONTROLTRIGGER);
+	dpu_fu_write(fu, CONTROLTRIGGER, SHDTOKGEN);
 	mutex_unlock(&fu->mutex);
 }
 
@@ -153,42 +152,14 @@ int fetchlayer_fetchtype(struct dpu_fetchunit *fu, fetchtype_t *type)
 
 	switch (val) {
 	case FETCHTYPE__DECODE:
-		dev_dbg(dpu->dev, "FetchLayer%d with RL and RLAD decoder\n",
-				fu->id);
-		break;
 	case FETCHTYPE__LAYER:
-		dev_dbg(dpu->dev, "FetchLayer%d with fractional "
-				"plane(8 layers)\n", fu->id);
-		break;
 	case FETCHTYPE__WARP:
-		dev_dbg(dpu->dev, "FetchLayer%d with arbitrary warping and "
-				"fractional plane(8 layers)\n", fu->id);
-		break;
 	case FETCHTYPE__ECO:
-		dev_dbg(dpu->dev, "FetchLayer%d with minimum feature set for "
-				"alpha, chroma and coordinate planes\n",
-				fu->id);
-		break;
 	case FETCHTYPE__PERSP:
-		dev_dbg(dpu->dev, "FetchLayer%d with affine, perspective and "
-				"arbitrary warping\n", fu->id);
-		break;
 	case FETCHTYPE__ROT:
-		dev_dbg(dpu->dev, "FetchLayer%d with affine and arbitrary "
-				"warping\n", fu->id);
-		break;
 	case FETCHTYPE__DECODEL:
-		dev_dbg(dpu->dev, "FetchLayer%d with RL and RLAD decoder, "
-				"reduced feature set\n", fu->id);
-		break;
 	case FETCHTYPE__LAYERL:
-		dev_dbg(dpu->dev, "FetchLayer%d with fractional "
-				"plane(8 layers), reduced feature set\n",
-				fu->id);
-		break;
 	case FETCHTYPE__ROTL:
-		dev_dbg(dpu->dev, "FetchLayer%d with affine and arbitrary "
-				"warping, reduced feature set\n", fu->id);
 		break;
 	default:
 		dev_warn(dpu->dev, "Invalid fetch type %u for FetchLayer%d\n",
@@ -247,6 +218,7 @@ static const struct dpu_fetchunit_ops fl_ops = {
 	.set_src_stride		= fetchunit_set_src_stride,
 	.set_src_buf_dimensions	= fetchlayer_set_src_buf_dimensions,
 	.set_fmt		= fetchlayer_set_fmt,
+	.set_pixel_blend_mode	= fetchunit_set_pixel_blend_mode,
 	.enable_src_buf		= fetchunit_enable_src_buf,
 	.disable_src_buf	= fetchunit_disable_src_buf,
 	.is_enabled		= fetchunit_is_enabled,
@@ -254,9 +226,6 @@ static const struct dpu_fetchunit_ops fl_ops = {
 	.set_controltrigger	= fetchlayer_set_controltrigger,
 	.get_stream_id		= fetchunit_get_stream_id,
 	.set_stream_id		= fetchunit_set_stream_id,
-	.pin_off		= fetchunit_pin_off,
-	.unpin_off		= fetchunit_unpin_off,
-	.is_pinned_off		= fetchunit_is_pinned_off,
 };
 
 void _dpu_fl_init(struct dpu_soc *dpu, unsigned int id)
@@ -279,8 +248,8 @@ void _dpu_fl_init(struct dpu_soc *dpu, unsigned int id)
 	fetchunit_disable_src_buf(fu);
 
 	mutex_lock(&fu->mutex);
-	dpu_fu_write(fu, SETNUMBUFFERS(16) | SETBURSTLENGTH(16),
-			BURSTBUFFERMANAGEMENT);
+	dpu_fu_write(fu, BURSTBUFFERMANAGEMENT,
+			SETNUMBUFFERS(16) | SETBURSTLENGTH(16));
 	mutex_unlock(&fu->mutex);
 }
 
@@ -289,7 +258,7 @@ int dpu_fl_init(struct dpu_soc *dpu, unsigned int id,
 {
 	struct dpu_fetchlayer *fl;
 	struct dpu_fetchunit *fu;
-	int ret, i;
+	int ret;
 
 	fl = devm_kzalloc(dpu->dev, sizeof(*fl), GFP_KERNEL);
 	if (!fl)
@@ -312,12 +281,7 @@ int dpu_fl_init(struct dpu_soc *dpu, unsigned int id,
 	fu->type = FU_T_FL;
 	fu->ops = &fl_ops;
 	fu->name = "fetchlayer";
-	for (i = 0; i < ARRAY_SIZE(fl_ids); i++) {
-		if (fl_ids[i] == id) {
-			fl->shdlreq = fl_shdlreqs[i];
-			break;
-		}
-	}
+
 	mutex_init(&fu->mutex);
 
 	ret = fetchlayer_fetchtype(fu, &fl->fetchtype);

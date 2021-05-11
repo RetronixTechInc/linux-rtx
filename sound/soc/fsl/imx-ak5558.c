@@ -31,6 +31,9 @@ struct imx_ak5558_data {
 	unsigned long slots;
 	unsigned long slot_width;
 	bool one2one_ratio;
+	struct platform_device *asrc_pdev;
+	u32 asrc_rate;
+	u32 asrc_format;
 };
 
 /*
@@ -86,6 +89,10 @@ static const u32 ak5558_tdm_rates[] = {
 
 static const u32 ak5558_channels[] = {
 	1, 2, 4, 6, 8,
+};
+
+static const u32 ak5552_channels[] = {
+	1, 2,
 };
 
 static unsigned long ak5558_get_mclk_rate(struct snd_pcm_substream *substream,
@@ -197,6 +204,66 @@ static int imx_aif_hw_params(struct snd_pcm_substream *substream,
 	return ret;
 }
 
+/* In order to support odd channels, force tdm mode for FE-BE case */
+static int imx_aif_hw_params_be(struct snd_pcm_substream *substream,
+				struct snd_pcm_hw_params *params)
+{
+	struct snd_soc_pcm_runtime *rtd = substream->private_data;
+	struct snd_soc_dai *cpu_dai = rtd->cpu_dai;
+	struct snd_soc_dai *codec_dai = rtd->codec_dai;
+	struct snd_soc_card *card = rtd->card;
+	struct device *dev = card->dev;
+	struct imx_ak5558_data *data = snd_soc_card_get_drvdata(card);
+	unsigned int channels = params_channels(params);
+	unsigned long mclk_freq;
+	unsigned int fmt;
+	int ret;
+
+	fmt = SND_SOC_DAIFMT_DSP_B | SND_SOC_DAIFMT_NB_NF |
+		SND_SOC_DAIFMT_CBS_CFS;
+
+	ret = snd_soc_dai_set_fmt(cpu_dai, fmt);
+	if (ret) {
+		dev_err(dev, "failed to set cpu dai fmt: %d\n", ret);
+		return ret;
+	}
+
+	ret = snd_soc_dai_set_fmt(codec_dai, fmt);
+	if (ret) {
+		dev_err(dev, "failed to set codec dai fmt: %d\n", ret);
+		return ret;
+	}
+
+	/* support TDM256 (8 slots * 32 bits/per slot) */
+	data->slots = 8;
+	data->slot_width = 32;
+
+	ret = snd_soc_dai_set_tdm_slot(cpu_dai,
+			       BIT(channels) - 1, BIT(channels) - 1,
+			       data->slots, data->slot_width);
+	if (ret) {
+		dev_err(dev, "failed to set cpu dai tdm slot: %d\n", ret);
+		return ret;
+	}
+
+	ret = snd_soc_dai_set_tdm_slot(codec_dai,
+		       BIT(channels) - 1, BIT(channels) - 1,
+		       8, 32);
+	if (ret) {
+		dev_err(dev, "failed to set codec dai fmt: %d\n", ret);
+		return ret;
+	}
+
+	mclk_freq = ak5558_get_mclk_rate(substream, params);
+	ret = snd_soc_dai_set_sysclk(cpu_dai, FSL_SAI_CLK_MAST1, mclk_freq,
+				     SND_SOC_CLOCK_OUT);
+	if (ret < 0)
+		dev_err(dev, "failed to set cpu_dai mclk1 rate %lu\n",
+			mclk_freq);
+
+	return ret;
+}
+
 static int imx_ak5558_hw_rule_rate(struct snd_pcm_hw_params *p,
 				struct snd_pcm_hw_rule *r)
 {
@@ -250,12 +317,21 @@ static int imx_aif_startup(struct snd_pcm_substream *substream)
 	if (ret)
 		return ret;
 
-	constraint_channels.list = ak5558_channels;
-	constraint_channels.count = ARRAY_SIZE(ak5558_channels);
-	ret = snd_pcm_hw_constraint_list(runtime, 0, SNDRV_PCM_HW_PARAM_CHANNELS,
-							&constraint_channels);
-	if (ret < 0)
-		return ret;
+	if (!data->tdm_mode) {
+		if (of_device_is_compatible(card->dev->of_node,
+					    "fsl,imx-audio-ak5552")) {
+			constraint_channels.list = ak5552_channels;
+			constraint_channels.count = ARRAY_SIZE(ak5552_channels);
+		} else {
+			constraint_channels.list = ak5558_channels;
+			constraint_channels.count = ARRAY_SIZE(ak5558_channels);
+		}
+		ret = snd_pcm_hw_constraint_list(runtime, 0,
+						 SNDRV_PCM_HW_PARAM_CHANNELS,
+						 &constraint_channels);
+		if (ret < 0)
+			return ret;
+	}
 
 	return snd_pcm_hw_rule_add(substream->runtime, 0,
 		SNDRV_PCM_HW_PARAM_RATE, imx_ak5558_hw_rule_rate, data,
@@ -267,12 +343,82 @@ static struct snd_soc_ops imx_aif_ops = {
 	.startup = imx_aif_startup,
 };
 
-static struct snd_soc_dai_link imx_ak5558_dai = {
-	.name = "ak5558",
-	.stream_name = "Audio",
-	.codec_dai_name = "ak5558-aif",
-	.ops = &imx_aif_ops,
-	.capture_only = 1,
+static struct snd_soc_ops imx_aif_ops_be = {
+	.hw_params = imx_aif_hw_params_be,
+};
+
+static int be_hw_params_fixup(struct snd_soc_pcm_runtime *rtd,
+			      struct snd_pcm_hw_params *params)
+{
+	struct snd_soc_card *card = rtd->card;
+	struct imx_ak5558_data *priv = snd_soc_card_get_drvdata(card);
+	struct snd_interval *rate;
+	struct snd_mask *mask;
+
+	if (!priv->asrc_pdev)
+		return -EINVAL;
+
+	rate = hw_param_interval(params, SNDRV_PCM_HW_PARAM_RATE);
+	rate->max = priv->asrc_rate;
+	rate->min = priv->asrc_rate;
+
+	mask = hw_param_mask(params, SNDRV_PCM_HW_PARAM_FORMAT);
+	snd_mask_none(mask);
+	snd_mask_set(mask, priv->asrc_format);
+
+	return 0;
+}
+
+SND_SOC_DAILINK_DEFS(hifi,
+	DAILINK_COMP_ARRAY(COMP_EMPTY()),
+	DAILINK_COMP_ARRAY(COMP_CODEC(NULL, "ak5558-aif")),
+	DAILINK_COMP_ARRAY(COMP_EMPTY()));
+
+SND_SOC_DAILINK_DEFS(hifi_fe,
+	DAILINK_COMP_ARRAY(COMP_EMPTY()),
+	DAILINK_COMP_ARRAY(COMP_DUMMY()),
+	DAILINK_COMP_ARRAY(COMP_EMPTY()));
+
+SND_SOC_DAILINK_DEFS(hifi_be,
+	DAILINK_COMP_ARRAY(COMP_EMPTY()),
+	DAILINK_COMP_ARRAY(COMP_CODEC(NULL, "ak5558-aif")),
+	DAILINK_COMP_ARRAY(COMP_DUMMY()));
+
+static struct snd_soc_dai_link imx_ak5558_dai[] = {
+	{
+		.name = "ak5558",
+		.stream_name = "Audio",
+		.ops = &imx_aif_ops,
+		.capture_only = 1,
+		SND_SOC_DAILINK_REG(hifi),
+	},
+	{
+		.name = "HiFi-ASRC-FE",
+		.stream_name = "HiFi-ASRC-FE",
+		.dynamic = 1,
+		.ignore_pmdown_time = 1,
+		.dpcm_playback = 0,
+		.dpcm_capture = 1,
+		.dpcm_merged_chan = 1,
+		SND_SOC_DAILINK_REG(hifi_fe),
+	},
+	{
+		.name = "HiFi-ASRC-BE",
+		.stream_name = "HiFi-ASRC-BE",
+		.no_pcm = 1,
+		.ignore_pmdown_time = 1,
+		.dpcm_playback = 0,
+		.dpcm_capture = 1,
+		.ops = &imx_aif_ops_be,
+		.be_hw_params_fixup = be_hw_params_fixup,
+		SND_SOC_DAILINK_REG(hifi_be),
+	},
+
+};
+
+static const struct snd_soc_dapm_route audio_map[] = {
+	{"CPU-Capture",  NULL, "Capture"},
+	{"ASRC-Capture",  NULL, "CPU-Capture"},
 };
 
 static int imx_ak5558_probe(struct platform_device *pdev)
@@ -280,7 +426,10 @@ static int imx_ak5558_probe(struct platform_device *pdev)
 	struct imx_ak5558_data *priv;
 	struct device_node *cpu_np, *codec_np = NULL;
 	struct platform_device *cpu_pdev;
+	struct device_node *asrc_np = NULL;
+	struct platform_device *asrc_pdev = NULL;
 	int ret;
+	u32 width;
 
 	priv = devm_kzalloc(&pdev->dev, sizeof(*priv), GFP_KERNEL);
 	if (!priv)
@@ -307,16 +456,56 @@ static int imx_ak5558_probe(struct platform_device *pdev)
 		goto fail;
 	}
 
+	asrc_np = of_parse_phandle(pdev->dev.of_node, "asrc-controller", 0);
+	if (asrc_np) {
+		asrc_pdev = of_find_device_by_node(asrc_np);
+		priv->asrc_pdev = asrc_pdev;
+	}
+
 	if (of_find_property(pdev->dev.of_node, "fsl,tdm", NULL))
 		priv->tdm_mode = true;
 
-	imx_ak5558_dai.codec_of_node = codec_np;
-	imx_ak5558_dai.cpu_dai_name = dev_name(&cpu_pdev->dev);
-	imx_ak5558_dai.platform_of_node = cpu_np;
-	imx_ak5558_dai.capture_only = 1;
+	imx_ak5558_dai[0].codecs->of_node = codec_np;
+	imx_ak5558_dai[0].cpus->dai_name = dev_name(&cpu_pdev->dev);
+	imx_ak5558_dai[0].platforms->of_node = cpu_np;
+	imx_ak5558_dai[0].capture_only = 1;
 
-	priv->card.dai_link = &imx_ak5558_dai;
+	priv->card.dai_link = &imx_ak5558_dai[0];
 	priv->card.num_links = 1;
+	priv->card.dapm_routes = audio_map;
+	priv->card.num_dapm_routes = 1;
+
+	/*if there is no asrc controller, we only enable one device*/
+	if (asrc_pdev) {
+		imx_ak5558_dai[1].cpus->of_node    = asrc_np;
+		imx_ak5558_dai[1].platforms->of_node   = asrc_np;
+
+		imx_ak5558_dai[2].codecs->of_node   = codec_np;
+		imx_ak5558_dai[2].cpus->of_node     = cpu_np;
+		priv->card.num_links = 3;
+		priv->card.num_dapm_routes += 1;
+
+		ret = of_property_read_u32(asrc_np, "fsl,asrc-rate",
+					   &priv->asrc_rate);
+		if (ret) {
+			dev_err(&pdev->dev, "failed to get output rate\n");
+			ret = -EINVAL;
+			goto fail;
+		}
+
+		ret = of_property_read_u32(asrc_np, "fsl,asrc-width", &width);
+		if (ret) {
+			dev_err(&pdev->dev, "failed to get output rate\n");
+			ret = -EINVAL;
+			goto fail;
+		}
+
+		if (width == 24)
+			priv->asrc_format = SNDRV_PCM_FORMAT_S24_LE;
+		else
+			priv->asrc_format = SNDRV_PCM_FORMAT_S16_LE;
+	}
+
 	priv->card.dev = &pdev->dev;
 	priv->card.owner = THIS_MODULE;
 	priv->card.dapm_widgets = imx_ak5558_dapm_widgets;
@@ -347,6 +536,7 @@ fail:
 }
 
 static const struct of_device_id imx_ak5558_dt_ids[] = {
+	{ .compatible = "fsl,imx-audio-ak5552", },
 	{ .compatible = "fsl,imx-audio-ak5558", },
 	{ .compatible = "fsl,imx-audio-ak5558-mq", },
 	{ },

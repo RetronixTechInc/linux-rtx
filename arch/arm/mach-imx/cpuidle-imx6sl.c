@@ -1,15 +1,14 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (C) 2014-2015 Freescale Semiconductor, Inc.
  * Copyright 2017-2018 NXP.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
  */
 
 #include <linux/busfreq-imx.h>
 #include <linux/cpuidle.h>
 #include <linux/module.h>
+#include <linux/of.h>
+#include <linux/of_fdt.h>
 #include <linux/platform_device.h>
 #include <linux/psci.h>
 #include <linux/regulator/consumer.h>
@@ -218,8 +217,9 @@ static int ldo2p5_dummy_probe(struct platform_device *pdev)
 }
 
 static const struct of_device_id imx_ldo2p5_dummy_ids[] = {
-	{ .compatible = "fsl,imx6-dummy-ldo2p5"},
-	};
+	{ .compatible = "fsl,imx6-dummy-ldo2p5", },
+	{ },
+};
 MODULE_DEVICE_TABLE(ofm, imx_ldo2p5_dummy_ids);
 
 static struct platform_driver ldo2p5_dummy_driver = {

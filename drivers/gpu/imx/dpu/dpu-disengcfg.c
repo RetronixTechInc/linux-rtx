@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2016 Freescale Semiconductor, Inc.
- * Copyright 2017-2018 NXP
+ * Copyright 2017-2020 NXP
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the
@@ -31,6 +31,7 @@ typedef enum {
 #define POLEN_HIGH		BIT(2)
 #define PIXINV_INV		BIT(3)
 #define SRCSELECT		0x10
+#define SIG_SELECT_MASK		0x3
 
 struct dpu_disengcfg {
 	void __iomem *base;
@@ -45,36 +46,24 @@ static inline u32 dpu_dec_read(struct dpu_disengcfg *dec, unsigned int offset)
 	return readl(dec->base + offset);
 }
 
-static inline void dpu_dec_write(struct dpu_disengcfg *dec, u32 value,
-				 unsigned int offset)
+static inline void dpu_dec_write(struct dpu_disengcfg *dec,
+				 unsigned int offset, u32 value)
 {
 	writel(value, dec->base + offset);
 }
 
-void disengcfg_polarity_ctrl(struct dpu_disengcfg *dec, unsigned int flags)
+void disengcfg_sig_select(struct dpu_disengcfg *dec, dec_sig_sel_t sig_sel)
 {
-	const struct dpu_devtype *devtype = dec->dpu->devtype;
 	u32 val;
 
 	mutex_lock(&dec->mutex);
-	val = dpu_dec_read(dec, POLARITYCTRL);
-	if (devtype->pixel_link_nhvsync) {
-		val &= ~POLHS_HIGH;
-		val &= ~POLVS_HIGH;
-	} else {
-		if (flags & DRM_MODE_FLAG_PHSYNC)
-			val |= POLHS_HIGH;
-		if (flags & DRM_MODE_FLAG_NHSYNC)
-			val &= ~POLHS_HIGH;
-		if (flags & DRM_MODE_FLAG_PVSYNC)
-			val |= POLVS_HIGH;
-		if (flags & DRM_MODE_FLAG_NVSYNC)
-			val &= ~POLVS_HIGH;
-	}
-	dpu_dec_write(dec, val, POLARITYCTRL);
+	val = dpu_dec_read(dec, SRCSELECT);
+	val &= ~SIG_SELECT_MASK;
+	val |= sig_sel;
+	dpu_dec_write(dec, SRCSELECT, val);
 	mutex_unlock(&dec->mutex);
 }
-EXPORT_SYMBOL_GPL(disengcfg_polarity_ctrl);
+EXPORT_SYMBOL_GPL(disengcfg_sig_select);
 
 struct dpu_disengcfg *dpu_dec_get(struct dpu_soc *dpu, int id)
 {
@@ -123,6 +112,25 @@ EXPORT_SYMBOL_GPL(dpu_aux_dec_peek);
 
 void _dpu_dec_init(struct dpu_soc *dpu, unsigned int id)
 {
+	struct dpu_disengcfg *dec;
+	u32 val;
+	int i;
+
+	for (i = 0; i < ARRAY_SIZE(dec_ids); i++)
+		if (ed_ids[i] == id)
+			break;
+
+	if (WARN_ON(i == ARRAY_SIZE(dec_ids)))
+		return;
+
+	dec = dpu->dec_priv[i];
+
+	val = dpu_dec_read(dec, POLARITYCTRL);
+	val &= ~POLHS_HIGH;
+	val &= ~POLVS_HIGH;
+	dpu_dec_write(dec, POLARITYCTRL, val);
+
+	disengcfg_sig_select(dec, DEC_SIG_SEL_FRAMEGEN);
 }
 
 int dpu_dec_init(struct dpu_soc *dpu, unsigned int id,
@@ -143,6 +151,8 @@ int dpu_dec_init(struct dpu_soc *dpu, unsigned int id,
 	dec->dpu = dpu;
 	dec->id = id;
 	mutex_init(&dec->mutex);
+
+	_dpu_dec_init(dpu, id);
 
 	return 0;
 }

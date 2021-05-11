@@ -1,9 +1,10 @@
 /*
- * Copyright (C) 2015 Freescale Semiconductor, Inc.
+ * Copyright 2019 NXP
  *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * as published by the Free Software Foundation; either version 2
+ * of the License, or (at your option) any later version.
  */
 
 #include "imx6sx-sdb.dts"
@@ -19,6 +20,7 @@
 	pinctrl-1 = <&pinctrl_usdhc4_1_100mhz>;
 	pinctrl-2 = <&pinctrl_usdhc4_1_200mhz>;
 	bus-width = <8>;
+	auto-cmd23-broken;
 	/*
 	 * overwrite cd-gpios and wp-gpios since they are reused as eMMC DATA
 	 * signals after rework
@@ -28,3 +30,4 @@
 	non-removable;
 	status = "okay";
 };
+

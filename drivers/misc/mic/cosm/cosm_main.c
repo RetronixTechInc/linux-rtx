@@ -1,22 +1,10 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Intel MIC Platform Software Stack (MPSS)
  *
  * Copyright(c) 2015 Intel Corporation.
  *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License, version 2, as
- * published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful, but
- * WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
- * General Public License for more details.
- *
- * The full GNU General Public License is included in this distribution in
- * the file called "COPYING".
- *
  * Intel MIC Coprocessor State Management (COSM) Driver
- *
  */
 
 #include <linux/module.h>
@@ -24,6 +12,7 @@
 #include <linux/idr.h>
 #include <linux/slab.h>
 #include <linux/cred.h>
+#include <linux/mod_devicetable.h>
 #include "cosm_main.h"
 
 static const char cosm_driver_name[] = "mic";
@@ -333,6 +322,12 @@ static int cosm_suspend(struct device *dev)
 	}
 	return 0;
 }
+
+static struct cosm_device_id __maybe_unused cosm_driver_id_table[] = {
+	{ .name	= "cosm-dev*" },
+	{ },
+};
+MODULE_DEVICE_TABLE(cosm, cosm_driver_id_table);
 
 static const struct dev_pm_ops cosm_pm_ops = {
 	.suspend = cosm_suspend,

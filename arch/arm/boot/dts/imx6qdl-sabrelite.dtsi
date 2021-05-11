@@ -1,5 +1,5 @@
 /*
- * Copyright 2011-2015 Freescale Semiconductor, Inc.
+ * Copyright 2011 Freescale Semiconductor, Inc.
  * Copyright 2011 Linaro Ltd.
  *
  * This file is dual-licensed: you can use it either under the terms
@@ -49,7 +49,8 @@
 		stdout-path = &uart2;
 	};
 
-	memory {
+	memory@10000000 {
+		device_type = "memory";
 		reg = <0x10000000 0x40000000>;
 	};
 
@@ -221,7 +222,7 @@
 		status = "okay";
 	};
 
-	lcd_display: display@di0 {
+	lcd_display: disp0 {
 		compatible = "fsl,imx-parallel-display";
 		#address-cells = <1>;
 		#size-cells = <0>;
@@ -339,13 +340,18 @@
 	status = "okay";
 };
 
+&hdmi {
+	ddc-i2c-bus = <&i2c2>;
+	status = "okay";
+};
+
 &i2c1 {
 	clock-frequency = <100000>;
 	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl_i2c1>;
 	status = "okay";
 
-	codec: sgtl5000@0a {
+	codec: sgtl5000@a {
 		compatible = "fsl,sgtl5000";
 		reg = <0x0a>;
 		clocks = <&clks IMX6QDL_CLK_CKO>;
@@ -374,9 +380,6 @@
 		powerdown-gpios = <&gpio6 9 GPIO_ACTIVE_HIGH>; /* NANDF_WP_B */
 
 		port {
-			#address-cells = <1>;
-			#size-cells = <0>;
-
 			ov5640_to_mipi_csi2: endpoint {
 				remote-endpoint = <&mipi_csi2_in>;
 				clock-lanes = <0>;
@@ -727,9 +730,6 @@
 	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl_usbotg>;
 	disable-over-current;
-	srp-disable;
-	hnp-disable;
-	adp-disable;
 	status = "okay";
 };
 

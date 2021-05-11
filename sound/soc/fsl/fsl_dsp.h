@@ -1,16 +1,20 @@
 /* SPDX-License-Identifier: (GPL-2.0+ OR MIT)*/
 /*
  * Copyright (C) 2017 Cadence Design Systems, Inc.
- * Copyright 2018 NXP
+ * Copyright 2018-2020 NXP
  *
  */
 
 #ifndef FSL_DSP_H
 #define FSL_DSP_H
 #include <uapi/linux/mxc_dsp.h>
-#include <soc/imx8/sc/ipc.h>
+#include <linux/firmware/imx/ipc.h>
 #include "fsl_dsp_proxy.h"
 #include "fsl_dsp_platform.h"
+#include "fsl_dsp_audiomix.h"
+
+
+#define FSL_DSP_COMP_NAME "fsl-dsp-component"
 
 typedef void (*memcpy_func) (void *dest, const void *src, size_t n);
 typedef void (*memset_func) (void *s, int c, size_t n);
@@ -21,6 +25,7 @@ typedef void (*memset_func) (void *s, int c, size_t n);
 enum {
 	DSP_IMX8QXP_TYPE = 0,
 	DSP_IMX8QM_TYPE,
+	DSP_IMX8MP_TYPE,
 };
 
 /* ...proxy client data */
@@ -52,6 +57,9 @@ struct xf_client {
 
 	int input_bytes;
 	int consume_bytes;
+	int offset;
+	atomic_t buffer_cnt;
+	int ping_pong_offset;
 };
 
 union xf_client_link {
@@ -65,12 +73,14 @@ union xf_client_link {
 struct fsl_dsp {
 	struct device			*dev;
 	const char			*fw_name;
+	const char			*audio_iface;
 	void __iomem			*regs;
 	void __iomem			*mu_base_virtaddr;
-	sc_ipc_t			dsp_ipcHandle;
-	sc_ipc_t			mu_ipcHandle;
+	struct imx_sc_ipc		*dsp_ipcHandle;
+	struct imx_audiomix_dsp_data 	*audiomix;
 	unsigned int			dsp_mu_id;
 	int				dsp_mu_init;
+	int				dsp_is_lpa;
 	atomic_long_t			refcnt;
 	unsigned long			paddr;
 	unsigned long			dram0;
@@ -80,6 +90,12 @@ struct fsl_dsp {
 	void			        *sdram_vir_addr;
 	unsigned long			sdram_phys_addr;
 	int				sdram_reserved_size;
+	void			        *dram_reserved_vir_addr;
+	unsigned long			dram_reserved_phys_addr;
+	int				dram_reserved_size;
+	void			        *ocram_vir_addr;
+	unsigned long			ocram_phys_addr;
+	int				ocram_reserved_size;
 	void				*msg_buf_virt;
 	dma_addr_t			 msg_buf_phys;
 	int				 msg_buf_size;
@@ -108,6 +124,21 @@ struct fsl_dsp {
 	struct clk *asrc_mem_clk;
 	struct clk *asrc_ipg_clk;
 	struct clk *asrck_clk[4];
+	struct clk *dsp_ocrama_clk;
+	struct clk *dsp_root_clk;
+	struct clk *audio_root_clk;
+	struct clk *audio_axi_clk;
+	struct clk *debug_clk;
+	struct clk *mu2_clk;
+	struct clk *sdma_root_clk;
+	struct clk *sai_ipg_clk;
+	struct clk *sai_mclk;
+	struct clk *uart_ipg_clk;
+	struct clk *uart_per_clk;
+
+	struct device **pd_dev;
+	struct device_link **pd_dev_link;
+	int    num_domains;
 };
 
 #define IRAM_OFFSET		0x10000
@@ -128,7 +159,7 @@ struct fsl_dsp {
 #define MSG_BUF_SIZE		8192
 #define INPUT_BUF_SIZE		4096
 #define OUTPUT_BUF_SIZE		16384
-#define DSP_CONFIG_SIZE    4096
+#define DSP_CONFIG_SIZE		8192
 
 void *memcpy_dsp(void *dest, const void *src, size_t count);
 void *memset_dsp(void *dest, int c, size_t count);

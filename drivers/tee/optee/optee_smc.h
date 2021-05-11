@@ -1,28 +1,6 @@
+/* SPDX-License-Identifier: (GPL-2.0 OR BSD-2-Clause) */
 /*
- * Copyright (c) 2015-2016, Linaro Limited
- * All rights reserved.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice,
- * this list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- * this list of conditions and the following disclaimer in the documentation
- * and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
- * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
- * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
- * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
- * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
- * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
- * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
- * POSSIBILITY OF SUCH DAMAGE.
+ * Copyright (c) 2015-2019, Linaro Limited
  */
 #ifndef OPTEE_SMC_H
 #define OPTEE_SMC_H
@@ -112,11 +90,19 @@ struct optee_smc_calls_revision_result {
  * Trusted OS, not of the API.
  *
  * Returns revision in a0-1 in the same way as OPTEE_SMC_CALLS_REVISION
- * described above.
+ * described above. May optionally return a 32-bit build identifier in a2,
+ * with zero meaning unspecified.
  */
 #define OPTEE_SMC_FUNCID_GET_OS_REVISION OPTEE_MSG_FUNCID_GET_OS_REVISION
 #define OPTEE_SMC_CALL_GET_OS_REVISION \
 	OPTEE_SMC_FAST_CALL_VAL(OPTEE_SMC_FUNCID_GET_OS_REVISION)
+
+struct optee_smc_call_get_os_revision_result {
+	unsigned long major;
+	unsigned long minor;
+	unsigned long build_id;
+	unsigned long reserved1;
+};
 
 /*
  * Call with struct optee_msg_arg as argument
@@ -198,49 +184,6 @@ struct optee_smc_get_shm_config_result {
 };
 
 /*
- * Configures L2CC mutex
- *
- * Disables, enables usage of L2CC mutex. Returns or sets physical address
- * of L2CC mutex.
- *
- * Call register usage:
- * a0	SMC Function ID, OPTEE_SMC_L2CC_MUTEX
- * a1	OPTEE_SMC_L2CC_MUTEX_GET_ADDR	Get physical address of mutex
- *	    OPTEE_SMC_L2CC_MUTEX_SET_ADDR	Set physical address of mutex
- *	    OPTEE_SMC_L2CC_MUTEX_ENABLE		Enable usage of mutex
- *	    OPTEE_SMC_L2CC_MUTEX_DISABLE	Disable usage of mutex
- * a2	if a1 == OPTEE_SMC_L2CC_MUTEX_SET_ADDR, upper 32bit of a 64bit
- *      physical address of mutex
- * a3	if a1 == OPTEE_SMC_L2CC_MUTEX_SET_ADDR, lower 32bit of a 64bit
- *      physical address of mutex
- * a3-6	Not used
- * a7	Hypervisor Client ID register
- *
- * Have config return register usage:
- * a0	OPTEE_SMC_RETURN_OK
- * a1	Preserved
- * a2	if a1 == OPTEE_SMC_L2CC_MUTEX_GET_ADDR, upper 32bit of a 64bit
- *      physical address of mutex
- * a3	if a1 == OPTEE_SMC_L2CC_MUTEX_GET_ADDR, lower 32bit of a 64bit
- *      physical address of mutex
- * a3-7	Preserved
- *
- * Error return register usage:
- * a0	OPTEE_SMC_RETURN_ENOTAVAIL	Physical address not available
- *	OPTEE_SMC_RETURN_EBADADDR	Bad supplied physical address
- *	OPTEE_SMC_RETURN_EBADCMD	Unsupported value in a1
- * a1-7	Preserved
- */
-#define OPTEE_SMC_L2CC_MUTEX_GET_ADDR	0
-#define OPTEE_SMC_L2CC_MUTEX_SET_ADDR	1
-#define OPTEE_SMC_L2CC_MUTEX_ENABLE		2
-#define OPTEE_SMC_L2CC_MUTEX_DISABLE	3
-
-#define OPTEE_SMC_FUNCID_L2CC_MUTEX	8
-#define OPTEE_SMC_L2CC_MUTEX \
-	OPTEE_SMC_FAST_CALL_VAL(OPTEE_SMC_FUNCID_L2CC_MUTEX)
-
-/*
  * Exchanges capabilities between normal world and secure world
  *
  * Call register usage:
@@ -265,6 +208,18 @@ struct optee_smc_get_shm_config_result {
 #define OPTEE_SMC_SEC_CAP_HAVE_RESERVED_SHM	BIT(0)
 /* Secure world can communicate via previously unregistered shared memory */
 #define OPTEE_SMC_SEC_CAP_UNREGISTERED_SHM	BIT(1)
+
+/*
+ * Secure world supports commands "register/unregister shared memory",
+ * secure world accepts command buffers located in any parts of non-secure RAM
+ */
+#define OPTEE_SMC_SEC_CAP_DYNAMIC_SHM		BIT(2)
+
+/* Secure world supports Shared Memory with a NULL buffer reference */
+#define OPTEE_SMC_SEC_CAP_MEMREF_NULL		BIT(4)
+
+#define OPTEE_SMC_SEC_CAP_IMX_BUSFREQ		BIT(31)
+
 #define OPTEE_SMC_FUNCID_EXCHANGE_CAPABILITIES	9
 #define OPTEE_SMC_EXCHANGE_CAPABILITIES \
 	OPTEE_SMC_FAST_CALL_VAL(OPTEE_SMC_FUNCID_EXCHANGE_CAPABILITIES)

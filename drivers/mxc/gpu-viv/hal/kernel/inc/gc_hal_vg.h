@@ -2,7 +2,7 @@
 *
 *    The MIT License (MIT)
 *
-*    Copyright (c) 2014 - 2018 Vivante Corporation
+*    Copyright (c) 2014 - 2020 Vivante Corporation
 *
 *    Permission is hereby granted, free of charge, to any person obtaining a
 *    copy of this software and associated documentation files (the "Software"),
@@ -26,7 +26,7 @@
 *
 *    The GPL License (GPL)
 *
-*    Copyright (C) 2014 - 2018 Vivante Corporation
+*    Copyright (C) 2014 - 2020 Vivante Corporation
 *
 *    This program is free software; you can redistribute it and/or
 *    modify it under the terms of the GNU General Public License
@@ -61,10 +61,10 @@ extern "C" {
 #endif
 
 
-#include "gc_hal_rename.h"
 #include "gc_hal_types.h"
 #include "gc_hal_enum.h"
 #include "gc_hal_base.h"
+#include "shared/gc_hal_vg_shared.h"
 
 #if gcdENABLE_VG
 
@@ -289,27 +289,6 @@ typedef gctTHREADFUNCRESULT (gctTHREADFUNCTYPE * gctTHREADFUNC) (
     (address)\
 )
 
-/******************************************************************************\
-****************************** Kernel Debug Macro ******************************
-\******************************************************************************/
-
-/* Return the kernel logical pointer for the given physical one. */
-gceSTATUS
-gckOS_GetKernelLogical(
-    IN gckOS Os,
-    IN gctUINT32 Address,
-    OUT gctPOINTER * KernelPointer
-    );
-
-/* Return the kernel logical pointer for the given physical one. */
-gceSTATUS
-gckOS_GetKernelLogicalEx(
-    IN gckOS Os,
-    IN gceCORE Core,
-    IN gctUINT32 Address,
-    OUT gctPOINTER * KernelPointer
-    );
-
 /*----------------------------------------------------------------------------*/
 /*----------------------------- Semaphore Object -----------------------------*/
 
@@ -384,7 +363,6 @@ gckKERNEL_UnmapMemory(
 gceSTATUS
 gckVGKERNEL_Dispatch(
     IN gckKERNEL Kernel,
-    IN gctBOOL FromUser,
     IN OUT struct _gcsHAL_INTERFACE * Interface
     );
 
@@ -483,15 +461,6 @@ gckVGHARDWARE_SplitMemory(
     OUT gctUINT32 * Offset
     );
 
-/* Align size to tile boundary. */
-gceSTATUS
-gckVGHARDWARE_AlignToTile(
-    IN gckVGHARDWARE Hardware,
-    IN gceSURF_TYPE Type,
-    IN OUT gctUINT32_PTR Width,
-    IN OUT gctUINT32_PTR Height
-    );
-
 /* Convert logical address to hardware specific address. */
 gceSTATUS
 gckVGHARDWARE_ConvertLogical(
@@ -545,7 +514,7 @@ gckVGHARDWARE_ReadInterrupt(
 
 /* Power management. */
 gceSTATUS
-gckVGHARDWARE_SetPowerManagementState(
+gckVGHARDWARE_SetPowerState(
     IN gckVGHARDWARE Hardware,
     IN gceCHIPPOWERSTATE State
     );
@@ -557,9 +526,9 @@ gckVGHARDWARE_QueryPowerManagementState(
     );
 
 gceSTATUS
-gckVGHARDWARE_SetPowerManagement(
+gckVGHARDWARE_EnablePowerManagement(
     IN gckVGHARDWARE Hardware,
-    IN gctBOOL PowerManagement
+    IN gctBOOL Enable
     );
 
 gceSTATUS
@@ -585,157 +554,6 @@ gckVGHARDWARE_QueryIdle(
 
 /* Vacant command buffer marker. */
 #define gcvVACANT_BUFFER        ((gcsCOMPLETION_SIGNAL_PTR) ((gctSIZE_T)1))
-
-/* Command buffer header. */
-typedef struct _gcsCMDBUFFER * gcsCMDBUFFER_PTR;
-typedef struct _gcsCMDBUFFER
-{
-    /* Pointer to the completion signal. */
-    gcsCOMPLETION_SIGNAL_PTR    completion;
-
-    /* The user sets this to the node of the container buffer whitin which
-       this particular command buffer resides. The kernel sets this to the
-       node of the internally allocated buffer. */
-    gcuVIDMEM_NODE_PTR          node;
-
-    /* Command buffer hardware address. */
-    gctUINT32                   address;
-
-    /* The offset of the buffer from the beginning of the header. */
-    gctUINT32                   bufferOffset;
-
-    /* Size of the area allocated for the data portion of this particular
-       command buffer (headers and tail reserves are excluded). */
-    gctUINT32                   size;
-
-    /* Offset into the buffer [0..size]; reflects exactly how much data has
-       been put into the command buffer. */
-    gctUINT                     offset;
-
-    /* The number of command units in the buffer for the hardware to
-       execute. */
-    gctUINT32                   dataCount;
-
-    /* MANAGED BY : user HAL (gcoBUFFER object).
-       USED BY    : user HAL (gcoBUFFER object).
-       Points to the immediate next allocated command buffer. */
-    gcsCMDBUFFER_PTR            nextAllocated;
-
-    /* MANAGED BY : user layers (HAL and drivers).
-       USED BY    : kernel HAL (gcoBUFFER object).
-       Points to the next subbuffer if any. A family of subbuffers are chained
-       together and are meant to be executed inseparably as a unit. Meaning
-       that context switching cannot occur while a chain of subbuffers is being
-       executed. */
-    gcsCMDBUFFER_PTR            nextSubBuffer;
-}
-gcsCMDBUFFER;
-
-/* Command queue element. */
-typedef struct _gcsVGCMDQUEUE
-{
-    /* Pointer to the command buffer header. */
-    gcsCMDBUFFER_PTR            commandBuffer;
-
-    /* Dynamic vs. static command buffer state. */
-    gctBOOL                     dynamic;
-}
-gcsVGCMDQUEUE;
-
-/* Context map entry. */
-typedef struct _gcsVGCONTEXT_MAP
-{
-    /* State index. */
-    gctUINT32                   index;
-
-    /* New state value. */
-    gctUINT32                   data;
-
-    /* Points to the next entry in the mod list. */
-    gcsVGCONTEXT_MAP_PTR            next;
-}
-gcsVGCONTEXT_MAP;
-
-/* gcsVGCONTEXT structure that holds the current context. */
-typedef struct _gcsVGCONTEXT
-{
-    /* Context ID. */
-    gctUINT64                   id;
-
-    /* State caching ebable flag. */
-    gctBOOL                     stateCachingEnabled;
-
-    /* Current pipe. */
-    gctUINT32                   currentPipe;
-
-    /* State map/mod buffer. */
-    gctUINT32                   mapFirst;
-    gctUINT32                   mapLast;
-    gcsVGCONTEXT_MAP_PTR        mapContainer;
-    gcsVGCONTEXT_MAP_PTR        mapPrev;
-    gcsVGCONTEXT_MAP_PTR        mapCurr;
-    gcsVGCONTEXT_MAP_PTR        firstPrevMap;
-    gcsVGCONTEXT_MAP_PTR        firstCurrMap;
-
-    /* Main context buffer. */
-    gcsCMDBUFFER_PTR            header;
-    gctUINT32_PTR               buffer;
-
-    /* Completion signal. */
-    gctHANDLE                   process;
-    gctSIGNAL                   signal;
-
-#if defined(__QNXNTO__)
-    gctSIGNAL                   userSignal;
-    gctINT32                    coid;
-    gctINT32                    rcvid;
-#endif
-}
-gcsVGCONTEXT;
-
-/* User space task header. */
-typedef struct _gcsTASK * gcsTASK_PTR;
-typedef struct _gcsTASK
-{
-    /* Pointer to the next task for the same interrupt in user space. */
-    gcsTASK_PTR                 next;
-
-    /* Size of the task data that immediately follows the structure. */
-    gctUINT                     size;
-
-    /* Task data starts here. */
-    /* ... */
-}
-gcsTASK;
-
-/* User space task master table entry. */
-typedef struct _gcsTASK_MASTER_ENTRY * gcsTASK_MASTER_ENTRY_PTR;
-typedef struct _gcsTASK_MASTER_ENTRY
-{
-    /* Pointers to the head and to the tail of the task chain. */
-    gcsTASK_PTR                 head;
-    gcsTASK_PTR                 tail;
-}
-gcsTASK_MASTER_ENTRY;
-
-/* User space task master table entry. */
-typedef struct _gcsTASK_MASTER_TABLE
-{
-    /* Table with one entry per block. */
-    gcsTASK_MASTER_ENTRY        table[gcvBLOCK_COUNT];
-
-    /* The total number of tasks sckeduled. */
-    gctUINT                     count;
-
-    /* The total size of event data in bytes. */
-    gctUINT                     size;
-
-#if defined(__QNXNTO__)
-    gctINT32                    coid;
-    gctINT32                    rcvid;
-#endif
-}
-gcsTASK_MASTER_TABLE;
 
 /******************************************************************************\
 ***************************** gckVGINTERRUPT Object ******************************

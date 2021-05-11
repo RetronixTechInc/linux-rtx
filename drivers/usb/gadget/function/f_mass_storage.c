@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: (GPL-2.0+ OR BSD-3-Clause)
 /*
  * f_mass_storage.c -- Mass Storage USB Composite Function
  *
@@ -46,7 +47,7 @@
  *
  * For more information about MSF and in particular its module
  * parameters and sysfs interface read the
- * <Documentation/usb/mass-storage.txt> file.
+ * <Documentation/usb/mass-storage.rst> file.
  */
 
 /*
@@ -205,7 +206,6 @@
 #include <linux/fcntl.h>
 #include <linux/file.h>
 #include <linux/fs.h>
-#include <linux/kref.h>
 #include <linux/kthread.h>
 #include <linux/sched/signal.h>
 #include <linux/limits.h>
@@ -261,7 +261,7 @@ struct fsg_common;
 struct fsg_common {
 	struct usb_gadget	*gadget;
 	struct usb_composite_dev *cdev;
-	struct fsg_dev		*fsg, *new_fsg;
+	struct fsg_dev		*fsg;
 	wait_queue_head_t	io_wait;
 	wait_queue_head_t	fsg_wait;
 
@@ -290,6 +290,7 @@ struct fsg_common {
 	unsigned int		bulk_out_maxpacket;
 	enum fsg_state		state;		/* For exception handling */
 	unsigned int		exception_req_tag;
+	void			*exception_arg;
 
 	enum data_direction	data_dir;
 	u32			data_size;
@@ -313,8 +314,6 @@ struct fsg_common {
 	void			*private_data;
 
 	char inquiry_string[INQUIRY_STRING_LEN];
-
-	struct kref		ref;
 };
 
 struct fsg_dev {
@@ -332,14 +331,7 @@ struct fsg_dev {
 
 	struct usb_ep		*bulk_in;
 	struct usb_ep		*bulk_out;
-#ifdef CONFIG_FSL_UTP
-	void			*utp;
-#endif
 };
-
-#ifdef CONFIG_FSL_UTP
-#include "fsl_updater.h"
-#endif
 
 static inline int __fsg_is_set(struct fsg_common *common,
 			       const char *func, unsigned line)
@@ -400,7 +392,8 @@ static int fsg_set_halt(struct fsg_dev *fsg, struct usb_ep *ep)
 
 /* These routines may be called in process context or in_irq */
 
-static void raise_exception(struct fsg_common *common, enum fsg_state new_state)
+static void __raise_exception(struct fsg_common *common, enum fsg_state new_state,
+			      void *arg)
 {
 	unsigned long		flags;
 
@@ -413,13 +406,18 @@ static void raise_exception(struct fsg_common *common, enum fsg_state new_state)
 	if (common->state <= new_state) {
 		common->exception_req_tag = common->ep0_req_tag;
 		common->state = new_state;
+		common->exception_arg = arg;
 		if (common->thread_task)
-			send_sig_info(SIGUSR1, SEND_SIG_FORCED,
+			send_sig_info(SIGUSR1, SEND_SIG_PRIV,
 				      common->thread_task);
 	}
 	spin_unlock_irqrestore(&common->lock, flags);
 }
 
+static void raise_exception(struct fsg_common *common, enum fsg_state new_state)
+{
+	__raise_exception(common, new_state, NULL);
+}
 
 /*-------------------------------------------------------------------------*/
 
@@ -1118,15 +1116,6 @@ static int do_request_sense(struct fsg_common *common, struct fsg_buffhd *bh)
 	}
 #endif
 
-#ifdef CONFIG_FSL_UTP
-	if (is_utp_device(common->fsg) &&
-			utp_get_sense(common->fsg) == 0) {
-		/* got the sense from the UTP */
-		sd = UTP_CTX(common->fsg)->sd;
-		sdinfo = UTP_CTX(common->fsg)->sdinfo;
-		valid = 0;
-	} else
-#endif
 	if (!curlun) {		/* Unsupported LUNs are okay */
 		common->bad_lun_okay = 1;
 		sd = SS_LOGICAL_UNIT_NOT_SUPPORTED;
@@ -1148,10 +1137,6 @@ static int do_request_sense(struct fsg_common *common, struct fsg_buffhd *bh)
 	buf[7] = 18 - 8;			/* Additional sense length */
 	buf[12] = ASC(sd);
 	buf[13] = ASCQ(sd);
-#ifdef CONFIG_FSL_UTP
-	if (is_utp_device(common->fsg))
-		put_unaligned_be32(UTP_CTX(common->fsg)->sdinfo_h, &buf[8]);
-#endif
 	return 18;
 }
 
@@ -1638,20 +1623,7 @@ static void send_status(struct fsg_common *common)
 		sd = SS_INVALID_COMMAND;
 	} else if (sd != SS_NO_SENSE) {
 		DBG(common, "sending command-failure status\n");
-#ifdef CONFIG_FSL_UTP
-		/*
-		 * mfgtool host frequently reset bus during transfer
-		 *  - the response in csw to request sense will be 1
-		 *    due to UTP change some storage information
-		 *  - host will reset the bus if response to request sense is 1
-		 *  - change the response to 0 if CONFIG_FSL_UTP is defined
-		 */
-		if (is_utp_device(common->fsg))
-			status = US_BULK_STAT_OK;
-		else
-#endif
-			status = US_BULK_STAT_FAIL;
-
+		status = US_BULK_STAT_FAIL;
 		VDBG(common, "  sense data: SK x%02x, ASC x%02x, ASCQ x%02x;"
 				"  info x%x\n",
 				SK(sd), ASC(sd), ASCQ(sd), sdinfo);
@@ -1840,14 +1812,6 @@ static int do_scsi_command(struct fsg_common *common)
 
 	common->phase_error = 0;
 	common->short_packet_received = 0;
-
-#ifdef CONFIG_FSL_UTP
-	if (is_utp_device(common->fsg))
-		reply = utp_handle_message(common->fsg, common->cmnd, reply);
-
-	if (reply != -EINVAL)
-		return reply;
-#endif
 
 	down_read(&common->filesem);	/* We're using the backing file */
 	switch (common->cmnd[0]) {
@@ -2328,16 +2292,16 @@ reset:
 static int fsg_set_alt(struct usb_function *f, unsigned intf, unsigned alt)
 {
 	struct fsg_dev *fsg = fsg_from_func(f);
-	fsg->common->new_fsg = fsg;
-	raise_exception(fsg->common, FSG_STATE_CONFIG_CHANGE);
+
+	__raise_exception(fsg->common, FSG_STATE_CONFIG_CHANGE, fsg);
 	return USB_GADGET_DELAYED_STATUS;
 }
 
 static void fsg_disable(struct usb_function *f)
 {
 	struct fsg_dev *fsg = fsg_from_func(f);
-	fsg->common->new_fsg = NULL;
-	raise_exception(fsg->common, FSG_STATE_CONFIG_CHANGE);
+
+	__raise_exception(fsg->common, FSG_STATE_CONFIG_CHANGE, NULL);
 }
 
 
@@ -2350,13 +2314,14 @@ static void handle_exception(struct fsg_common *common)
 	enum fsg_state		old_state;
 	struct fsg_lun		*curlun;
 	unsigned int		exception_req_tag;
+	struct fsg_dev		*new_fsg;
 
 	/*
 	 * Clear the existing signals.  Anything but SIGUSR1 is converted
 	 * into a high-priority EXIT exception.
 	 */
 	for (;;) {
-		int sig = kernel_dequeue_signal(NULL);
+		int sig = kernel_dequeue_signal();
 		if (!sig)
 			break;
 		if (sig != SIGUSR1) {
@@ -2403,6 +2368,7 @@ static void handle_exception(struct fsg_common *common)
 	common->next_buffhd_to_fill = &common->buffhds[0];
 	common->next_buffhd_to_drain = &common->buffhds[0];
 	exception_req_tag = common->exception_req_tag;
+	new_fsg = common->exception_arg;
 	old_state = common->state;
 	common->state = FSG_STATE_NORMAL;
 
@@ -2456,8 +2422,8 @@ static void handle_exception(struct fsg_common *common)
 		break;
 
 	case FSG_STATE_CONFIG_CHANGE:
-		do_set_interface(common, common->new_fsg);
-		if (common->new_fsg)
+		do_set_interface(common, new_fsg);
+		if (new_fsg)
 			usb_composite_setup_continue(common->cdev);
 		break;
 
@@ -2492,18 +2458,6 @@ static int fsg_main_thread(void *common_)
 
 	/* Allow the thread to be frozen */
 	set_freezable();
-
-	/*
-	 * Arrange for userspace references to be interpreted as kernel
-	 * pointers.  That way we can pass a kernel pointer to a routine
-	 * that expects a __user pointer and it will work okay.
-	 */
-#ifdef CONFIG_FSL_UTP
-	if (!is_utp_device(common->fsg))
-		set_fs(get_ds());
-#else
-	set_fs(get_ds());
-#endif
 
 	/* The main loop */
 	while (common->state != FSG_STATE_TERMINATED) {
@@ -2605,24 +2559,10 @@ static DEVICE_ATTR(file, 0, file_show, file_store);
 
 /****************************** FSG COMMON ******************************/
 
-static void fsg_common_release(struct kref *ref);
-
 static void fsg_lun_release(struct device *dev)
 {
 	/* Nothing needs to be done */
 }
-
-void fsg_common_get(struct fsg_common *common)
-{
-	kref_get(&common->ref);
-}
-EXPORT_SYMBOL_GPL(fsg_common_get);
-
-void fsg_common_put(struct fsg_common *common)
-{
-	kref_put(&common->ref, fsg_common_release);
-}
-EXPORT_SYMBOL_GPL(fsg_common_put);
 
 static struct fsg_common *fsg_common_setup(struct fsg_common *common)
 {
@@ -2636,7 +2576,6 @@ static struct fsg_common *fsg_common_setup(struct fsg_common *common)
 	}
 	init_rwsem(&common->filesem);
 	spin_lock_init(&common->lock);
-	kref_init(&common->ref);
 	init_completion(&common->thread_notifier);
 	init_waitqueue_head(&common->io_wait);
 	init_waitqueue_head(&common->fsg_wait);
@@ -2924,9 +2863,8 @@ void fsg_common_set_inquiry_string(struct fsg_common *common, const char *vn,
 }
 EXPORT_SYMBOL_GPL(fsg_common_set_inquiry_string);
 
-static void fsg_common_release(struct kref *ref)
+static void fsg_common_release(struct fsg_common *common)
 {
-	struct fsg_common *common = container_of(ref, struct fsg_common, ref);
 	int i;
 
 	/* If the thread isn't already dead, tell it to exit now */
@@ -2952,10 +2890,6 @@ static void fsg_common_release(struct kref *ref)
 
 
 /*-------------------------------------------------------------------------*/
-
-#ifdef CONFIG_FSL_UTP
-#include "fsl_updater.c"
-#endif
 
 static int fsg_bind(struct usb_configuration *c, struct usb_function *f)
 {
@@ -3007,11 +2941,6 @@ static int fsg_bind(struct usb_configuration *c, struct usb_function *f)
 		goto fail;
 	fsg_intf_desc.bInterfaceNumber = i;
 	fsg->interface_number = i;
-
-#ifdef CONFIG_FSL_UTP
-	if (is_utp_device(fsg))
-		utp_init(fsg);
-#endif
 
 	/* Find all the endpoints we will use */
 	ep = usb_ep_autoconfig(gadget, &fsg_fs_bulk_in_desc);
@@ -3069,19 +2998,12 @@ static void fsg_unbind(struct usb_configuration *c, struct usb_function *f)
 
 	DBG(fsg, "unbind\n");
 	if (fsg->common->fsg == fsg) {
-		fsg->common->new_fsg = NULL;
-		raise_exception(fsg->common, FSG_STATE_CONFIG_CHANGE);
+		__raise_exception(fsg->common, FSG_STATE_CONFIG_CHANGE, NULL);
 		/* FIXME: make interruptible or killable somehow? */
 		wait_event(common->fsg_wait, common->fsg != fsg);
 	}
 
 	usb_free_all_descriptors(&fsg->function);
-
-#ifdef CONFIG_FSL_UTP
-	if (is_utp_device(common->fsg))
-		utp_exit(fsg);
-#endif
-
 }
 
 static inline struct fsg_lun_opts *to_fsg_lun_opts(struct config_item *item)
@@ -3210,7 +3132,7 @@ static struct configfs_attribute *fsg_lun_attrs[] = {
 	NULL,
 };
 
-static struct config_item_type fsg_lun_type = {
+static const struct config_item_type fsg_lun_type = {
 	.ct_item_ops	= &fsg_lun_item_ops,
 	.ct_attrs	= fsg_lun_attrs,
 	.ct_owner	= THIS_MODULE,
@@ -3378,7 +3300,9 @@ static ssize_t fsg_opts_num_buffers_store(struct config_item *item,
 	if (ret)
 		goto end;
 
-	fsg_common_set_num_buffers(opts->common, num);
+	ret = fsg_common_set_num_buffers(opts->common, num);
+	if (ret)
+		goto end;
 	ret = len;
 
 end:
@@ -3402,7 +3326,7 @@ static struct configfs_group_operations fsg_group_ops = {
 	.drop_item	= fsg_lun_drop,
 };
 
-static struct config_item_type fsg_func_type = {
+static const struct config_item_type fsg_func_type = {
 	.ct_item_ops	= &fsg_item_ops,
 	.ct_group_ops	= &fsg_group_ops,
 	.ct_attrs	= fsg_attrs,
@@ -3414,7 +3338,7 @@ static void fsg_free_inst(struct usb_function_instance *fi)
 	struct fsg_opts *opts;
 
 	opts = fsg_opts_from_func_inst(fi);
-	fsg_common_put(opts->common);
+	fsg_common_release(opts->common);
 	kfree(opts);
 }
 
@@ -3438,7 +3362,7 @@ static struct usb_function_instance *fsg_alloc_inst(void)
 	rc = fsg_common_set_num_buffers(opts->common,
 					CONFIG_USB_GADGET_STORAGE_NUM_BUFFERS);
 	if (rc)
-		goto release_opts;
+		goto release_common;
 
 	pr_info(FSG_DRIVER_DESC ", version: " FSG_DRIVER_VERSION "\n");
 
@@ -3461,6 +3385,8 @@ static struct usb_function_instance *fsg_alloc_inst(void)
 
 release_buffers:
 	fsg_common_free_buffers(opts->common);
+release_common:
+	kfree(opts->common);
 release_opts:
 	kfree(opts);
 	return ERR_PTR(rc);

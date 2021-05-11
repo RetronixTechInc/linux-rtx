@@ -1,25 +1,25 @@
 /*
- * Copyright(c) 2018 NXP. All rights reserved.
- *
- * This file is provided under a dual BSD/GPLv2 license.  When using or
- * redistributing this file, you may do so under either license.
- *
- * vpu_encoder_config.h
- *
- * Author Ming Qian<ming.qian@nxp.com>
+ * Copyright 2018-2019 NXP
  */
+
+/*
+ * The code contained herein is licensed under the GNU General Public
+ * License. You may obtain a copy of the GNU General Public License
+ * Version 2 or later at the following locations:
+ *
+ * http://www.opensource.org/licenses/gpl-license.html
+ * http://www.gnu.org/copyleft/gpl.html
+ */
+
 #ifndef _VPU_ENCODER_CONFIG_H
 #define _VPU_ENCODER_CONFIG_H
 
 #define VPU_ENC_WIDTH_MAX		1920
-#define VPU_ENC_HEIGHT_MAX		1080
+#define VPU_ENC_HEIGHT_MAX		1920
 #define VPU_ENC_WIDTH_MIN		64
 #define VPU_ENC_HEIGHT_MIN		48
 #define VPU_ENC_WIDTH_STEP		16
 #define VPU_ENC_HEIGHT_STEP		2
-#define VPU_ENC_FRAMERATE_MAX		120
-#define VPU_ENC_FRAMERATE_MIN		1
-#define VPU_ENC_FRAMERATE_STEP		1
 
 #define VPU_ENC_WIDTH_DEFAULT		1920
 #define VPU_ENC_HEIGHT_DEFAULT		1080
@@ -46,6 +46,8 @@
 
 #define VPU_MU_MAX_ADDRESS		0x40000000
 #define VPU_ENC_SEQ_CAPACITY		32
-#define VPU_ENC_INVALID_TIMESTAMP	0
+#define VPU_ENC_INVALID_TIMESTAMP	-1
+
+#define VPU_ENC_H264_EXTENDED_SAR	255
 
 #endif

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * Written for linux by Johan Myreen as a translation from
  * the assembly version by Linus (with diacriticals added)
@@ -122,10 +123,15 @@ static const int NR_TYPES = ARRAY_SIZE(max_vals);
 static struct input_handler kbd_handler;
 static DEFINE_SPINLOCK(kbd_event_lock);
 static DEFINE_SPINLOCK(led_lock);
+static DEFINE_SPINLOCK(func_buf_lock); /* guard 'func_buf'  and friends */
 static unsigned long key_down[BITS_TO_LONGS(KEY_CNT)];	/* keyboard key bitmap */
 static unsigned char shift_down[NR_SHIFT];		/* shift state counters.. */
 static bool dead_key_next;
-static int npadch = -1;					/* -1 or number assembled on pad */
+
+/* Handles a number being assembled on the number pad */
+static bool npadch_active;
+static unsigned int npadch_value;
+
 static unsigned int diacr;
 static char rep;					/* flag telling character repeat */
 
@@ -243,14 +249,14 @@ static int kd_sound_helper(struct input_handle *handle, void *data)
 	return 0;
 }
 
-static void kd_nosound(unsigned long ignored)
+static void kd_nosound(struct timer_list *unused)
 {
 	static unsigned int zero;
 
 	input_handler_for_each_handle(&kbd_handler, &zero, kd_sound_helper);
 }
 
-static DEFINE_TIMER(kd_mksound_timer, kd_nosound, 0, 0);
+static DEFINE_TIMER(kd_mksound_timer, kd_nosound);
 
 void kd_mksound(unsigned int hz, unsigned int ticks)
 {
@@ -689,7 +695,35 @@ static void k_dead2(struct vc_data *vc, unsigned char value, char up_flag)
  */
 static void k_dead(struct vc_data *vc, unsigned char value, char up_flag)
 {
-	static const unsigned char ret_diacr[NR_DEAD] = {'`', '\'', '^', '~', '"', ',' };
+	static const unsigned char ret_diacr[NR_DEAD] = {
+		'`',	/* dead_grave */
+		'\'',	/* dead_acute */
+		'^',	/* dead_circumflex */
+		'~',	/* dead_tilda */
+		'"',	/* dead_diaeresis */
+		',',	/* dead_cedilla */
+		'_',	/* dead_macron */
+		'U',	/* dead_breve */
+		'.',	/* dead_abovedot */
+		'*',	/* dead_abovering */
+		'=',	/* dead_doubleacute */
+		'c',	/* dead_caron */
+		'k',	/* dead_ogonek */
+		'i',	/* dead_iota */
+		'#',	/* dead_voiced_sound */
+		'o',	/* dead_semivoiced_sound */
+		'!',	/* dead_belowdot */
+		'?',	/* dead_hook */
+		'+',	/* dead_horn */
+		'-',	/* dead_stroke */
+		')',	/* dead_abovecomma */
+		'(',	/* dead_abovereversedcomma */
+		':',	/* dead_doublegrave */
+		'n',	/* dead_invertedbreve */
+		';',	/* dead_belowcomma */
+		'$',	/* dead_currency */
+		'@',	/* dead_greek */
+	};
 
 	k_deadunicode(vc, ret_diacr[value], up_flag);
 }
@@ -815,12 +849,12 @@ static void k_shift(struct vc_data *vc, unsigned char value, char up_flag)
 		shift_state &= ~(1 << value);
 
 	/* kludge */
-	if (up_flag && shift_state != old_state && npadch != -1) {
+	if (up_flag && shift_state != old_state && npadch_active) {
 		if (kbd->kbdmode == VC_UNICODE)
-			to_utf8(vc, npadch);
+			to_utf8(vc, npadch_value);
 		else
-			put_queue(vc, npadch & 0xff);
-		npadch = -1;
+			put_queue(vc, npadch_value & 0xff);
+		npadch_active = false;
 	}
 }
 
@@ -838,7 +872,7 @@ static void k_meta(struct vc_data *vc, unsigned char value, char up_flag)
 
 static void k_ascii(struct vc_data *vc, unsigned char value, char up_flag)
 {
-	int base;
+	unsigned int base;
 
 	if (up_flag)
 		return;
@@ -852,10 +886,12 @@ static void k_ascii(struct vc_data *vc, unsigned char value, char up_flag)
 		base = 16;
 	}
 
-	if (npadch == -1)
-		npadch = value;
-	else
-		npadch = npadch * base + value;
+	if (!npadch_active) {
+		npadch_value = 0;
+		npadch_active = true;
+	}
+
+	npadch_value = npadch_value * base + value;
 }
 
 static void k_lock(struct vc_data *vc, unsigned char value, char up_flag)
@@ -958,7 +994,7 @@ struct kbd_led_trigger {
 	unsigned int mask;
 };
 
-static void kbd_led_trigger_activate(struct led_classdev *cdev)
+static int kbd_led_trigger_activate(struct led_classdev *cdev)
 {
 	struct kbd_led_trigger *trigger =
 		container_of(cdev->trigger, struct kbd_led_trigger, trigger);
@@ -969,6 +1005,8 @@ static void kbd_led_trigger_activate(struct led_classdev *cdev)
 				  ledstate & trigger->mask ?
 					LED_FULL : LED_OFF);
 	tasklet_enable(&keyboard_tasklet);
+
+	return 0;
 }
 
 #define KBD_LED_TRIGGER(_led_bit, _name) {			\
@@ -1418,7 +1456,7 @@ static void kbd_keycode(unsigned int keycode, int down, int hw_raw)
 						KBD_UNICODE, &param);
 		if (rc != NOTIFY_STOP)
 			if (down && !raw_mode)
-				to_utf8(vc, keysym);
+				k_unicode(vc, keysym, !down);
 		return;
 	}
 
@@ -1459,7 +1497,7 @@ static void kbd_event(struct input_handle *handle, unsigned int event_type,
 
 	if (event_type == EV_MSC && event_code == MSC_RAW && HW_RAW(handle->dev))
 		kbd_rawcode(value);
-	if (event_type == EV_KEY)
+	if (event_type == EV_KEY && event_code <= KEY_MAX)
 		kbd_keycode(event_code, value, HW_RAW(handle->dev));
 
 	spin_unlock(&kbd_event_lock);
@@ -1623,7 +1661,7 @@ int vt_do_diacrit(unsigned int cmd, void __user *udp, int perm)
 		struct kbdiacr *dia;
 		int i;
 
-		dia = kmalloc(MAX_DIACR * sizeof(struct kbdiacr),
+		dia = kmalloc_array(MAX_DIACR, sizeof(struct kbdiacr),
 								GFP_KERNEL);
 		if (!dia)
 			return -ENOMEM;
@@ -1656,7 +1694,7 @@ int vt_do_diacrit(unsigned int cmd, void __user *udp, int perm)
 		struct kbdiacrsuc __user *a = udp;
 		void *buf;
 
-		buf = kmalloc(MAX_DIACR * sizeof(struct kbdiacruc),
+		buf = kmalloc_array(MAX_DIACR, sizeof(struct kbdiacruc),
 								GFP_KERNEL);
 		if (buf == NULL)
 			return -ENOMEM;
@@ -1959,11 +1997,12 @@ int vt_do_kdgkb_ioctl(int cmd, struct kbsentry __user *user_kdgkb, int perm)
 	char *p;
 	u_char *q;
 	u_char __user *up;
-	int sz;
+	int sz, fnw_sz;
 	int delta;
 	char *first_free, *fj, *fnw;
 	int i, j, k;
 	int ret;
+	unsigned long flags;
 
 	if (!capable(CAP_SYS_TTY_CONFIG))
 		perm = 0;
@@ -2006,7 +2045,14 @@ int vt_do_kdgkb_ioctl(int cmd, struct kbsentry __user *user_kdgkb, int perm)
 			goto reterr;
 		}
 
+		fnw = NULL;
+		fnw_sz = 0;
+		/* race aginst other writers */
+		again:
+		spin_lock_irqsave(&func_buf_lock, flags);
 		q = func_table[i];
+
+		/* fj pointer to next entry after 'q' */
 		first_free = funcbufptr + (funcbufsize - funcbufleft);
 		for (j = i+1; j < MAX_NR_FUNC && !func_table[j]; j++)
 			;
@@ -2014,10 +2060,12 @@ int vt_do_kdgkb_ioctl(int cmd, struct kbsentry __user *user_kdgkb, int perm)
 			fj = func_table[j];
 		else
 			fj = first_free;
-
+		/* buffer usage increase by new entry */
 		delta = (q ? -strlen(q) : 1) + strlen(kbs->kb_string);
+
 		if (delta <= funcbufleft) { 	/* it fits in current buf */
 		    if (j < MAX_NR_FUNC) {
+			/* make enough space for new entry at 'fj' */
 			memmove(fj + delta, fj, first_free - fj);
 			for (k = j; k < MAX_NR_FUNC; k++)
 			    if (func_table[k])
@@ -2030,20 +2078,28 @@ int vt_do_kdgkb_ioctl(int cmd, struct kbsentry __user *user_kdgkb, int perm)
 		    sz = 256;
 		    while (sz < funcbufsize - funcbufleft + delta)
 		      sz <<= 1;
-		    fnw = kmalloc(sz, GFP_KERNEL);
-		    if(!fnw) {
-		      ret = -ENOMEM;
-		      goto reterr;
+		    if (fnw_sz != sz) {
+		      spin_unlock_irqrestore(&func_buf_lock, flags);
+		      kfree(fnw);
+		      fnw = kmalloc(sz, GFP_KERNEL);
+		      fnw_sz = sz;
+		      if (!fnw) {
+			ret = -ENOMEM;
+			goto reterr;
+		      }
+		      goto again;
 		    }
 
 		    if (!q)
 		      func_table[i] = fj;
+		    /* copy data before insertion point to new location */
 		    if (fj > funcbufptr)
 			memmove(fnw, funcbufptr, fj - funcbufptr);
 		    for (k = 0; k < j; k++)
 		      if (func_table[k])
 			func_table[k] = fnw + (func_table[k] - funcbufptr);
 
+		    /* copy data after insertion point to new location */
 		    if (first_free > fj) {
 			memmove(fnw + (fj - funcbufptr) + delta, fj, first_free - fj);
 			for (k = j; k < MAX_NR_FUNC; k++)
@@ -2056,7 +2112,9 @@ int vt_do_kdgkb_ioctl(int cmd, struct kbsentry __user *user_kdgkb, int perm)
 		    funcbufleft = funcbufleft - delta + sz - funcbufsize;
 		    funcbufsize = sz;
 		}
+		/* finally insert item itself */
 		strcpy(func_table[i], kbs->kb_string);
+		spin_unlock_irqrestore(&func_buf_lock, flags);
 		break;
 	}
 	ret = 0;

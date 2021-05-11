@@ -1,5 +1,5 @@
 /*
- * Copyright 2017 NXP
+ * Copyright 2019 NXP
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the
@@ -15,29 +15,16 @@
 #include <drm/drmP.h>
 #include <drm/drm_atomic.h>
 #include <drm/drm_atomic_helper.h>
-#include <drm/drm_fb_cma_helper.h>
-#include <drm/drm_gem_cma_helper.h>
-#include <linux/dma-buf.h>
-#include <linux/reservation.h>
+#include <drm/drm_gem_framebuffer_helper.h>
 #include "imx-drm.h"
+#include "ipuv3-plane.h"
 
-static void imx_drm_output_poll_changed(struct drm_device *drm)
-{
-	struct imx_drm_device *imxdrm = drm->dev_private;
-
-	drm_fbdev_cma_hotplug_event(imxdrm->fbhelper);
-}
-
-static int imx_drm_atomic_check(struct drm_device *dev,
-				struct drm_atomic_state *state)
+static int ipuv3_drm_atomic_check(struct drm_device *dev,
+				   struct drm_atomic_state *state)
 {
 	int ret;
 
-	ret = drm_atomic_helper_check_modeset(dev, state);
-	if (ret)
-		return ret;
-
-	ret = drm_atomic_helper_check_planes(dev, state);
+	ret = drm_atomic_helper_check(dev, state);
 	if (ret)
 		return ret;
 
@@ -58,9 +45,8 @@ static int imx_drm_atomic_check(struct drm_device *dev,
 }
 
 const struct drm_mode_config_funcs ipuv3_drm_mode_config_funcs = {
-	.fb_create = drm_fb_cma_create,
-	.output_poll_changed = imx_drm_output_poll_changed,
-	.atomic_check = imx_drm_atomic_check,
+	.fb_create = drm_gem_fb_create,
+	.atomic_check = ipuv3_drm_atomic_check,
 	.atomic_commit = drm_atomic_helper_commit,
 };
 
@@ -85,14 +71,24 @@ static void ipuv3_drm_atomic_commit_tail(struct drm_atomic_state *state)
 			plane_disabling = true;
 	}
 
+	/*
+	 * The flip done wait is only strictly required by imx-drm if a deferred
+	 * plane disable is in-flight. As the core requires blocking commits
+	 * to wait for the flip it is done here unconditionally. This keeps the
+	 * workitem around a bit longer than required for the majority of
+	 * non-blocking commits, but we accept that for the sake of simplicity.
+	 */
+	drm_atomic_helper_wait_for_flip_done(dev, state);
+
+	if (plane_disabling) {
+		for_each_old_plane_in_state(state, plane, old_plane_state, i)
+			ipu_plane_disable_deferred(plane);
+
+	}
+
 	drm_atomic_helper_commit_hw_done(state);
-
-	drm_atomic_helper_wait_for_vblanks(dev, state);
-
-	drm_atomic_helper_cleanup_planes(dev, state);
 }
 
-struct drm_mode_config_helper_funcs ipuv3_drm_mode_config_helpers = {
+const struct drm_mode_config_helper_funcs ipuv3_drm_mode_config_helpers = {
 	.atomic_commit_tail = ipuv3_drm_atomic_commit_tail,
 };
-

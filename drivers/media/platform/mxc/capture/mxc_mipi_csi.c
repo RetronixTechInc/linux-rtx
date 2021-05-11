@@ -1,16 +1,9 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 /*
  * Freescale i.MX7 SoC series MIPI-CSI V3.3 receiver driver
  *
  * Copyright (C) 2015-2016 Freescale Semiconductor, Inc. All Rights Reserved.
- */
-
-/*
- * The code contained herein is licensed under the GNU General Public
- * License. You may obtain a copy of the GNU General Public License
- * Version 2 or later at the following locations:
- *
- * http://www.opensource.org/licenses/gpl-license.html
- * http://www.gnu.org/copyleft/gpl.html
+ * Copyright 2019 NXP
  */
 /*
  * Samsung S5P/EXYNOS SoC series MIPI-CSI receiver driver
@@ -39,6 +32,7 @@
 #include <linux/pm_runtime.h>
 #include <linux/regmap.h>
 #include <linux/regulator/consumer.h>
+#include <linux/reset.h>
 #include <linux/slab.h>
 #include <linux/spinlock.h>
 #include <linux/videodev2.h>
@@ -189,9 +183,6 @@ MODULE_PARM_DESC(debug, "Debug level (0-2)");
 #define MIPI_CSIS_PKTDATA_ODD		0x2000
 #define MIPI_CSIS_PKTDATA_EVEN		0x3000
 #define MIPI_CSIS_PKTDATA_SIZE		SZ_4K
-
-#define GPR_MIPI_RESET			0x08
-#define GPR_MIPI_S_RESETN		BIT(16)
 
 #define DEFAULT_SCLK_CSIS_FREQ	166000000UL
 
@@ -393,23 +384,19 @@ static int mipi_csis_phy_init(struct csi_state *state)
 
 static int mipi_csis_phy_reset_mx8mm(struct csi_state *state)
 {
-	struct device_node *np = state->dev->of_node;
-	struct regmap *gpr;
+	struct reset_control *phy_reset;
 
-	gpr = syscon_regmap_lookup_by_phandle(np, "csi-gpr");
-	if (IS_ERR(gpr))
-		return PTR_ERR(gpr);
+	phy_reset = devm_reset_control_get_exclusive(state->dev, "csi,mipi_rst");
+	if (IS_ERR(phy_reset))
+		return PTR_ERR(phy_reset);
 
-	regmap_update_bits(gpr, GPR_MIPI_RESET,
-			   GPR_MIPI_S_RESETN,
-			   0x0);
+	reset_control_assert(phy_reset);
 	usleep_range(10, 20);
-	regmap_update_bits(gpr, GPR_MIPI_RESET,
-			   GPR_MIPI_S_RESETN,
-			   GPR_MIPI_S_RESETN);
+	reset_control_deassert(phy_reset);
 	usleep_range(10, 20);
 
 	return 0;
+
 }
 
 static int mipi_csis_phy_reset(struct csi_state *state)
@@ -943,7 +930,7 @@ static int subdev_notifier_bound(struct v4l2_async_notifier *notifier,
 	struct csi_state *state = notifier_to_mipi_dev(notifier);
 
 	/* Find platform data for this sensor subdev */
-	if (state->asd.match.fwnode.fwnode == dev_fwnode(subdev->dev))
+	if (state->asd.match.fwnode == dev_fwnode(subdev->dev))
 		state->sensor_sd = subdev;
 
 	if (subdev == NULL)
@@ -993,12 +980,18 @@ static int mipi_csis_parse_dt(struct platform_device *pdev,
 static int mipi_csis_pm_resume(struct device *dev, bool runtime);
 static const struct of_device_id mipi_csis_of_match[];
 
+static const struct v4l2_async_notifier_operations mxc_mipi_csi_subdev_ops = {
+	.bound = subdev_notifier_bound,
+};
+
 /* register parent dev */
 static int mipi_csis_subdev_host(struct csi_state *state)
 {
 	struct device_node *parent = state->dev->of_node;
 	struct device_node *node, *port, *rem;
 	int ret;
+
+	v4l2_async_notifier_init(&state->subdev_notifier);
 
 	/* Attach sensors linked to csi receivers */
 	for_each_available_child_of_node(parent, node) {
@@ -1018,17 +1011,23 @@ static int mipi_csis_subdev_host(struct csi_state *state)
 			return -1;
 		}
 
+		INIT_LIST_HEAD(&state->asd.list);
 		state->asd.match_type = V4L2_ASYNC_MATCH_FWNODE;
-		state->asd.match.fwnode.fwnode = of_fwnode_handle(rem);
+		state->asd.match.fwnode = of_fwnode_handle(rem);
 		state->async_subdevs[0] = &state->asd;
 
 		of_node_put(rem);
 		break;
 	}
 
-	state->subdev_notifier.subdevs = state->async_subdevs;
-	state->subdev_notifier.num_subdevs = 1;
-	state->subdev_notifier.bound = subdev_notifier_bound;
+	ret = v4l2_async_notifier_add_subdev(&state->subdev_notifier,
+					&state->asd);
+	if (ret) {
+		dev_err(state->dev, "failed to add subdev to a notifier\n");
+		return ret;
+	}
+	state->subdev_notifier.v4l2_dev = &state->v4l2_dev;
+	state->subdev_notifier.ops = &mxc_mipi_csi_subdev_ops;
 
 	ret = v4l2_async_notifier_register(&state->v4l2_dev,
 					&state->subdev_notifier);
@@ -1163,6 +1162,7 @@ static int mipi_csis_probe(struct platform_device *pdev)
 			goto e_sd_host;
 	}
 
+	mipi_csis_clk_disable(state);
 	dev_info(&pdev->dev,
 			"lanes: %d, hs_settle: %d, clk_settle: %d, wclk: %d, freq: %u\n",
 		 state->num_lanes, state->hs_settle, state->clk_settle,
@@ -1277,7 +1277,6 @@ static int mipi_csis_remove(struct platform_device *pdev)
 
 	pm_runtime_disable(&pdev->dev);
 	mipi_csis_pm_suspend(&pdev->dev, true);
-	mipi_csis_clk_disable(state);
 	pm_runtime_set_suspended(&pdev->dev);
 
 	return 0;

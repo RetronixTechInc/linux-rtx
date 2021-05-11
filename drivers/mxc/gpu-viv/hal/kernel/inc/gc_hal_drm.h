@@ -2,7 +2,7 @@
 *
 *    The MIT License (MIT)
 *
-*    Copyright (c) 2014 - 2018 Vivante Corporation
+*    Copyright (c) 2014 - 2020 Vivante Corporation
 *
 *    Permission is hereby granted, free of charge, to any person obtaining a
 *    copy of this software and associated documentation files (the "Software"),
@@ -26,7 +26,7 @@
 *
 *    The GPL License (GPL)
 *
-*    Copyright (C) 2014 - 2018 Vivante Corporation
+*    Copyright (C) 2014 - 2020 Vivante Corporation
 *
 *    This program is free software; you can redistribute it and/or
 *    modify it under the terms of the GNU General Public License
@@ -53,12 +53,10 @@
 *****************************************************************************/
 
 
-#ifndef __VIVNATE_DRM_H__
-#define __VIVNATE_DRM_H__
+#ifndef __gc_hal_drm_h_
+#define __gc_hal_drm_h_
 
-#if !defined(__KERNEL__)
-#include <drm.h>
-#endif
+#include <uapi/drm/drm.h>
 
 #if defined(__cplusplus)
 extern "C" {
@@ -69,7 +67,6 @@ extern "C" {
 #define DRM_VIV_GEM_CACHED          (1u << 1)
 #define DRM_VIV_GEM_SECURE          (1u << 2)
 #define DRM_VIV_GEM_CMA_LIMIT       (1u << 3)
-#define DRM_VIV_GEM_VIRTUAL_POOL    (1u << 4)
 
 struct drm_viv_gem_create {
     __u64 size;
@@ -138,11 +135,17 @@ struct drm_viv_gem_timestamp {
 #define DRM_VIV_GEM_TS_NORMAL       0x02
 #define DRM_VIV_GEM_TS_COMPRESSED   0x03
 
+/* ts cache mode. */
+#define DRM_VIV_GEM_TS_CACHE_MODE_64B     0x00
+#define DRM_VIV_GEM_TS_CACHE_MODE_128B    0x01
+#define DRM_VIV_GEM_TS_CACHE_MODE_256B    0x02
+
 struct drm_viv_gem_set_tiling {
     __u32 handle;
     __u32 tiling_mode;
 
     __u32 ts_mode;
+    __u32 ts_cache_mode;
     __u64 clear_value;
 };
 
@@ -151,6 +154,7 @@ struct drm_viv_gem_get_tiling {
     __u32 tiling_mode;
 
     __u32 ts_mode;
+    __u32 ts_cache_mode;
     __u64 clear_value;
 };
 
@@ -182,19 +186,31 @@ struct drm_viv_gem_ref_node {
 #define DRM_VIV_GEM_REF_NODE        0x09
 #define DRM_VIV_NUM_IOCTLS          0x0A
 
-#define DRM_IOCTL_VIV_GEM_CREATE        DRM_IOWR(DRM_COMMAND_BASE + DRM_VIV_GEM_CREATE,     struct drm_viv_gem_create)
-#define DRM_IOCTL_VIV_GEM_LOCK          DRM_IOWR(DRM_COMMAND_BASE + DRM_VIV_GEM_LOCK,       struct drm_viv_gem_lock)
-#define DRM_IOCTL_VIV_GEM_UNLOCK        DRM_IOWR(DRM_COMMAND_BASE + DRM_VIV_GEM_UNLOCK,     struct drm_viv_gem_unlock)
-#define DRM_IOCTL_VIV_GEM_CACHE         DRM_IOWR(DRM_COMMAND_BASE + DRM_VIV_GEM_CACHE,      struct drm_viv_gem_cache)
-#define DRM_IOCTL_VIV_GEM_QUERY         DRM_IOWR(DRM_COMMAND_BASE + DRM_VIV_GEM_QUERY,      struct drm_viv_gem_query)
-#define DRM_IOCTL_VIV_GEM_TIMESTAMP     DRM_IOWR(DRM_COMMAND_BASE + DRM_VIV_GEM_TIMESTAMP,  struct drm_viv_gem_timestamp)
+#define DRM_IOCTL_VIV_GEM_CREATE        DRM_IOWR(DRM_COMMAND_BASE + DRM_VIV_GEM_CREATE, struct drm_viv_gem_create)
+#define DRM_IOCTL_VIV_GEM_LOCK          DRM_IOWR(DRM_COMMAND_BASE + DRM_VIV_GEM_LOCK, struct drm_viv_gem_lock)
+#define DRM_IOCTL_VIV_GEM_UNLOCK        DRM_IOWR(DRM_COMMAND_BASE + DRM_VIV_GEM_UNLOCK, struct drm_viv_gem_unlock)
+#define DRM_IOCTL_VIV_GEM_CACHE         DRM_IOWR(DRM_COMMAND_BASE + DRM_VIV_GEM_CACHE, struct drm_viv_gem_cache)
+#define DRM_IOCTL_VIV_GEM_QUERY         DRM_IOWR(DRM_COMMAND_BASE + DRM_VIV_GEM_QUERY, struct drm_viv_gem_query)
+#define DRM_IOCTL_VIV_GEM_TIMESTAMP     DRM_IOWR(DRM_COMMAND_BASE + DRM_VIV_GEM_TIMESTAMP, struct drm_viv_gem_timestamp)
 #define DRM_IOCTL_VIV_GEM_SET_TILING    DRM_IOWR(DRM_COMMAND_BASE + DRM_VIV_GEM_SET_TILING, struct drm_viv_gem_set_tiling)
 #define DRM_IOCTL_VIV_GEM_GET_TILING    DRM_IOWR(DRM_COMMAND_BASE + DRM_VIV_GEM_GET_TILING, struct drm_viv_gem_get_tiling)
 #define DRM_IOCTL_VIV_GEM_ATTACH_AUX    DRM_IOWR(DRM_COMMAND_BASE + DRM_VIV_GEM_ATTACH_AUX, struct drm_viv_gem_attach_aux)
-#define DRM_IOCTL_VIV_GEM_REF_NODE      DRM_IOWR(DRM_COMMAND_BASE + DRM_VIV_GEM_REF_NODE,   struct drm_viv_gem_ref_node)
+#define DRM_IOCTL_VIV_GEM_REF_NODE      DRM_IOWR(DRM_COMMAND_BASE + DRM_VIV_GEM_REF_NODE, struct drm_viv_gem_ref_node)
+
+#ifdef __KERNEL__
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,9,0)
+#define drm_gem_object_unreference_unlocked drm_gem_object_put_locked
+#define drm_dev_unref drm_dev_put
+#elif LINUX_VERSION_CODE >= KERNEL_VERSION(5,4,0)
+#define drm_gem_object_unreference_unlocked drm_gem_object_put_unlocked
+#define drm_dev_unref drm_dev_put
+#endif
+#endif
 
 #if defined(__cplusplus)
 }
 #endif
 
-#endif /* __VIVNATE_DRM_H__ */
+#endif /* __gc_hal_drm_h_ */
+
+

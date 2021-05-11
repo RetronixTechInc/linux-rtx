@@ -2,7 +2,7 @@
 *
 *    The MIT License (MIT)
 *
-*    Copyright (c) 2014 - 2018 Vivante Corporation
+*    Copyright (c) 2014 - 2020 Vivante Corporation
 *
 *    Permission is hereby granted, free of charge, to any person obtaining a
 *    copy of this software and associated documentation files (the "Software"),
@@ -26,7 +26,7 @@
 *
 *    The GPL License (GPL)
 *
-*    Copyright (C) 2014 - 2018 Vivante Corporation
+*    Copyright (C) 2014 - 2020 Vivante Corporation
 *
 *    This program is free software; you can redistribute it and/or
 *    modify it under the terms of the GNU General Public License
@@ -63,6 +63,9 @@
 #include <linux/dma-mapping.h>
 #include <linux/slab.h>
 #include <linux/platform_device.h>
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,16,0)
+#include <linux/dma-direct.h>
+#endif
 
 #define _GC_OBJ_ZONE    gcvZONE_OS
 
@@ -166,7 +169,15 @@ _CMAFSLAlloc(
     }
 #endif
 
+#if gcdENABLE_BUFFERABLE_VIDEO_MEMORY
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,6,0)
+    mdl_priv->kvaddr = dma_alloc_wc(&os->device->platform->device->dev,
+#else
     mdl_priv->kvaddr = dma_alloc_writecombine(&os->device->platform->device->dev,
+#endif
+#else
+    mdl_priv->kvaddr = dma_alloc_coherent(&os->device->platform->device->dev,
+#endif
             NumPages * PAGE_SIZE,
             &mdl_priv->physical,
             gfp);
@@ -273,11 +284,21 @@ _CMAFSLFree(
     gckOS os = Allocator->os;
     struct mdl_cma_priv *mdlPriv=(struct mdl_cma_priv *)Mdl->priv;
     gcsCMA_PRIV_PTR priv = (gcsCMA_PRIV_PTR)Allocator->privateData;
+
+#if gcdENABLE_BUFFERABLE_VIDEO_MEMORY
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,6,0)
+    dma_free_wc(&os->device->platform->device->dev,
+#else
     dma_free_writecombine(&os->device->platform->device->dev,
+#endif
+#else
+    dma_free_coherent(&os->device->platform->device->dev,
+#endif
             Mdl->numPages * PAGE_SIZE,
             mdlPriv->kvaddr,
             mdlPriv->physical);
-     gckOS_Free(os, mdlPriv);
+
+    gckOS_Free(os, mdlPriv);
     atomic_sub(Mdl->numPages, &priv->cmasize);
 }
 
@@ -302,12 +323,21 @@ _CMAFSLMmap(
     /* Now map all the vmalloc pages to this user address. */
     if (Mdl->contiguous)
     {
+#if gcdENABLE_BUFFERABLE_VIDEO_MEMORY
         /* map kernel memory to user space.. */
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,6,0)
+        if (dma_mmap_wc(&os->device->platform->device->dev,
+#else
         if (dma_mmap_writecombine(&os->device->platform->device->dev,
-                vma,
-                (gctINT8_PTR)mdlPriv->kvaddr + (skipPages << PAGE_SHIFT),
-                mdlPriv->physical + (skipPages << PAGE_SHIFT),
-                numPages << PAGE_SHIFT) < 0)
+#endif
+#else
+        if (dma_mmap_coherent(&os->device->platform->device->dev,
+#endif
+            vma,
+            (gctINT8_PTR)mdlPriv->kvaddr + (skipPages << PAGE_SHIFT),
+            mdlPriv->physical + (skipPages << PAGE_SHIFT),
+            numPages << PAGE_SHIFT) < 0)
+
         {
             gcmkTRACE_ZONE(
                 gcvLEVEL_WARNING, gcvZONE_OS,
@@ -353,7 +383,7 @@ _CMAFSLUnmapUser(
                 );
     }
 #else
-    down_write(&current->mm->mmap_sem);
+    down_write(&current_mm_mmap_sem);
     if (do_munmap(current->mm, (unsigned long)MdlMap->vmaAddr, Size) < 0)
     {
         gcmkTRACE_ZONE(
@@ -362,7 +392,7 @@ _CMAFSLUnmapUser(
                 __FUNCTION__, __LINE__
                 );
     }
-    up_write(&current->mm->mmap_sem);
+    up_write(&current_mm_mmap_sem);
 #endif
 }
 
@@ -387,14 +417,14 @@ _CMAFSLMapUser(
                     MAP_SHARED | MAP_NORESERVE,
                     0);
 #else
-    down_write(&current->mm->mmap_sem);
+    down_write(&current_mm_mmap_sem);
     userLogical = (gctPOINTER)do_mmap_pgoff(gcvNULL,
                     0L,
                     Mdl->numPages * PAGE_SIZE,
                     PROT_READ | PROT_WRITE,
                     MAP_SHARED,
                     0);
-    up_write(&current->mm->mmap_sem);
+    up_write(&current_mm_mmap_sem);
 #endif
 
     gcmkTRACE_ZONE(
@@ -414,7 +444,8 @@ _CMAFSLMapUser(
         gcmkONERROR(gcvSTATUS_OUT_OF_MEMORY);
     }
 
-    down_write(&current->mm->mmap_sem);
+    down_write(&current_mm_mmap_sem);
+
     do
     {
         struct vm_area_struct *vma = find_vma(current->mm, (unsigned long)userLogical);
@@ -435,10 +466,11 @@ _CMAFSLMapUser(
         MdlMap->vma = vma;
     }
     while (gcvFALSE);
-    up_write(&current->mm->mmap_sem);
+
+    up_write(&current_mm_mmap_sem);
 
 OnError:
-    if (gcmIS_ERROR(status) && userLogical)
+    if (gcmIS_ERROR(status) && userLogical && !IS_ERR(userLogical))
     {
         _CMAFSLUnmapUser(Allocator, Mdl, userLogical, Mdl->numPages * PAGE_SIZE);
     }
@@ -450,11 +482,13 @@ static gceSTATUS
 _CMAMapKernel(
     IN gckALLOCATOR Allocator,
     IN PLINUX_MDL Mdl,
+    IN gctSIZE_T Offset,
+    IN gctSIZE_T Bytes,
     OUT gctPOINTER *Logical
     )
 {
     struct mdl_cma_priv *mdl_priv=(struct mdl_cma_priv *)Mdl->priv;
-    *Logical =mdl_priv->kvaddr;
+    *Logical = (uint8_t *)mdl_priv->kvaddr + Offset;
     return gcvSTATUS_OK;
 }
 
@@ -474,7 +508,7 @@ _CMACache(
     IN PLINUX_MDL Mdl,
     IN gctSIZE_T Offset,
     IN gctPOINTER Logical,
-    IN gctUINT32 Bytes,
+    IN gctSIZE_T Bytes,
     IN gceCACHEOPERATION Operation
     )
 {
@@ -574,9 +608,12 @@ _CMAFSLAlloctorInit(
                           | gcvALLOC_FLAG_4GB_ADDR
 #endif
                           ;
-
 #if defined(CONFIG_ARM64)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,0,0)
+    Os->allocatorLimitMarker = (Os->device->baseAddress + totalram_pages() * PAGE_SIZE) > 0x100000000;
+#else
     Os->allocatorLimitMarker = (Os->device->baseAddress + totalram_pages * PAGE_SIZE) > 0x100000000;
+#endif
 #else
     Os->allocatorLimitMarker = gcvFALSE;
 #endif

@@ -1,13 +1,16 @@
 /*
- * Copyright(c) 2018 NXP. All rights reserved.
- *
- * This file is provided under a dual BSD/GPLv2 license.  When using or
- * redistributing this file, you may do so under either license.
- *
- * vpu_event_msg.c
- *
- * Author Ming Qian<ming.qian@nxp.com>
+ * Copyright 2018-2019 NXP
  */
+
+/*
+ * The code contained herein is licensed under the GNU General Public
+ * License. You may obtain a copy of the GNU General Public License
+ * Version 2 or later at the following locations:
+ *
+ * http://www.opensource.org/licenses/gpl-license.html
+ * http://www.gnu.org/copyleft/gpl.html
+ */
+
 #define TAG	"[VPU Encoder Msg]\t "
 #include <linux/kernel.h>
 #include <linux/list.h>
@@ -197,6 +200,17 @@ void push_back_event_msg(struct vpu_ctx *ctx, struct vpu_event_msg *msg)
 	mutex_lock(&ctx->instance_mutex);
 	list_add_tail(&msg->list, &ctx->msg_q);
 	mutex_unlock(&ctx->instance_mutex);
+}
+
+bool is_event_msg_empty(struct vpu_ctx *ctx)
+{
+	bool is_empty = false;
+
+	mutex_lock(&ctx->instance_mutex);
+	is_empty = list_empty(&ctx->msg_q);
+	mutex_unlock(&ctx->instance_mutex);
+
+	return is_empty;
 }
 
 int alloc_msg_ext_buffer(struct vpu_event_msg *msg, u32 number)

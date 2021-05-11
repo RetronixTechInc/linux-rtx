@@ -1,11 +1,8 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
   USB Driver layer for GSM modems
 
   Copyright (C) 2005  Matthias Urlichs <smurf@smurf.noris.de>
-
-  This driver is free software; you can redistribute it and/or modify
-  it under the terms of Version 2 of the GNU General Public License as
-  published by the Free Software Foundation.
 
   Portions copied from the Keyspan driver by Hugh Blemings <hugh@blemings.org>
 
@@ -35,7 +32,7 @@
 #include <linux/usb/serial.h>
 #include <linux/serial.h>
 #include "usb-wwan.h"
-#include <linux/gpio.h>
+
 /*
  * Generate DTR/RTS signals on the port using the SET_CONTROL_LINE_STATE request
  * in CDC ACM.
@@ -273,6 +270,10 @@ static void usb_wwan_indat_callback(struct urb *urb)
 	if (status) {
 		dev_dbg(dev, "%s: nonzero status: %d on endpoint %02x.\n",
 			__func__, status, endpoint);
+
+		/* don't resubmit on fatal errors */
+		if (status == -ESHUTDOWN || status == -ENOENT)
+			return;
 	} else {
 		if (urb->actual_length) {
 			tty_insert_flip_string(&port->port, data,
@@ -373,23 +374,6 @@ int usb_wwan_open(struct tty_struct *tty, struct usb_serial_port *port)
 	int i, err;
 	struct urb *urb;
 
-	int ret;
-	ret = gpio_request(498, "lte_green");
-	if (ret<0)
-		printk("%s: gpio_request failed for gpio %d\n", __func__, 498);
-	else
-    		gpio_direction_output(498, 1);
-
-	ret = gpio_request(499, "lte_red");
-	if (ret<0)
-		printk("%s: gpio_request failed for gpio %d\n", __func__, 499);
-	else
-    		gpio_direction_output(499, 0);
-	gpio_free(498);
-	gpio_free(499);
-
-
-
 	portdata = usb_get_serial_port_data(port);
 	intfdata = usb_get_serial_data(serial);
 
@@ -446,22 +430,6 @@ void usb_wwan_close(struct usb_serial_port *port)
 	struct usb_wwan_intf_private *intfdata = usb_get_serial_data(serial);
 	struct urb *urb;
 
-	int ret;
-	ret = gpio_request(498, "lte_green");
-	if (ret<0)
-		printk("%s: gpio_request failed for gpio %d\n", __func__, 498);
-	else
-    		gpio_direction_output(498, 0);
-
-	ret = gpio_request(499, "lte_red");
-	if (ret<0)
-		printk("%s: gpio_request failed for gpio %d\n", __func__, 499);
-	else
-    		gpio_direction_output(499, 1);
-	gpio_free(498);
-	gpio_free(499);
-
-
 	portdata = usb_get_serial_port_data(port);
 
 	/*
@@ -497,6 +465,7 @@ static struct urb *usb_wwan_setup_urb(struct usb_serial_port *port,
 				      void (*callback) (struct urb *))
 {
 	struct usb_serial *serial = port->serial;
+	struct usb_wwan_intf_private *intfdata = usb_get_serial_data(serial);
 	struct urb *urb;
 
 	urb = usb_alloc_urb(0, GFP_KERNEL);	/* No ISO */
@@ -507,6 +476,9 @@ static struct urb *usb_wwan_setup_urb(struct usb_serial_port *port,
 			  usb_sndbulkpipe(serial->dev, endpoint) | dir,
 			  buf, len, callback, ctx);
 
+	if (intfdata->use_zlp && dir == USB_DIR_OUT)
+		urb->transfer_flags |= URB_ZERO_PACKET;
+
 	return urb;
 }
 
@@ -516,21 +488,6 @@ int usb_wwan_port_probe(struct usb_serial_port *port)
 	struct urb *urb;
 	u8 *buffer;
 	int i;
-
-	int ret;
-	ret = gpio_request(498, "lte_green");
-	if (ret<0)
-		printk("%s: gpio_request failed for gpio %d\n", __func__, 498);
-	else
-    		gpio_direction_output(498, 0);
-
-	ret = gpio_request(499, "lte_red");
-	if (ret<0)
-		printk("%s: gpio_request failed for gpio %d\n", __func__, 499);
-	else
-    		gpio_direction_output(499, 1);
-	gpio_free(498);
-	gpio_free(499);
 
 	if (!port->bulk_in_size || !port->bulk_out_size)
 		return -ENODEV;

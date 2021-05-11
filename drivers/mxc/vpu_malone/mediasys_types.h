@@ -59,8 +59,12 @@ typedef unsigned int u_int32;
 typedef unsigned char u_int8;
 typedef unsigned long u_int64;
 typedef unsigned int BOOL;
+#ifndef FALSE
 #define FALSE 0
+#endif
+#ifndef TRUE
 #define TRUE 1
+#endif
 #define VPU_MAX_NUM_STREAMS 8
 #define VID_API_NUM_STREAMS 8
 #define VID_API_MAX_BUF_PER_STR 3
@@ -93,6 +97,7 @@ typedef enum {
 	FRAME_DECODED,
 	FRAME_READY,
 	FRAME_RELEASE,
+	FRAME_SKIP,
 } FRAME_BUFFER_STAT;
 
 typedef enum {
@@ -169,6 +174,7 @@ typedef enum {
 	VID_API_CMD_DBG_DUMP_LOG      = 0x1F,
 	/* Begin Encode CMDs */
 	VID_API_CMD_YUV_READY         = 0x20,
+	VID_API_CMD_TS                = 0x21,
 
 	VID_API_CMD_FIRM_RESET        = 0x40,
 
@@ -187,44 +193,46 @@ typedef enum {
 
 typedef enum {
 	/* Non-Stream Specific messages    */
-	VID_API_EVENT_NULL            = 0x00,
-	VID_API_EVENT_RESET_DONE      = 0x01,
-	VID_API_EVENT_SEQ_HDR_FOUND   = 0x02,
-	VID_API_EVENT_PIC_HDR_FOUND   = 0x03,
-	VID_API_EVENT_PIC_DECODED     = 0x04,
-	VID_API_EVENT_FIFO_LOW        = 0x05,
-	VID_API_EVENT_FIFO_HIGH       = 0x06,
-	VID_API_EVENT_FIFO_EMPTY      = 0x07,
-	VID_API_EVENT_FIFO_FULL       = 0x08,
-	VID_API_EVENT_BS_ERROR        = 0x09,
-	VID_API_EVENT_UDATA_FIFO_UPTD = 0x0A,
-	VID_API_EVENT_RES_CHANGE      = 0x0B,
-	VID_API_EVENT_FIFO_OVF        = 0x0C,
-	VID_API_EVENT_CHUNK_DECODED   = 0x0D,
-	VID_API_EVENT_REQ_FRAME_BUFF  = 0x10,
-	VID_API_EVENT_FRAME_BUFF_RDY  = 0x11,
-	VID_API_EVENT_REL_FRAME_BUFF  = 0x12,
-	VID_API_EVENT_STR_BUF_RST     = 0x13,
-	VID_API_EVENT_RET_PING        = 0x14,      /* Temp here - rationalise debug events at bottom */
-	VID_API_EVENT_QMETER          = 0x15,
-	VID_API_EVENT_STR_FMT_CHANGE  = 0x16,
-	VID_API_EVENT_FIRMWARE_XCPT   = 0x17,
-	VID_API_EVENT_START_DONE      = 0x18,
-	VID_API_EVENT_STOPPED         = 0x19,
-	VID_API_EVENT_ABORT_DONE      = 0x1A,
-	VID_API_EVENT_FINISHED        = 0x1B,
-	VID_API_EVENT_DBG_STAT_UPDATE = 0x1C,
-	VID_API_EVENT_DBG_LOG_STARTED = 0x1D,
-	VID_API_EVENT_DBG_LOG_STOPPED = 0x1E,
-	VID_API_EVENT_DBG_LOG_UPDATED = 0x1F,
-	VID_API_EVENT_DBG_MSG_DEC     = 0x20,
-	VID_API_EVENT_DEC_SC_ERR      = 0x21,
-	VID_API_EVENT_CQ_FIFO_DUMP    = 0x22,
-	VID_API_EVENT_DBG_FIFO_DUMP   = 0x23,
-	VID_API_EVENT_DEC_CHECK_RES   = 0x24,
-	VID_API_EVENT_DEC_CFG_INFO    = 0x25,
-	VID_API_EVENT_SNAPSHOT_DONE   = 0x40,
-	VID_API_EVENT_INVALID         = 0xFF
+	VID_API_EVENT_NULL			= 0x00,
+	VID_API_EVENT_RESET_DONE		= 0x01,
+	VID_API_EVENT_SEQ_HDR_FOUND		= 0x02,
+	VID_API_EVENT_PIC_HDR_FOUND		= 0x03,
+	VID_API_EVENT_PIC_DECODED		= 0x04,
+	VID_API_EVENT_FIFO_LOW			= 0x05,
+	VID_API_EVENT_FIFO_HIGH			= 0x06,
+	VID_API_EVENT_FIFO_EMPTY		= 0x07,
+	VID_API_EVENT_FIFO_FULL			= 0x08,
+	VID_API_EVENT_BS_ERROR			= 0x09,
+	VID_API_EVENT_UDATA_FIFO_UPTD		= 0x0A,
+	VID_API_EVENT_RES_CHANGE		= 0x0B,
+	VID_API_EVENT_FIFO_OVF			= 0x0C,
+	VID_API_EVENT_CHUNK_DECODED		= 0x0D,
+	VID_API_EVENT_REQ_FRAME_BUFF		= 0x10,
+	VID_API_EVENT_FRAME_BUFF_RDY		= 0x11,
+	VID_API_EVENT_REL_FRAME_BUFF		= 0x12,
+	VID_API_EVENT_STR_BUF_RST		= 0x13,
+	VID_API_EVENT_RET_PING			= 0x14,
+	VID_API_EVENT_QMETER			= 0x15,
+	VID_API_EVENT_STR_FMT_CHANGE		= 0x16,
+	VID_API_EVENT_FIRMWARE_XCPT		= 0x17,
+	VID_API_EVENT_START_DONE		= 0x18,
+	VID_API_EVENT_STOPPED			= 0x19,
+	VID_API_EVENT_ABORT_DONE		= 0x1A,
+	VID_API_EVENT_FINISHED			= 0x1B,
+	VID_API_EVENT_DBG_STAT_UPDATE		= 0x1C,
+	VID_API_EVENT_DBG_LOG_STARTED		= 0x1D,
+	VID_API_EVENT_DBG_LOG_STOPPED		= 0x1E,
+	VID_API_EVENT_DBG_LOG_UPDATED		= 0x1F,
+	VID_API_EVENT_DBG_MSG_DEC		= 0x20,
+	VID_API_EVENT_DEC_SC_ERR		= 0x21,
+	VID_API_EVENT_CQ_FIFO_DUMP		= 0x22,
+	VID_API_EVENT_DBG_FIFO_DUMP		= 0x23,
+	VID_API_EVENT_DEC_CHECK_RES		= 0x24,
+	VID_API_EVENT_DEC_CFG_INFO		= 0x25,
+	VID_API_EVENT_UNSUPPORTED_STREAM	= 0x26,
+	VID_API_EVENT_STR_SUSPENDED		= 0x30,
+	VID_API_EVENT_SNAPSHOT_DONE		= 0x40,
+	VID_API_EVENT_INVALID			= 0xFF
 
 } TB_API_DEC_EVENT;
 
@@ -382,13 +390,9 @@ typedef struct {
 	u_int32 bUserDataAvail;
 	u_int32 uPercentInErr;
 
-	u_int32 uBbdHorActive;
-	u_int32 uBbdVerActive;
-	u_int32 uBbdLogoActive;
-	u_int32 uBbdBotPrev;
-	u_int32 uBbdMinColPrj;
-	u_int32 uBbdMinRowPrj;
-	u_int32 uFSBaseAddr;
+	u_int32 uReservedBbd[3];
+	/* Luma top/bottom and Chroma top/bottom */
+	u_int32 uFSBaseAddr[4];
 
 	/* Only for RealVideo RPR */
 	u_int32 uRprPicWidth;
@@ -569,7 +573,7 @@ typedef struct {
 	u_int32 uCodecVersion;
 	u_int32 uFrameRate;
 	u_int32 uEnableDbgLog;
-	u_int32 bbd_lum_thr;
+	u_int32 uBSDMALWM;
 	u_int32 bbd_coring;
 	u_int32 bbd_s_thr_row;
 	u_int32 bbd_p_thr_row;
@@ -678,11 +682,16 @@ typedef struct {
 	MediaIPFW_Video_QMeterInfoTabDesc      QMeterInfoTabDesc;
 	u_int32                                StreamError[VID_API_NUM_STREAMS];
 	u_int32                                FWVersion;
-	u_int32                                uMVDMipsOffset;
+	u_int32                                uFWOffset;
 	u_int32                                uMaxDecoderStreams;
 	MediaIPFW_Video_DbgLogDesc             DbgLogDesc;
-	MediaIPFW_Video_FrameBuffer            StreamFrameBuffer[VID_API_NUM_STREAMS];
-	MediaIPFW_Video_FrameBuffer            StreamDCPBuffer[VID_API_NUM_STREAMS];
+	union {
+		struct {
+			MediaIPFW_Video_FrameBuffer StreamFrameBuffer[VID_API_NUM_STREAMS];
+			MediaIPFW_Video_FrameBuffer StreamDCPBuffer[VID_API_NUM_STREAMS];
+		};
+		BUFFER_DESCRIPTOR_TYPE         StreamApiCmdBufferDesc[VID_API_NUM_STREAMS];
+	};
 	MediaIPFW_Video_UData                  UDataBuffer[VID_API_NUM_STREAMS];
 	MediaIPFW_Video_BufDesc                DebugBufferDesc;
 	MediaIPFW_Video_BufDesc                EngAccessBufferDesc[VID_API_NUM_STREAMS];
@@ -789,5 +798,8 @@ typedef struct {
 #define MFD_BLK_CTRL_MFD_SYS_RESET_CLR                  0x00000004
 #define MFD_BLK_CTRL_MFD_SYS_CLOCK_ENABLE_SET           0x00000100
 #define MFD_BLK_CTRL_MFD_SYS_CLOCK_ENABLE_CLR           0x00000104
+
+#define CSR_CM0Px_ADDR_OFFSET				0x00000000
+#define CSR_CM0Px_CPUWAIT				0x00000004
 
 #endif

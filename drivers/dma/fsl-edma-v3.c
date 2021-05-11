@@ -17,6 +17,7 @@
 #include <linux/init.h>
 #include <linux/module.h>
 #include <linux/interrupt.h>
+#include <linux/iopoll.h>
 #include <linux/clk.h>
 #include <linux/dma-mapping.h>
 #include <linux/dmapool.h>
@@ -27,9 +28,8 @@
 #include <linux/of_address.h>
 #include <linux/of_irq.h>
 #include <linux/of_dma.h>
-
-#include <soc/imx/revision.h>
-#include <soc/imx8/soc.h>
+#include <linux/pm_runtime.h>
+#include <linux/pm_domain.h>
 
 #include "virt-dma.h"
 
@@ -114,6 +114,8 @@
 #define CHAN_PREFIX			"edma0-chan"
 #define CHAN_POSFIX			"-tx"
 
+#define EDMA_MINOR_LOOP_TIMEOUT		500 /* us */
+
 enum fsl_edma3_pm_state {
 	RUNNING = 0,
 	SUSPENDED,
@@ -167,6 +169,7 @@ struct fsl_edma3_chan {
 	u32				chn_real_count;
 	char                            txirq_name[32];
 	struct platform_device		*pdev;
+	struct device			*dev;
 };
 
 struct fsl_edma3_desc {
@@ -284,9 +287,21 @@ static int fsl_edma3_terminate_all(struct dma_chan *chan)
 	struct fsl_edma3_chan *fsl_chan = to_fsl_edma3_chan(chan);
 	unsigned long flags;
 	LIST_HEAD(head);
+	u32 val;
+
+	fsl_edma3_disable_request(fsl_chan);
+
+	/*
+	 * Checking ACTIVE to ensure minor loop stop indeed to prevent the
+	 * potential illegal memory write if channel not stopped with buffer
+	 * freed. Ignore tx channel since no such risk.
+	 */
+	if (fsl_chan->is_rxchan)
+		readl_poll_timeout_atomic(fsl_chan->membase + EDMA_CH_CSR, val,
+			!(val & EDMA_CH_CSR_ACTIVE), 2,
+			EDMA_MINOR_LOOP_TIMEOUT);
 
 	spin_lock_irqsave(&fsl_chan->vchan.lock, flags);
-	fsl_edma3_disable_request(fsl_chan);
 	fsl_chan->edesc = NULL;
 	fsl_chan->idle = true;
 	fsl_chan->used = false;
@@ -565,6 +580,7 @@ static struct dma_async_tx_descriptor *fsl_edma3_prep_dma_cyclic(
 	int sg_len, i;
 	u32 src_addr, dst_addr, last_sg, nbytes;
 	u16 soff, doff, iter;
+	bool major_int = true;
 
 	sg_len = buf_len / period_len;
 	fsl_desc = fsl_edma3_alloc_desc(fsl_chan, sg_len);
@@ -605,11 +621,12 @@ static struct dma_async_tx_descriptor *fsl_edma3_prep_dma_cyclic(
 			dst_addr = fsl_chan->fsc.dev_addr;
 			soff = 0;
 			doff = 0;
+			major_int = false;
 		}
 
 		fsl_edma3_fill_tcd(fsl_chan, fsl_desc->tcd[i].vtcd, src_addr,
 				dst_addr, fsl_chan->fsc.attr, soff, nbytes, 0,
-				iter, iter, doff, last_sg, true, false, true);
+				iter, iter, doff, last_sg, major_int, false, true);
 		dma_buf_next += period_len;
 	}
 
@@ -706,15 +723,19 @@ static irqreturn_t fsl_edma3_tx_handler(int irq, void *dev_id)
 	unsigned int intr;
 	void __iomem *base_addr;
 
+	spin_lock(&fsl_chan->vchan.lock);
+
+	/* Ignore this interrupt since channel has been freeed with power off */
+	if (!fsl_chan->edesc && !fsl_chan->tcd_pool)
+		goto irq_handled;
+
 	base_addr = fsl_chan->membase;
 
 	intr = readl(base_addr + EDMA_CH_INT);
 	if (!intr)
-		return IRQ_NONE;
+		goto irq_handled;
 
 	writel(1, base_addr + EDMA_CH_INT);
-
-	spin_lock(&fsl_chan->vchan.lock);
 
 	/* Ignore this interrupt since channel has been disabled already */
 	if (!fsl_chan->edesc)
@@ -799,8 +820,11 @@ static int fsl_edma3_alloc_chan_resources(struct dma_chan *chan)
 	fsl_chan->tcd_pool = dma_pool_create("tcd_pool", chan->device->dev,
 				sizeof(struct fsl_edma3_hw_tcd),
 				32, 0);
+	pm_runtime_get_sync(fsl_chan->dev);
 	/* clear meaningless pending irq anyway */
-	writel(1, fsl_chan->membase + EDMA_CH_INT);
+	if (readl(fsl_chan->membase + EDMA_CH_INT))
+		writel(1, fsl_chan->membase + EDMA_CH_INT);
+
 	ret = devm_request_irq(&pdev->dev, fsl_chan->txirq,
 			fsl_edma3_tx_handler, fsl_chan->edma3->irqflag,
 			fsl_chan->txirq_name, fsl_chan);
@@ -829,8 +853,16 @@ static void fsl_edma3_free_chan_resources(struct dma_chan *chan)
 
 	vchan_dma_desc_free_list(&fsl_chan->vchan, &head);
 	dma_pool_destroy(fsl_chan->tcd_pool);
+
+	spin_lock_irqsave(&fsl_chan->vchan.lock, flags);
 	fsl_chan->tcd_pool = NULL;
 	fsl_chan->used = false;
+	/* Clear interrupt before power off */
+	if (readl(fsl_chan->membase + EDMA_CH_INT))
+		writel(1, fsl_chan->membase + EDMA_CH_INT);
+	spin_unlock_irqrestore(&fsl_chan->vchan.lock, flags);
+
+	pm_runtime_put_sync(fsl_chan->dev);
 }
 
 static void fsl_edma3_synchronize(struct dma_chan *chan)
@@ -838,6 +870,37 @@ static void fsl_edma3_synchronize(struct dma_chan *chan)
 	struct fsl_edma3_chan *fsl_chan = to_fsl_edma3_chan(chan);
 
 	vchan_synchronize(&fsl_chan->vchan);
+}
+
+static struct device *fsl_edma3_attach_pd(struct device *dev,
+					  struct device_node *np, int index)
+{
+	const char *domn = "edma0-chan01";
+	struct device *pd_chan;
+	struct device_link *link;
+	int ret;
+
+	ret = of_property_read_string_index(np, "power-domain-names", index,
+						&domn);
+	if (ret) {
+		dev_err(dev, "parse power-domain-names error.(%d)\n", ret);
+		return NULL;
+	}
+
+	pd_chan = dev_pm_domain_attach_by_name(dev, domn);
+	if (!pd_chan)
+		return NULL;
+
+	link = device_link_add(dev, pd_chan, DL_FLAG_STATELESS |
+					     DL_FLAG_PM_RUNTIME |
+					     DL_FLAG_RPM_ACTIVE);
+	if (IS_ERR(link)) {
+		dev_err(dev, "Failed to add device_link to %s: %ld\n", domn,
+			PTR_ERR(link));
+		return NULL;
+	}
+
+	return pd_chan;
 }
 
 static int fsl_edma3_probe(struct platform_device *pdev)
@@ -864,20 +927,8 @@ static int fsl_edma3_probe(struct platform_device *pdev)
 	if (of_property_read_bool(np, "shared-interrupt"))
 		fsl_edma3->irqflag = IRQF_SHARED;
 
-	fsl_edma3->swap = false;
+	fsl_edma3->swap = of_device_is_compatible(np, "fsl,imx8qm-adma");
 	fsl_edma3->n_chans = chans;
-
-	/*
-	 * FIXUP: if this is the i.MX8QM TO1.0, need set the swap.
-	 * FIXME: This will be revisted to set the swap property
-	 * from the device-tree node later instead of revison check,
-	 * but, this will need add extra DT file, not perfect too.
-	 */
-
-	if ((of_device_is_compatible(np, "fsl,imx8qm-adma")) &&
-		cpu_is_imx8qm() &&
-		imx8_get_soc_revision() == IMX_CHIP_REVISION_1_0)
-		fsl_edma3->swap = true;
 
 	INIT_LIST_HEAD(&fsl_edma3->dma_dev.channels);
 	for (i = 0; i < fsl_edma3->n_chans; i++) {
@@ -975,6 +1026,22 @@ static int fsl_edma3_probe(struct platform_device *pdev)
 		dev_err(&pdev->dev, "Can't register Freescale eDMA engine.\n");
 		return ret;
 	}
+	/* Attach power domains from dts for each dma chanel device */
+	for (i = 0; i < fsl_edma3->n_chans; i++) {
+		struct fsl_edma3_chan *fsl_chan = &fsl_edma3->chans[i];
+		struct device *dev;
+
+		dev = fsl_edma3_attach_pd(&pdev->dev, np, i);
+		if (!dev) {
+			dev_err(dev, "edma channel attach failed.\n");
+			return -EINVAL;
+		}
+
+		fsl_chan->dev = dev;
+		/* clear meaningless pending irq anyway */
+		writel(1, fsl_chan->membase + EDMA_CH_INT);
+		pm_runtime_put_sync(dev);
+	}
 
 	ret = of_dma_controller_register(np, fsl_edma3_xlate, fsl_edma3);
 	if (ret) {
@@ -982,6 +1049,9 @@ static int fsl_edma3_probe(struct platform_device *pdev)
 		dma_async_device_unregister(&fsl_edma3->dma_dev);
 		return ret;
 	}
+
+	pm_runtime_dont_use_autosuspend(&pdev->dev);
+	pm_runtime_enable(&pdev->dev);
 
 	return 0;
 }
@@ -997,6 +1067,7 @@ static int fsl_edma3_remove(struct platform_device *pdev)
 	return 0;
 }
 
+#ifdef CONFIG_PM_SLEEP
 static int fsl_edma3_suspend_late(struct device *dev)
 {
 	struct fsl_edma3_engine *fsl_edma = dev_get_drvdata(dev);
@@ -1054,10 +1125,11 @@ static int fsl_edma3_resume_early(struct device *dev)
 
 	return 0;
 }
+#endif
 
 static const struct dev_pm_ops fsl_edma3_pm_ops = {
-	.suspend_late   = fsl_edma3_suspend_late,
-	.resume_early   = fsl_edma3_resume_early,
+	SET_LATE_SYSTEM_SLEEP_PM_OPS(fsl_edma3_suspend_late,
+				     fsl_edma3_resume_early)
 };
 
 static const struct of_device_id fsl_edma3_dt_ids[] = {
@@ -1081,7 +1153,7 @@ static int __init fsl_edma3_init(void)
 {
 	return platform_driver_register(&fsl_edma3_driver);
 }
-subsys_initcall(fsl_edma3_init);
+fs_initcall(fsl_edma3_init);
 
 static void __exit fsl_edma3_exit(void)
 {

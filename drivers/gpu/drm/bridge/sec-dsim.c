@@ -22,12 +22,13 @@
 #include <linux/log2.h>
 #include <linux/module.h>
 #include <linux/of_graph.h>
+#include <linux/pm_runtime.h>
 #include <drm/bridge/sec_mipi_dsim.h>
 #include <drm/drmP.h>
 #include <drm/drm_atomic_helper.h>
 #include <drm/drm_bridge.h>
 #include <drm/drm_connector.h>
-#include <drm/drm_crtc_helper.h>
+#include <drm/drm_probe_helper.h>
 #include <drm/drm_encoder.h>
 #include <drm/drm_fourcc.h>
 #include <drm/drm_mipi_dsi.h>
@@ -227,7 +228,7 @@
 #define dsim_write(dsim, val, reg)	writel(val, dsim->base + reg)
 
 /* fixed phy ref clk rate */
-#define PHY_REF_CLK		27000
+#define PHY_REF_CLK		12000
 
 #define MAX_MAIN_HRESOL		2047
 #define MAX_MAIN_VRESOL		2047
@@ -565,6 +566,9 @@ static int sec_mipi_dsim_host_detach(struct mipi_dsi_host *host,
 	dsim->format	 = 0;
 	dsim->mode_flags = 0;
 
+	/* detached panel should be NULL */
+	dsim->panel = NULL;
+
 	return 0;
 }
 
@@ -603,8 +607,10 @@ static void sec_mipi_dsim_write_pl_to_sfr_fifo(struct sec_mipi_dsim *dsim,
 	switch (length) {
 	case 3:
 		pl_data |= ((u8 *)payload)[2] << 16;
+		/* fall through */
 	case 2:
 		pl_data |= ((u8 *)payload)[1] << 8;
+		/* fall through */
 	case 1:
 		pl_data |= ((u8 *)payload)[0];
 		dsim_write(dsim, pl_data, DSIM_PAYLOAD);
@@ -684,8 +690,10 @@ static int sec_mipi_dsim_read_pl_from_sfr_fifo(struct sec_mipi_dsim *dsim,
 			switch (word_count) {
 			case 3:
 				((u8 *)payload)[2] = (pl >> 16) & 0xff;
+				/* fall through */
 			case 2:
 				((u8 *)payload)[1] = (pl >> 8) & 0xff;
+				/* fall through */
 			case 1:
 				((u8 *)payload)[0] = pl & 0xff;
 				break;
@@ -788,11 +796,12 @@ static const struct mipi_dsi_host_ops sec_mipi_dsim_host_ops = {
 static int sec_mipi_dsim_bridge_attach(struct drm_bridge *bridge)
 {
 	int ret;
+	bool attach_bridge = false;
 	struct sec_mipi_dsim *dsim = bridge->driver_private;
 	struct device *dev = dsim->dev;
 	struct device_node *np = dev->of_node;
-	struct device_node *endpoint, *remote;
-	struct drm_bridge *next = NULL;
+	struct device_node *endpoint, *remote = NULL;
+	struct drm_bridge *next = ERR_PTR(-ENODEV);
 	struct drm_encoder *encoder = dsim->encoder;
 
 	/* TODO: All bridges and planes should have already been added */
@@ -807,7 +816,14 @@ static int sec_mipi_dsim_bridge_attach(struct drm_bridge *bridge)
 	if (!endpoint)
 		return -ENODEV;
 
-	while(endpoint && !next) {
+	while (endpoint) {
+		/* check the endpoint can attach bridge or not */
+		attach_bridge = of_property_read_bool(endpoint, "attach-bridge");
+		if (!attach_bridge) {
+			endpoint = of_graph_get_next_endpoint(np, endpoint);
+			continue;
+		}
+
 		remote = of_graph_get_remote_port_parent(endpoint);
 
 		if (!remote || !of_device_is_available(remote)) {
@@ -826,9 +842,17 @@ static int sec_mipi_dsim_bridge_attach(struct drm_bridge *bridge)
 		endpoint = of_graph_get_next_endpoint(np, endpoint);
 	}
 
-	/* No valid dsi device attached */
+	/* No workable bridge exists */
+	if (IS_ERR(next))
+		return PTR_ERR(next);
+
+	/* For the panel driver loading is after dsim bridge,
+	 * defer bridge binding to wait for panel driver ready.
+	 * The disadvantage of probe defer is endless probing
+	 * in some cases.
+	 */
 	if (!next)
-		return -ENODEV;
+		return -EPROBE_DEFER;
 
 	/* duplicate bridges or next bridge exists */
 	WARN_ON(bridge == next || bridge->next || dsim->next);
@@ -1142,7 +1166,7 @@ static void sec_mipi_dsim_set_standby(struct sec_mipi_dsim *dsim,
 struct dsim_pll_pms *sec_mipi_dsim_calc_pmsk(struct sec_mipi_dsim *dsim)
 {
 	uint32_t p, m, s;
-	uint32_t best_p, best_m, best_s;
+	uint32_t best_p = 0, best_m = 0, best_s = 0;
 	uint32_t fin, fout;
 	uint32_t s_pow_2, raw_s;
 	uint64_t mfin, pfvco, pfout, psfout;
@@ -1186,10 +1210,10 @@ struct dsim_pll_pms *sec_mipi_dsim_calc_pmsk(struct sec_mipi_dsim *dsim)
 	 * Fvco: [1050MHz ~ 2100MHz] (Fvco = ((m + k / 65536) * Fin) / p)
 	 * So, m = Fvco * p / Fin and Fvco > Fin;
 	 */
-	pfvco = fvco_range->min * prange->min;
+	pfvco = (uint64_t)fvco_range->min * prange->min;
 	mrange->min = max_t(uint32_t, mrange->min,
 			    DIV_ROUND_UP_ULL(pfvco, fin));
-	pfvco = fvco_range->max * prange->max;
+	pfvco = (uint64_t)fvco_range->max * prange->max;
 	mrange->max = min_t(uint32_t, mrange->max,
 			    DIV_ROUND_UP_ULL(pfvco, fin));
 
@@ -1202,7 +1226,7 @@ struct dsim_pll_pms *sec_mipi_dsim_calc_pmsk(struct sec_mipi_dsim *dsim)
 	/* first determine 'm', then can determine 'p', last determine 's' */
 	for (m = mrange->min; m <= mrange->max; m++) {
 		/* p = m * Fin / Fvco */
-		mfin = m * fin;
+		mfin = (uint64_t)m * fin;
 		pr_new.min = max_t(uint32_t, prange->min,
 				   DIV_ROUND_UP_ULL(mfin, fvco_range->max));
 		pr_new.max = min_t(uint32_t, prange->max,
@@ -1213,7 +1237,7 @@ struct dsim_pll_pms *sec_mipi_dsim_calc_pmsk(struct sec_mipi_dsim *dsim)
 
 		for (p = pr_new.min; p <= pr_new.max; p++) {
 			/* s = order_pow_of_two((m * Fin) / (p * Fout)) */
-			pfout = p * fout;
+			pfout = (uint64_t)p * fout;
 			raw_s = DIV_ROUND_CLOSEST_ULL(mfin, pfout);
 
 			s_pow_2 = rounddown_pow_of_two(raw_s);
@@ -1241,8 +1265,10 @@ struct dsim_pll_pms *sec_mipi_dsim_calc_pmsk(struct sec_mipi_dsim *dsim)
 		}
 	}
 
-	if (best_delta == ~0U)
+	if (best_delta == ~0U) {
+		devm_kfree(dev, pll_pms);
 		return ERR_PTR(-EINVAL);
+	}
 
 	pll_pms->p = best_p;
 	pll_pms->m = best_m;
@@ -1293,6 +1319,11 @@ int sec_mipi_dsim_check_pll_out(void *driver_private,
 	dsim->pms = PLLCTRL_SET_P(pmsk->p) |
 		    PLLCTRL_SET_M(pmsk->m) |
 		    PLLCTRL_SET_S(pmsk->s);
+
+	/* free 'dsim_pll_pms' structure data which is
+	 * allocated in 'sec_mipi_dsim_calc_pmsk()'.
+	 */
+	devm_kfree(dsim->dev, (void *)pmsk);
 
 	if (dsim->mode_flags & MIPI_DSI_MODE_VIDEO_SYNC_PULSE) {
 		hpar = sec_mipi_dsim_get_hblank_par(mode->name,
@@ -1472,23 +1503,6 @@ static bool sec_mipi_dsim_bridge_mode_fixup(struct drm_bridge *bridge,
 		adjusted_mode->flags |= DRM_MODE_FLAG_PVSYNC;
 	}
 
-	return true;
-}
-
-static void sec_mipi_dsim_bridge_mode_set(struct drm_bridge *bridge,
-					  struct drm_display_mode *mode,
-					  struct drm_display_mode *adjusted_mode)
-{
-	struct sec_mipi_dsim *dsim = bridge->driver_private;
-
-	/* This hook is called when the display pipe is completely
-	 * off. And since the pm runtime is implemented, the dsim
-	 * hardware cannot be accessed at this moment. So move all
-	 * the mode_set config to ->enable() hook.
-	 * And this hook is called only when 'mode_changed' is true,
-	 * so it is called not every time atomic commit.
-	 */
-
 	/* workaround for CEA standard mode "1280x720@60"
 	 * display on 4 data lanes with Non-burst with sync
 	 * pulse DSI mode, since use the standard horizontal
@@ -1505,6 +1519,23 @@ static void sec_mipi_dsim_bridge_mode_set(struct drm_bridge *bridge,
 		adjusted_mode->hsync_end   += 2;
 		adjusted_mode->htotal      += 2;
 	}
+
+	return true;
+}
+
+static void sec_mipi_dsim_bridge_mode_set(struct drm_bridge *bridge,
+					  const struct drm_display_mode *mode,
+					  const struct drm_display_mode *adjusted_mode)
+{
+	struct sec_mipi_dsim *dsim = bridge->driver_private;
+
+	/* This hook is called when the display pipe is completely
+	 * off. And since the pm runtime is implemented, the dsim
+	 * hardware cannot be accessed at this moment. So move all
+	 * the mode_set config to ->enable() hook.
+	 * And this hook is called only when 'mode_changed' is true,
+	 * so it is called not every time atomic commit.
+	 */
 
 	drm_display_mode_to_videomode(adjusted_mode, &dsim->vmode);
 }
@@ -1805,6 +1836,7 @@ int sec_mipi_dsim_bind(struct device *dev, struct device *master, void *data,
 	struct drm_bridge *bridge;
 	struct drm_connector *connector;
 	struct sec_mipi_dsim *dsim;
+	struct device_node *node = NULL;
 
 	dev_dbg(dev, "sec-dsim bridge bind begin\n");
 
@@ -1840,10 +1872,12 @@ int sec_mipi_dsim_bind(struct device *dev, struct device *master, void *data,
 		return ret;
 	}
 
-	clk_prepare_enable(dsim->clk_cfg);
+	dev_set_drvdata(dev, dsim);
+
+	pm_runtime_get_sync(dev);
 	version = dsim_read(dsim, DSIM_VERSION);
 	WARN_ON(version != pdata->version);
-	clk_disable_unprepare(dsim->clk_cfg);
+	pm_runtime_put_sync(dev);
 
 	dev_info(dev, "version number is %#x\n", version);
 
@@ -1896,18 +1930,35 @@ int sec_mipi_dsim_bind(struct device *dev, struct device *master, void *data,
 	bridge->funcs = &sec_mipi_dsim_bridge_funcs;
 	bridge->of_node = dev->of_node;
 	bridge->encoder = encoder;
-	encoder->bridge = bridge;
-
-	dev_set_drvdata(dev, dsim);
 
 	/* attach sec dsim bridge and its next bridge if exists */
 	ret = drm_bridge_attach(encoder, bridge, NULL);
 	if (ret) {
 		dev_err(dev, "Failed to attach bridge: %s\n", dev_name(dev));
+
+		/* no bridge exists, so defer probe to wait
+		 * panel driver loading
+		 */
+		if (ret != -EPROBE_DEFER) {
+			for_each_available_child_of_node(dev->of_node, node) {
+				/* skip nodes without reg property */
+				if (!of_find_property(node, "reg", NULL))
+					continue;
+
+				/* error codes only ENODEV or EPROBE_DEFER */
+				dsim->panel = of_drm_find_panel(node);
+				if (!IS_ERR(dsim->panel))
+					goto panel;
+
+				ret = PTR_ERR(dsim->panel);
+			}
+		}
+
 		mipi_dsi_host_unregister(&dsim->dsi_host);
 		return ret;
 	}
 
+panel:
 	if (dsim->panel) {
 		/* A panel has been attached */
 		connector = &dsim->connector;
@@ -1923,7 +1974,7 @@ int sec_mipi_dsim_bind(struct device *dev, struct device *master, void *data,
 		/* TODO */
 		connector->dpms = DRM_MODE_DPMS_OFF;
 
-		ret = drm_mode_connector_attach_encoder(connector, encoder);
+		ret = drm_connector_attach_encoder(connector, encoder);
 		if (ret)
 			goto cleanup_connector;
 
@@ -1951,7 +2002,6 @@ void sec_mipi_dsim_unbind(struct device *dev, struct device *master, void *data)
 	if (dsim->panel) {
 		drm_panel_detach(dsim->panel);
 		drm_connector_cleanup(&dsim->connector);
-		dsim->panel = NULL;
 	}
 
 	mipi_dsi_host_unregister(&dsim->dsi_host);

@@ -1,19 +1,8 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Intel MIC Platform Software Stack (MPSS)
  *
  * Copyright(c) 2013 Intel Corporation.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License, version 2, as
- * published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful, but
- * WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
- * General Public License for more details.
- *
- * The full GNU General Public License is included in this distribution in
- * the file called "COPYING".
  *
  * Intel MIC User Space Tools.
  */
@@ -65,9 +54,9 @@ static struct mic_info mic_list;
 /* to align the pointer to the (next) page boundary */
 #define PAGE_ALIGN(addr)        _ALIGN(addr, PAGE_SIZE)
 
-#define ACCESS_ONCE(x) (*(volatile typeof(x) *)&(x))
+#define READ_ONCE(x) (*(volatile typeof(x) *)&(x))
 
-#define GSO_ENABLED		1
+#define GSO_ENABLED		0
 #define MAX_GSO_SIZE		(64 * 1024)
 #define ETH_H_LEN		14
 #define MAX_NET_PKT_SIZE	(_ALIGN_UP(MAX_GSO_SIZE + ETH_H_LEN, 64))
@@ -76,6 +65,8 @@ static struct mic_info mic_list;
 #ifndef VIRTIO_NET_HDR_F_DATA_VALID
 #define VIRTIO_NET_HDR_F_DATA_VALID	2	/* Csum is valid */
 #endif
+
+#define VIRTCONS_SUPPORT	0
 
 static struct {
 	struct mic_device_desc dd;
@@ -382,7 +373,7 @@ disp_iovec(struct mic_info *mic, struct mic_copy_desc *copy,
 
 static inline __u16 read_avail_idx(struct mic_vring *vr)
 {
-	return ACCESS_ONCE(vr->info->avail_idx);
+	return READ_ONCE(vr->info->avail_idx);
 }
 
 static inline void txrx_prepare(int type, bool tx, struct mic_vring *vr,
@@ -414,9 +405,9 @@ mic_virtio_copy(struct mic_info *mic, int fd,
 
 static inline unsigned _vring_size(unsigned int num, unsigned long align)
 {
-	return ((sizeof(struct vring_desc) * num + sizeof(__u16) * (3 + num)
+	return _ALIGN_UP(((sizeof(struct vring_desc) * num + sizeof(__u16) * (3 + num)
 				+ align - 1) & ~(align - 1))
-		+ sizeof(__u16) * 3 + sizeof(struct vring_used_elem) * num;
+		+ sizeof(__u16) * 3 + sizeof(struct vring_used_elem) * num, 4);
 }
 
 /*
@@ -523,7 +514,7 @@ spin_for_descriptors(struct mic_info *mic, struct mic_vring *vr)
 {
 	__u16 avail_idx = read_avail_idx(vr);
 
-	while (avail_idx == le16toh(ACCESS_ONCE(vr->vr.avail->idx))) {
+	while (avail_idx == le16toh(READ_ONCE(vr->vr.avail->idx))) {
 #ifdef DEBUG
 		mpsslog("%s %s waiting for desc avail %d info_avail %d\n",
 			mic->name, __func__,
@@ -623,7 +614,7 @@ virtio_net(void *arg)
 					copy.out_len, hdr->gso_type);
 #endif
 #ifdef DEBUG
-				disp_iovec(mic, copy, __func__, __LINE__);
+				disp_iovec(mic, &copy, __func__, __LINE__);
 				mpsslog("%s %s %d read from tap 0x%lx\n",
 					mic->name, __func__, __LINE__,
 					len);
@@ -643,7 +634,7 @@ virtio_net(void *arg)
 				if (!err)
 					verify_out_len(mic, &copy);
 #ifdef DEBUG
-				disp_iovec(mic, copy, __func__, __LINE__);
+				disp_iovec(mic, &copy, __func__, __LINE__);
 				mpsslog("%s %s %d wrote to net 0x%lx\n",
 					mic->name, __func__, __LINE__,
 					sum_iovec_len(&copy));
@@ -692,12 +683,12 @@ virtio_net(void *arg)
 						sizeof(struct virtio_net_hdr);
 					verify_out_len(mic, &copy);
 #ifdef DEBUG
-					disp_iovec(mic, copy, __func__,
+					disp_iovec(mic, &copy, __func__,
 						   __LINE__);
 					mpsslog("%s %s %d ",
 						mic->name, __func__, __LINE__);
 					mpsslog("read from net 0x%lx\n",
-						sum_iovec_len(copy));
+						sum_iovec_len(&copy));
 #endif
 					len = writev(net_poll[NET_FD_TUN].fd,
 						copy.iov, copy.iovcnt);
@@ -825,7 +816,7 @@ virtio_console(void *arg)
 			len = readv(pty_fd, copy.iov, copy.iovcnt);
 			if (len > 0) {
 #ifdef DEBUG
-				disp_iovec(mic, copy, __func__, __LINE__);
+				disp_iovec(mic, &copy, __func__, __LINE__);
 				mpsslog("%s %s %d read from tap 0x%lx\n",
 					mic->name, __func__, __LINE__,
 					len);
@@ -845,10 +836,10 @@ virtio_console(void *arg)
 				if (!err)
 					verify_out_len(mic, &copy);
 #ifdef DEBUG
-				disp_iovec(mic, copy, __func__, __LINE__);
+				disp_iovec(mic, &copy, __func__, __LINE__);
 				mpsslog("%s %s %d wrote to net 0x%lx\n",
 					mic->name, __func__, __LINE__,
-					sum_iovec_len(copy));
+					sum_iovec_len(&copy));
 #endif
 				/* Reinitialize IOV for next run */
 				iov0->iov_len = PAGE_SIZE;
@@ -877,12 +868,12 @@ virtio_console(void *arg)
 					iov1->iov_len = copy.out_len;
 					verify_out_len(mic, &copy);
 #ifdef DEBUG
-					disp_iovec(mic, copy, __func__,
+					disp_iovec(mic, &copy, __func__,
 						   __LINE__);
 					mpsslog("%s %s %d ",
 						mic->name, __func__, __LINE__);
 					mpsslog("read from net 0x%lx\n",
-						sum_iovec_len(copy));
+						sum_iovec_len(&copy));
 #endif
 					len = writev(pty_fd,
 						copy.iov, copy.iovcnt);
@@ -894,7 +885,7 @@ virtio_console(void *arg)
 							sum_iovec_len(&copy));
 					} else {
 #ifdef DEBUG
-						disp_iovec(mic, copy, __func__,
+						disp_iovec(mic, &copy, __func__,
 							   __LINE__);
 						mpsslog("%s %s %d ",
 							mic->name, __func__,
@@ -1676,13 +1667,17 @@ retry:
 	mic->pid = fork();
 	switch (mic->pid) {
 	case 0:
+#if VIRTCONS_SUPPORT
 		add_virtio_device(mic, &virtcons_dev_page.dd);
+#endif
 		add_virtio_device(mic, &virtnet_dev_page.dd);
+#if VIRTCONS_SUPPORT
 		err = pthread_create(&mic->mic_console.console_thread, NULL,
 			virtio_console, mic);
 		if (err)
 			mpsslog("%s virtcons pthread_create failed %s\n",
 				mic->name, strerror(err));
+#endif
 		err = pthread_create(&mic->mic_net.net_thread, NULL,
 			virtio_net, mic);
 		if (err)

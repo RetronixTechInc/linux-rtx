@@ -1,9 +1,6 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 /*
  * Copyright 2012-2016 Freescale Semiconductor, Inc.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
  */
 
 #ifndef __FSL_SAI_H
@@ -87,8 +84,6 @@
 #define FSL_SAI_xCR3(tx, off)	(tx ? FSL_SAI_TCR3(off) : FSL_SAI_RCR3(off))
 #define FSL_SAI_xCR4(tx, off)	(tx ? FSL_SAI_TCR4(off) : FSL_SAI_RCR4(off))
 #define FSL_SAI_xCR5(tx, off)	(tx ? FSL_SAI_TCR5(off) : FSL_SAI_RCR5(off))
-#define FSL_SAI_xDR(tx)		(tx ? FSL_SAI_TDR : FSL_SAI_RDR)
-#define FSL_SAI_xFR(tx)		(tx ? FSL_SAI_TFR : FSL_SAI_RFR)
 #define FSL_SAI_xMR(tx)		(tx ? FSL_SAI_TMR : FSL_SAI_RMR)
 
 /* SAI Transmit/Receive Control Register */
@@ -115,7 +110,7 @@
 #define FSL_SAI_CSR_FRDE	BIT(0)
 
 /* SAI Transmit and Receive Configuration 1 Register */
-#define FSL_SAI_CR1_RFW_MASK	0x1f
+#define FSL_SAI_CR1_RFW_MASK(x)	((x) - 1)
 
 /* SAI Transmit and Receive Configuration 2 Register */
 #define FSL_SAI_CR2_SYNC	BIT(30)
@@ -215,6 +210,12 @@
 
 #define SAI_FLAG_PMQOS   BIT(0)
 
+/* SAI timestamp and bitcounter */
+#define FSL_SAI_xTCTL_TSEN BIT(0)
+#define FSL_SAI_xTCTL_TSINC BIT(1)
+#define FSL_SAI_xTCTL_RTSC BIT(8)
+#define FSL_SAI_xTCTL_RBC BIT(9)
+
 struct fsl_sai_soc_data {
 	unsigned int fifo_depth;
 	unsigned int fifos;
@@ -248,6 +249,7 @@ struct fsl_sai_dl_cfg {
 struct fsl_sai {
 	struct platform_device *pdev;
 	struct regmap *regmap;
+	struct regmap *regmap_gpr;
 	struct clk *bus_clk;
 	struct clk *mclk_clk[FSL_SAI_MCLK_MAX];
 	struct clk *pll8k_clk;
@@ -260,7 +262,10 @@ struct fsl_sai {
 	bool synchronous[2];
 	bool is_stream_opened[2];
 	bool is_dsd;
+	bool monitor_spdif;
+	bool monitor_spdif_start;
 
+	int gpr_idx;
 	int pcm_dl_cfg_cnt;
 	int dsd_dl_cfg_cnt;
 	struct fsl_sai_dl_cfg *pcm_dl_cfg;
@@ -283,7 +288,10 @@ struct fsl_sai {
 
 	struct fsl_sai_verid verid;
 	struct fsl_sai_param param;
+	struct snd_soc_dai_driver cpu_dai_drv;
 };
+
+const struct attribute_group *fsl_sai_get_dev_attribute_group(bool monitor_spdif);
 
 #define TX 1
 #define RX 0

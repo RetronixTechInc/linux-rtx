@@ -1,22 +1,10 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Intel MIC Platform Software Stack (MPSS)
  *
  * Copyright(c) 2013 Intel Corporation.
  *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License, version 2, as
- * published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful, but
- * WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
- * General Public License for more details.
- *
- * The full GNU General Public License is included in this distribution in
- * the file called "COPYING".
- *
  * Intel MIC driver.
- *
  */
 #ifndef __MIC_DEV_H__
 #define __MIC_DEV_H__
@@ -30,6 +18,7 @@
 enum mic_hw_family {
 	MIC_FAMILY_X100 = 0,
 	MIC_FAMILY_X200,
+	MIC_FAMILY_IMX8,
 	MIC_FAMILY_UNKNOWN,
 	MIC_FAMILY_LAST
 };

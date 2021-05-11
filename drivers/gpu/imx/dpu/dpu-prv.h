@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2016 Freescale Semiconductor, Inc.
- * Copyright 2017-2018 NXP
+ * Copyright 2017-2020 NXP
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the
@@ -15,10 +15,9 @@
 #ifndef __DPU_PRV_H__
 #define __DPU_PRV_H__
 
+#include <linux/firmware/imx/sci.h>
 #include <drm/drm_fourcc.h>
 #include <video/dpu.h>
-
-#define NA				0xDEADBEEF	/* not available */
 
 #define STATICCONTROL			0x8
 #define SHDLDREQSTICKY(lm)		(((lm) & 0xFF) << 24)
@@ -73,6 +72,8 @@ enum linemode {
 #define CLIPWINDOWYOFFSET(y)		(((y) & 0x7FFF) << 16)
 #define CLIPWINDOWWIDTH(w)		(((w) - 1) & 0x3FFF)
 #define CLIPWINDOWHEIGHT(h)		((((h) - 1) & 0x3FFF) << 16)
+#define CONSTANTALPHA_MASK		0xFF
+#define CONSTANTALPHA(n)		((n) & CONSTANTALPHA_MASK)
 #define	PALETTEENABLE			BIT(0)
 typedef enum {
 	TILE_FILL_ZERO,
@@ -84,10 +85,16 @@ typedef enum {
 #define ALPHACONSTENABLE		BIT(9)
 #define ALPHAMASKENABLE			BIT(10)
 #define ALPHATRANSENABLE		BIT(11)
+#define ALPHA_ENABLE_MASK		(ALPHASRCENABLE  | ALPHACONSTENABLE | \
+					 ALPHAMASKENABLE | ALPHATRANSENABLE)
 #define RGBALPHASRCENABLE		BIT(12)
 #define RGBALPHACONSTENABLE		BIT(13)
 #define RGBALPHAMASKENABLE		BIT(14)
 #define RGBALPHATRANSENABLE		BIT(15)
+#define RGB_ENABLE_MASK			(RGBALPHASRCENABLE   | \
+					 RGBALPHACONSTENABLE | \
+					 RGBALPHAMASKENABLE  | \
+					 RGBALPHATRANSENABLE)
 #define PREMULCONSTRGB			BIT(16)
 typedef enum {
 	YUVCONVERSIONMODE__OFF,
@@ -136,11 +143,6 @@ typedef enum {
 
 #define DPU_FRAC_PLANE_LAYER_NUM	8
 
-enum {
-	DPU_V1,
-	DPU_V2,
-};
-
 #define DPU_VPROC_CAP_HSCALER4	BIT(0)
 #define DPU_VPROC_CAP_VSCALER4	BIT(1)
 #define DPU_VPROC_CAP_HSCALER5	BIT(2)
@@ -180,7 +182,7 @@ struct cm_reg_ofs {
 	u32 generalpurpose;
 };
 
-struct dpu_devtype {
+struct dpu_data {
 	unsigned long cm_ofs;			/* common */
 	const struct dpu_unit *cfs;
 	const struct dpu_unit *decs;
@@ -192,69 +194,82 @@ struct dpu_devtype {
 	const struct dpu_unit *fws;
 	const struct dpu_unit *hss;
 	const struct dpu_unit *lbs;
+	const struct dpu_unit *sigs;
 	const struct dpu_unit *sts;
 	const struct dpu_unit *tcons;
 	const struct dpu_unit *vss;
 	const struct cm_reg_ofs *cm_reg_ofs;
-	const unsigned int *intsteer_map;
-	unsigned int intsteer_map_size;
 	const unsigned long *unused_irq;
-	const unsigned int *sw2hw_irq_map;	/* NULL means linear */
-	const unsigned int *sw2hw_block_id_map;	/* NULL means linear */
 
 	unsigned int syncmode_min_prate;	/* need pixel combiner, KHz */
 	unsigned int singlemode_max_width;
 	unsigned int master_stream_id;
 
-	/*
-	 * index:     0         1         2       3   4   5   6
-	 * source: fl0(sub0) fl1(sub0) fw2(sub0) fd0 fd1 fd2 fd3
-	 */
-	u32 plane_src_na_mask;
-	bool has_capture;
-	bool has_prefetch;
-	bool has_disp_sel_clk;
+	u32 plane_src_mask;
+
 	bool has_dual_ldb;
-	bool has_pc;
-	bool has_syncmode_fixup;
-	bool pixel_link_quirks;
-	bool pixel_link_nhvsync;	/* HSYNC and VSYNC high active */
-	unsigned int version;
 };
 
 struct dpu_soc {
 	struct device		*dev;
-	const struct dpu_devtype	*devtype;
+	const struct dpu_data	*data;
 	spinlock_t		lock;
+	struct list_head	list;
+
+	struct device		*pd_dc_dev;
+	struct device		*pd_pll0_dev;
+	struct device		*pd_pll1_dev;
+	struct device_link	*pd_dc_link;
+	struct device_link	*pd_pll0_link;
+	struct device_link	*pd_pll1_link;
 
 	void __iomem		*cm_reg;
 
 	int			id;
 	int			usecount;
 
-	struct regmap		*intsteer_regmap;
-	int			intsteer_usecount;
-	spinlock_t		intsteer_lock;
-	int			irq_cm;		/* irq common */
-	int			irq_stream0a;
-	int			irq_stream1a;
-	int			irq_reserved0;
-	int			irq_reserved1;
-	int			irq_blit;
-	int			irq_dpr0;
-	int			irq_dpr1;
+	int			irq_extdst0_shdload;
+	int			irq_extdst4_shdload;
+	int			irq_extdst1_shdload;
+	int			irq_extdst5_shdload;
+	int			irq_disengcfg_shdload0;
+	int			irq_disengcfg_framecomplete0;
+	int			irq_sig0_shdload;
+	int			irq_sig0_valid;
+	int			irq_disengcfg_shdload1;
+	int			irq_disengcfg_framecomplete1;
+	int			irq_sig1_shdload;
+	int			irq_sig1_valid;
+	int			irq_line_num;
+
+	bool			irq_chip_pm_get_extdst0_shdload;
+	bool			irq_chip_pm_get_extdst4_shdload;
+	bool			irq_chip_pm_get_extdst1_shdload;
+	bool			irq_chip_pm_get_extdst5_shdload;
+	bool			irq_chip_pm_get_disengcfg_shdload0;
+	bool			irq_chip_pm_get_disengcfg_framecomplete0;
+	bool			irq_chip_pm_get_sig0_shdload;
+	bool			irq_chip_pm_get_sig0_valid;
+	bool			irq_chip_pm_get_disengcfg_shdload1;
+	bool			irq_chip_pm_get_disengcfg_framecomplete1;
+	bool			irq_chip_pm_get_sig1_shdload;
+	bool			irq_chip_pm_get_sig1_valid;
+
 	struct irq_domain	*domain;
+
+	struct imx_sc_ipc	*dpu_ipc_handle;
 
 	struct dpu_constframe	*cf_priv[4];
 	struct dpu_disengcfg	*dec_priv[2];
 	struct dpu_extdst	*ed_priv[4];
-	struct dpu_fetchunit	*fd_priv[4];
+	struct dpu_fetchunit	*fd_priv[2];
 	struct dpu_fetchunit	*fe_priv[4];
 	struct dpu_framegen	*fg_priv[2];
-	struct dpu_fetchunit	*fl_priv[2];
+	struct dpu_fetchunit	*fl_priv[1];
 	struct dpu_fetchunit	*fw_priv[1];
 	struct dpu_hscaler	*hs_priv[3];
-	struct dpu_layerblend	*lb_priv[7];
+	struct dpu_layerblend	*lb_priv[4];
+	struct dpu_signature	*sig_priv[2];
 	struct dpu_store	*st_priv[1];
 	struct dpu_tcon		*tcon_priv[2];
 	struct dpu_vscaler	*vs_priv[3];
@@ -279,6 +294,8 @@ _DECLARE_DPU_UNIT_INIT_FUNC(fl);
 _DECLARE_DPU_UNIT_INIT_FUNC(fw);
 _DECLARE_DPU_UNIT_INIT_FUNC(hs);
 _DECLARE_DPU_UNIT_INIT_FUNC(lb);
+_DECLARE_DPU_UNIT_INIT_FUNC(sig);
+_DECLARE_DPU_UNIT_INIT_FUNC(st);
 _DECLARE_DPU_UNIT_INIT_FUNC(tcon);
 _DECLARE_DPU_UNIT_INIT_FUNC(vs);
 
@@ -296,6 +313,7 @@ DECLARE_DPU_UNIT_INIT_FUNC(fl);
 DECLARE_DPU_UNIT_INIT_FUNC(fw);
 DECLARE_DPU_UNIT_INIT_FUNC(hs);
 DECLARE_DPU_UNIT_INIT_FUNC(lb);
+DECLARE_DPU_UNIT_INIT_FUNC(sig);
 DECLARE_DPU_UNIT_INIT_FUNC(st);
 DECLARE_DPU_UNIT_INIT_FUNC(tcon);
 DECLARE_DPU_UNIT_INIT_FUNC(vs);
@@ -305,8 +323,8 @@ static inline u32 dpu_pec_fu_read(struct dpu_fetchunit *fu, unsigned int offset)
 	return readl(fu->pec_base + offset);
 }
 
-static inline void dpu_pec_fu_write(struct dpu_fetchunit *fu, u32 value,
-				    unsigned int offset)
+static inline void dpu_pec_fu_write(struct dpu_fetchunit *fu,
+				    unsigned int offset, u32 value)
 {
 	writel(value, fu->pec_base + offset);
 }
@@ -316,8 +334,8 @@ static inline u32 dpu_fu_read(struct dpu_fetchunit *fu, unsigned int offset)
 	return readl(fu->base + offset);
 }
 
-static inline void dpu_fu_write(struct dpu_fetchunit *fu, u32 value,
-				unsigned int offset)
+static inline void dpu_fu_write(struct dpu_fetchunit *fu,
+				unsigned int offset, u32 value)
 {
 	writel(value, fu->base + offset);
 }
@@ -337,13 +355,14 @@ void tcon_get_pc(struct dpu_tcon *tcon, void *data);
 static const unsigned int cf_ids[] = {0, 1, 4, 5};
 static const unsigned int dec_ids[] = {0, 1};
 static const unsigned int ed_ids[] = {0, 1, 4, 5};
-static const unsigned int fd_ids[] = {0, 1, 2, 3};
+static const unsigned int fd_ids[] = {0, 1};
 static const unsigned int fe_ids[] = {0, 1, 2, 9};
 static const unsigned int fg_ids[] = {0, 1};
-static const unsigned int fl_ids[] = {0, 1};
+static const unsigned int fl_ids[] = {0};
 static const unsigned int fw_ids[] = {2};
 static const unsigned int hs_ids[] = {4, 5, 9};
-static const unsigned int lb_ids[] = {0, 1, 2, 3, 4, 5, 6};
+static const unsigned int lb_ids[] = {0, 1, 2, 3};
+static const unsigned int sig_ids[] = {0, 1};
 static const unsigned int st_ids[] = {9};
 static const unsigned int tcon_ids[] = {0, 1};
 static const unsigned int vs_ids[] = {4, 5, 9};
@@ -438,4 +457,11 @@ static const struct dpu_pixel_format dpu_pixel_format_matrix[] = {
 	},
 };
 
+int dpu_sc_misc_get_handle(struct dpu_soc *dpu);
+int dpu_pxlink_set_mst_addr(struct dpu_soc *dpu, int disp_id, u32 val);
+int dpu_pxlink_set_mst_enable(struct dpu_soc *dpu, int disp_id, bool enable);
+int dpu_pxlink_set_mst_valid(struct dpu_soc *dpu, int disp_id, bool enable);
+int dpu_pxlink_set_sync_ctrl(struct dpu_soc *dpu, int disp_id, bool enable);
+int dpu_pxlink_set_dc_sync_mode(struct dpu_soc *dpu, bool enable);
+int dpu_sc_misc_init(struct dpu_soc *dpu);
 #endif				/* __DPU_PRV_H__ */

@@ -59,7 +59,7 @@ void __init imx6_enet_mac_init(const char *enet_compat, const char *ocotp_compat
 
 		from = enet_np;
 
-		if (of_get_mac_address(enet_np))
+		if (!IS_ERR(of_get_mac_address(enet_np)))
 			goto put_enet_node;
 
 		id = of_alias_get_id(enet_np, "ethernet");
@@ -142,11 +142,6 @@ struct imx6_busfreq_info {
 } __aligned(8);
 void imx6_up_ddr3_freq_change(struct imx6_busfreq_info *busfreq_info) {}
 void imx6_up_lpddr2_freq_change(u32 freq, int bus_freq_mode) {}
-#endif
-
-#if !defined(CONFIG_SOC_IMX6ULL)
-u32 mx6ull_lpm_wfi_start, mx6ull_lpm_wfi_end;
-void imx6ull_low_power_idle(void) {}
 #endif
 
 #if !defined(CONFIG_SOC_IMX6Q)

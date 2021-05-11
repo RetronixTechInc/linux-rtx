@@ -1,13 +1,9 @@
-/*
- * Freescale imx7d pinctrl driver
- *
- * Author: Anson Huang <Anson.Huang@freescale.com>
- * Copyright (C) 2014-2015 Freescale Semiconductor, Inc.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
- */
+// SPDX-License-Identifier: GPL-2.0
+//
+// Freescale imx7d pinctrl driver
+//
+// Author: Anson Huang <Anson.Huang@freescale.com>
+// Copyright (C) 2014-2015 Freescale Semiconductor, Inc.
 
 #include <linux/err.h>
 #include <linux/init.h>
@@ -378,40 +374,19 @@ static const struct of_device_id imx7d_pinctrl_of_match[] = {
 
 static int imx7d_pinctrl_probe(struct platform_device *pdev)
 {
-	const struct of_device_id *match;
-	struct imx_pinctrl_soc_info *pinctrl_info;
+	const struct imx_pinctrl_soc_info *pinctrl_info;
 
-	match = of_match_device(imx7d_pinctrl_of_match, &pdev->dev);
-
-	if (!match)
+	pinctrl_info = of_device_get_match_data(&pdev->dev);
+	if (!pinctrl_info)
 		return -ENODEV;
-
-	pinctrl_info = (struct imx_pinctrl_soc_info *) match->data;
 
 	return imx_pinctrl_probe(pdev, pinctrl_info);
 }
-
-static int imx7d_pinctrl_suspend(struct device *dev)
-{
-
-       return imx_pinctrl_suspend(dev);
-}
-
-static int imx7d_pinctrl_resume(struct device *dev)
-{
-
-       return imx_pinctrl_resume(dev);
-}
-
-static const struct dev_pm_ops imx7d_pinctrl_pm_ops = {
-       SET_LATE_SYSTEM_SLEEP_PM_OPS(imx7d_pinctrl_suspend, imx7d_pinctrl_resume)
-};
 
 static struct platform_driver imx7d_pinctrl_driver = {
 	.driver = {
 		.name = "imx7d-pinctrl",
 		.of_match_table = of_match_ptr(imx7d_pinctrl_of_match),
-		.pm = &imx7d_pinctrl_pm_ops,
 	},
 	.probe = imx7d_pinctrl_probe,
 };

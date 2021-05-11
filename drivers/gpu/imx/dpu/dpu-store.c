@@ -1,5 +1,5 @@
 /*
- * Copyright 2018 NXP
+ * Copyright 2018-2019 NXP
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the
@@ -20,6 +20,8 @@
 #include "dpu-prv.h"
 
 #define PIXENGCFG_STATIC		0x8
+#define DIV(n)				(((n) & 0xFF) << 16)
+#define DIV_RESET			0x80
 
 struct dpu_store {
 	void __iomem *pec_base;
@@ -35,8 +37,8 @@ static inline u32 dpu_pec_st_read(struct dpu_store *st, unsigned int offset)
 	return readl(st->pec_base + offset);
 }
 
-static inline void dpu_pec_st_write(struct dpu_store *st, u32 value,
-				    unsigned int offset)
+static inline void dpu_pec_st_write(struct dpu_store *st,
+				    unsigned int offset, u32 value)
 {
 	writel(value, st->pec_base + offset);
 }
@@ -51,16 +53,13 @@ void store_pixengcfg_syncmode_fixup(struct dpu_store *st, bool enable)
 
 	dpu = st->dpu;
 
-	if (!dpu->devtype->has_syncmode_fixup)
-		return;
-
 	mutex_lock(&st->mutex);
 	val = dpu_pec_st_read(st, PIXENGCFG_STATIC);
 	if (enable)
 		val |= BIT(16);
 	else
 		val &= ~BIT(16);
-	dpu_pec_st_write(st, val, PIXENGCFG_STATIC);
+	dpu_pec_st_write(st, PIXENGCFG_STATIC, val);
 	mutex_unlock(&st->mutex);
 }
 EXPORT_SYMBOL_GPL(store_pixengcfg_syncmode_fixup);
@@ -104,6 +103,23 @@ void dpu_st_put(struct dpu_store *st)
 }
 EXPORT_SYMBOL_GPL(dpu_st_put);
 
+void _dpu_st_init(struct dpu_soc *dpu, unsigned int id)
+{
+	struct dpu_store *st;
+	int i;
+
+	for (i = 0; i < ARRAY_SIZE(st_ids); i++)
+		if (st_ids[i] == id)
+			break;
+
+	if (WARN_ON(i == ARRAY_SIZE(st_ids)))
+		return;
+
+	st = dpu->st_priv[i];
+
+	dpu_pec_st_write(st, PIXENGCFG_STATIC, SHDEN | DIV(DIV_RESET));
+}
+
 int dpu_st_init(struct dpu_soc *dpu, unsigned int id,
 		unsigned long pec_base, unsigned long base)
 {
@@ -133,8 +149,9 @@ int dpu_st_init(struct dpu_soc *dpu, unsigned int id,
 
 	st->dpu = dpu;
 	st->id = id;
-
 	mutex_init(&st->mutex);
+
+	_dpu_st_init(dpu, id);
 
 	return 0;
 }

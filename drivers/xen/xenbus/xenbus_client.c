@@ -278,10 +278,8 @@ static void xenbus_va_dev_error(struct xenbus_device *dev, int err,
 	dev_err(&dev->dev, "%s\n", printf_buffer);
 
 	path_buffer = kasprintf(GFP_KERNEL, "error/%s", dev->nodename);
-	if (!path_buffer ||
-	    xenbus_write(XBT_NIL, path_buffer, "error", printf_buffer))
-		dev_err(&dev->dev, "failed to write error node for %s (%s)\n",
-			dev->nodename, printf_buffer);
+	if (path_buffer)
+		xenbus_write(XBT_NIL, path_buffer, "error", printf_buffer);
 
 	kfree(printf_buffer);
 	kfree(path_buffer);
@@ -365,8 +363,14 @@ int xenbus_grant_ring(struct xenbus_device *dev, void *vaddr,
 	int i, j;
 
 	for (i = 0; i < nr_pages; i++) {
-		err = gnttab_grant_foreign_access(dev->otherend_id,
-						  virt_to_gfn(vaddr), 0);
+		unsigned long gfn;
+
+		if (is_vmalloc_addr(vaddr))
+			gfn = pfn_to_gfn(vmalloc_to_pfn(vaddr));
+		else
+			gfn = virt_to_gfn(vaddr);
+
+		err = gnttab_grant_foreign_access(dev->otherend_id, gfn, 0);
 		if (err < 0) {
 			xenbus_dev_fatal(dev, err,
 					 "granting access to ring page");
@@ -450,7 +454,14 @@ EXPORT_SYMBOL_GPL(xenbus_free_evtchn);
 int xenbus_map_ring_valloc(struct xenbus_device *dev, grant_ref_t *gnt_refs,
 			   unsigned int nr_grefs, void **vaddr)
 {
-	return ring_ops->map(dev, gnt_refs, nr_grefs, vaddr);
+	int err;
+
+	err = ring_ops->map(dev, gnt_refs, nr_grefs, vaddr);
+	/* Some hypervisors are buggy and can return 1. */
+	if (err > 0)
+		err = GNTST_general_error;
+
+	return err;
 }
 EXPORT_SYMBOL_GPL(xenbus_map_ring_valloc);
 

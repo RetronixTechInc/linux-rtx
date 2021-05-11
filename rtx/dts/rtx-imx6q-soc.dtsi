@@ -16,8 +16,6 @@
 #include <dt-bindings/clock/imx6qdl-clock.h>
 #include <dt-bindings/interrupt-controller/arm-gic.h>
 
-#include "skeleton.dtsi"
-
 / {
 	aliases {
 		ethernet0 = &fec;

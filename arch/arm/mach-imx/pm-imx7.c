@@ -90,6 +90,9 @@
 #define BM_CCM_ROOT_MUX		0x7000000
 #define BM_CCM_ROOT_ENABLE	0x10000000
 
+#define SYS_COUNTER_CNTSR	0x4
+#define BM_SYS_COUNTER_CNTSR_FCR1 0x200
+#define BM_SYS_COUNTER_CNTSR_FCR0 0x100
 #define BM_SYS_COUNTER_CNTCR_FCR1 0x200
 #define BM_SYS_COUNTER_CNTCR_FCR0 0x100
 
@@ -743,6 +746,9 @@ static int imx7_pm_enter(suspend_state_t state)
 	val &= ~BM_SYS_COUNTER_CNTCR_FCR0;
 	val |= BM_SYS_COUNTER_CNTCR_FCR1;
 	writel_relaxed(val, system_counter_ctrl_base);
+	while (!(readl_relaxed(system_counter_ctrl_base + SYS_COUNTER_CNTSR)
+		& BM_SYS_COUNTER_CNTSR_FCR1))
+		;
 
 	switch (state) {
 	case PM_SUSPEND_STANDBY:
@@ -848,6 +854,9 @@ static int imx7_pm_enter(suspend_state_t state)
 	val &= ~BM_SYS_COUNTER_CNTCR_FCR1;
 	val |= BM_SYS_COUNTER_CNTCR_FCR0;
 	writel_relaxed(val, system_counter_ctrl_base);
+	while (!(readl_relaxed(system_counter_ctrl_base + SYS_COUNTER_CNTSR)
+		& BM_SYS_COUNTER_CNTSR_FCR0))
+		;
 
 	return 0;
 }
@@ -974,11 +983,10 @@ void __init imx7_pm_map_io(void)
 
 static int __init imx7_suspend_init(const struct imx7_pm_socdata *socdata)
 {
-	struct device_node *node;
-	int i, ret = 0;
 	const u32 (*ddrc_offset_array)[2];
 	const u32 (*ddrc_phy_offset_array)[2];
 	unsigned long iram_paddr;
+	int i;
 
 	suspend_set_ops(&imx7_pm_ops);
 
@@ -1092,19 +1100,14 @@ static int __init imx7_suspend_init(const struct imx7_pm_socdata *socdata)
 	}
 
 	if (psci_ops.cpu_suspend)
-		goto put_node;
+		return 0;
 
 	imx7_suspend_in_ocram_fn = fncpy(
 		suspend_ocram_base + sizeof(*pm_info),
 		&imx7_suspend,
 		MX7_SUSPEND_OCRAM_SIZE - sizeof(*pm_info));
 
-	goto put_node;
-
-put_node:
-	of_node_put(node);
-
-	return ret;
+	return 0;
 }
 
 static void __init imx7_pm_common_init(const struct imx7_pm_socdata
@@ -1218,7 +1221,7 @@ void __init imx7d_pm_init(void)
 	WARN_ON(!ocram_saved_in_ddr);
 
 	np = of_find_node_by_path(
-		"/soc/aips-bus@30800000/serial@30860000");
+		"/soc/aips-bus@30800000/spba-bus@30800000/serial@30860000");
 	if (np)
 		console_base = of_iomap(np, 0);
 

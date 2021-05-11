@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2016 Freescale Semiconductor, Inc.
- * Copyright 2017-2018 NXP
+ * Copyright 2017-2019 NXP
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the
@@ -26,6 +26,8 @@
 #include "dpu-blit.h"
 #include "dpu-blit-registers.h"
 #include "dpu-prv.h"
+
+void dpu_be_wait(struct dpu_bliteng *dpu_be);
 
 static inline u32 dpu_be_read(struct dpu_bliteng *dpu_be, unsigned int offset)
 {
@@ -255,7 +257,7 @@ EXPORT_SYMBOL(dpu_be_wait);
 static void dpu_be_init_units(struct dpu_bliteng *dpu_be)
 {
 	u32 staticcontrol;
-	u32 pixengcfg_unit_static, pixengcfg_unit_dynamic;
+	u32 pixengcfg_unit_dynamic;
 
 	staticcontrol =
 	1 << FETCHDECODE9_STATICCONTROL_SHDEN_SHIFT |
@@ -305,18 +307,6 @@ static void dpu_be_init_units(struct dpu_bliteng *dpu_be)
 	0 << STORE9_STATICCONTROL_BASEADDRESSAUTOUPDATE_SHIFT |
 	STORE9_STATICCONTROL_RESET_VALUE;
 	dpu_be_write(dpu_be, staticcontrol, STORE9_STATICCONTROL);
-
-	/* Safety_Pixengcfg Static */
-	pixengcfg_unit_static =
-	1 << PIXENGCFG_STORE9_STATIC_STORE9_SHDEN_SHIFT |
-	0 << PIXENGCFG_STORE9_STATIC_STORE9_POWERDOWN_SHIFT |
-	PIXENGCFG_STORE9_STATIC_STORE9_SYNC_MODE__SINGLE <<
-	PIXENGCFG_STORE9_STATIC_STORE9_SYNC_MODE_SHIFT |
-	PIXENGCFG_STORE9_STATIC_STORE9_SW_RESET__OPERATION <<
-	PIXENGCFG_STORE9_STATIC_STORE9_SW_RESET_SHIFT |
-	PIXENGCFG_DIVIDER_RESET <<
-	PIXENGCFG_STORE9_STATIC_STORE9_DIV_SHIFT;
-	dpu_be_write(dpu_be, pixengcfg_unit_static, PIXENGCFG_STORE9_STATIC);
 
 	/* Safety_Pixengcfg Dynamic */
 	pixengcfg_unit_dynamic =
@@ -385,7 +375,7 @@ int dpu_bliteng_init(struct dpu_bliteng *dpu_bliteng)
 	dpu_base = res->start;
 
 	/* remap with bigger size */
-	base = devm_ioremap(dpu->dev, dpu_base, COMMAND_BUFFER_SIZE);
+	base = devm_ioremap(dpu->dev, dpu_base, 64*SZ_1K);
 	dpu_bliteng->base = base;
 	dpu_bliteng->dpu = dpu;
 

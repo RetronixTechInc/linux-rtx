@@ -1,21 +1,7 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 /*
  * Copyright (C) 2010-2016 Freescale Semiconductor, Inc.
- * Copyright 2017 NXP
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307 USA
- *
+ * Copyright 2017-2019 NXP
  */
 /*
  * Based on STMP378X PxP driver
@@ -216,28 +202,28 @@ static void dump_pxp_reg(struct pxps *pxp)
 static bool is_yuv(u32 pix_fmt)
 {
 	switch (pix_fmt) {
-		case PXP_PIX_FMT_YUYV:
-		case PXP_PIX_FMT_UYVY:
-		case PXP_PIX_FMT_YVYU:
-		case PXP_PIX_FMT_VYUY:
-		case PXP_PIX_FMT_Y41P:
-		case PXP_PIX_FMT_VUY444:
-		case PXP_PIX_FMT_NV12:
-		case PXP_PIX_FMT_NV21:
-		case PXP_PIX_FMT_NV16:
-		case PXP_PIX_FMT_NV61:
-		case PXP_PIX_FMT_GREY:
-		case PXP_PIX_FMT_GY04:
-		case PXP_PIX_FMT_YVU410P:
-		case PXP_PIX_FMT_YUV410P:
-		case PXP_PIX_FMT_YVU420P:
-		case PXP_PIX_FMT_YUV420P:
-		case PXP_PIX_FMT_YUV420P2:
-		case PXP_PIX_FMT_YVU422P:
-		case PXP_PIX_FMT_YUV422P:
-			return true;
-		default:
-			return false;
+	case PXP_PIX_FMT_YUYV:
+	case PXP_PIX_FMT_UYVY:
+	case PXP_PIX_FMT_YVYU:
+	case PXP_PIX_FMT_VYUY:
+	case PXP_PIX_FMT_Y41P:
+	case PXP_PIX_FMT_VUY444:
+	case PXP_PIX_FMT_NV12:
+	case PXP_PIX_FMT_NV21:
+	case PXP_PIX_FMT_NV16:
+	case PXP_PIX_FMT_NV61:
+	case PXP_PIX_FMT_GREY:
+	case PXP_PIX_FMT_GY04:
+	case PXP_PIX_FMT_YVU410P:
+	case PXP_PIX_FMT_YUV410P:
+	case PXP_PIX_FMT_YVU420P:
+	case PXP_PIX_FMT_YUV420P:
+	case PXP_PIX_FMT_YUV420P2:
+	case PXP_PIX_FMT_YVU422P:
+	case PXP_PIX_FMT_YUV422P:
+		return true;
+	default:
+		return false;
 	}
 }
 
@@ -1139,9 +1125,9 @@ static inline void clkoff_callback(struct work_struct *w)
 	pxp_clk_disable(pxp);
 }
 
-static void pxp_clkoff_timer(unsigned long arg)
+static void pxp_clkoff_timer(struct timer_list *t)
 {
-	struct pxps *pxp = (struct pxps *)arg;
+	struct pxps *pxp = from_timer(pxp, t, clk_timer);
 
 	if ((pxp->pxp_ongoing == 0) && list_empty(&head))
 		schedule_work(&pxp->work);
@@ -1166,7 +1152,7 @@ static void __pxpdma_dostart(struct pxp_channel *pxp_chan)
 
 	memset(&pxp->pxp_conf_state.s0_param, 0,  sizeof(struct pxp_layer_param));
 	memset(&pxp->pxp_conf_state.out_param, 0,  sizeof(struct pxp_layer_param));
-	memset(pxp->pxp_conf_state.ol_param, 0,  sizeof(struct pxp_layer_param) * 8);
+	memset(pxp->pxp_conf_state.ol_param, 0,  sizeof(struct pxp_layer_param));
 	memset(&pxp->pxp_conf_state.proc_data, 0,  sizeof(struct pxp_proc_data));
 	/* S0 */
 	desc = list_first_entry(&head, struct pxp_tx_desc, list);
@@ -1747,9 +1733,7 @@ static int pxp_probe(struct platform_device *pdev)
 	pxp_clk_disable(pxp);
 
 	INIT_WORK(&pxp->work, clkoff_callback);
-	init_timer(&pxp->clk_timer);
-	pxp->clk_timer.function = pxp_clkoff_timer;
-	pxp->clk_timer.data = (unsigned long)pxp;
+	timer_setup(&pxp->clk_timer, pxp_clkoff_timer, 0);
 
 	init_waitqueue_head(&pxp->thread_waitq);
 	/* allocate a kernel thread to dispatch pxp conf */

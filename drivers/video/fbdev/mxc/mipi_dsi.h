@@ -8,6 +8,26 @@
  * License. You may obtain a copy of the GNU General Public License
  * Version 2 or later at the following locations:
  *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
+
+/*
+ * The code contained herein is licensed under the GNU General Public
+ * License. You may obtain a copy of the GNU General Public License
+ * Version 2 or later at the following locations:
+ *
  * http://www.opensource.org/licenses/gpl-license.html
  * http://www.gnu.org/copyleft/gpl.html
  */
@@ -142,10 +162,6 @@ int mipid_rm68200_lcd_setup(struct mipi_dsi_info *mipi_dsi);
 void mipid_rm68191_get_lcd_videomode(struct fb_videomode **mode, int *size,
                                      struct mipi_lcd_config **data);
 int mipid_rm68191_lcd_setup(struct mipi_dsi_info *mipi_dsi);
-#endif
-
-#ifndef CONFIG_FB_MXC_TRULY_WVGA_SYNC_PANEL
-#error "Please configure MIPI LCD panel, we cannot find one!"
 #endif
 
 #endif

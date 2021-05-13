@@ -11,7 +11,7 @@
 #if defined(CONFIG_SERIAL_IMX_CONSOLE) && defined(CONFIG_MAGIC_SYSRQ)
 #define SUPPORT_SYSRQ
 #endif
-
+#include <linux/device.h>
 #include <linux/module.h>
 #include <linux/ioport.h>
 #include <linux/init.h>
@@ -2253,8 +2253,8 @@ static int imx_uart_probe_dt(struct imx_port *sport,
 			if ( gpio_request_one( sport->sp339e_gpio_dir , GPIOF_DIR_OUT , "sp3339e-dir" ) == 0 )
 			{
 				gpio_set_value( sport->sp339e_gpio_dir , 1 ) ;
-			} 
-			else 
+			}
+			else
 			{
 				dev_err( &pdev->dev , "cannot request gpio for sp339e dir pin\n" ) ;
 				sport->sp339e_gpio_dir = 0 ;
@@ -2264,16 +2264,16 @@ static int imx_uart_probe_dt(struct imx_port *sport,
 		{
 			dev_err( &pdev->dev , "cannot request gpio for sp339e dir pin\n" ) ;
 		}
-		
+
 		gpio = of_get_named_gpio( np , "fsl,sp339e-enable" , 0 ) ;
 		if ( gpio_is_valid( gpio ) )
 		{
-			sport->sp339e_gpio_enable = gpio ;	
+			sport->sp339e_gpio_enable = gpio ;
 			if ( gpio_request_one( sport->sp339e_gpio_enable , GPIOF_DIR_OUT , "sp3339e-enable" ) == 0 )
 			{
 				gpio_set_value( sport->sp339e_gpio_enable , 0 ) ;
-			} 
-			else 
+			}
+			else
 			{
 				dev_err( &pdev->dev , "cannot request gpio for sp339e enable pin\n" ) ;
 				sport->sp339e_gpio_enable = 0 ;
@@ -2283,16 +2283,16 @@ static int imx_uart_probe_dt(struct imx_port *sport,
 		{
 			dev_err( &pdev->dev , "cannot request gpio for sp339e enable pin\n" ) ;
 		}
-		
+
 		gpio = of_get_named_gpio( np , "fsl,sp339e-m0" , 0 ) ;
 		if ( gpio_is_valid( gpio ) )
 		{
-			sport->sp339e_gpio_m0 = gpio ;	
+			sport->sp339e_gpio_m0 = gpio ;
 			if ( gpio_request_one( sport->sp339e_gpio_m0 , GPIOF_DIR_OUT , "sp3339e-m0" ) == 0 )
 			{
 				gpio_set_value( sport->sp339e_gpio_m0 , 1 ) ;
-			} 
-			else 
+			}
+			else
 			{
 				dev_err( &pdev->dev , "cannot request gpio for sp339e m0 pin\n" ) ;
 				sport->sp339e_gpio_m0 = 0 ;
@@ -2306,12 +2306,12 @@ static int imx_uart_probe_dt(struct imx_port *sport,
 		gpio = of_get_named_gpio( np , "fsl,sp339e-m1" , 0 ) ;
 		if ( gpio_is_valid( gpio ) )
 		{
-			sport->sp339e_gpio_m1 = gpio ;	
+			sport->sp339e_gpio_m1 = gpio ;
 			if ( gpio_request_one( sport->sp339e_gpio_m1 , GPIOF_DIR_OUT , "sp3339e-m1" ) == 0 )
 			{
 				gpio_set_value( sport->sp339e_gpio_m1 , 0 ) ;
-			} 
-			else 
+			}
+			else
 			{
 				dev_err( &pdev->dev , "cannot request gpio for sp339e m1 pin\n" ) ;
 				sport->sp339e_gpio_m1 = 0 ;
@@ -2325,12 +2325,12 @@ static int imx_uart_probe_dt(struct imx_port *sport,
 		gpio = of_get_named_gpio( np , "fsl,sp339e-tm" , 0 ) ;
 		if ( gpio_is_valid( gpio ) )
 		{
-			sport->sp339e_gpio_tm = gpio ;	
+			sport->sp339e_gpio_tm = gpio ;
 			if ( gpio_request_one( sport->sp339e_gpio_tm , GPIOF_DIR_OUT , "sp3339e-tm" ) == 0 )
 			{
 				gpio_set_value( sport->sp339e_gpio_tm , 0 ) ;
-			} 
-			else 
+			}
+			else
 			{
 				dev_err( &pdev->dev , "cannot request gpio for sp339e tm pin\n" ) ;
 				sport->sp339e_gpio_tm = 0 ;
@@ -2344,12 +2344,12 @@ static int imx_uart_probe_dt(struct imx_port *sport,
 		gpio = of_get_named_gpio( np , "fsl,sp339e-slew" , 0 ) ;
 		if ( gpio_is_valid( gpio ) )
 		{
-			sport->sp339e_gpio_slew = gpio ;	
+			sport->sp339e_gpio_slew = gpio ;
 			if ( gpio_request_one( sport->sp339e_gpio_slew , GPIOF_DIR_OUT , "sp3339e-slew" ) == 0 )
 			{
 				gpio_set_value( sport->sp339e_gpio_slew , 1 ) ;
-			} 
-			else 
+			}
+			else
 			{
 				dev_err( &pdev->dev , "cannot request gpio for sp339e slew pin\n" ) ;
 				sport->sp339e_gpio_slew = 0 ;
@@ -2394,265 +2394,6 @@ static void imx_uart_probe_pdata(struct imx_port *sport,
 /* ---------------------------------------------------------------------
  * sp339e
 --------------------------------------------------------------------- */
-static ssize_t sp339e_dir_show(struct device *dev, struct device_attribute *attr, char *buf)
-{
-	struct platform_device *pdev = container_of(dev, struct platform_device, dev);
-	struct imx_port *sport = platform_get_drvdata(pdev);
-
-	if ( ! sport->have_sp339e )
-	{
-		return -EINVAL ;
-	}
-	if ( sport->sp339e_gpio_dir )
-	{
-		return sprintf(buf, "%d", gpio_get_value(sport->sp339e_gpio_dir));
-	}
-
-	return sprintf(buf, "0");
-
-}
-
-static ssize_t sp339e_dir_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
-{
-	struct platform_device *pdev = container_of(dev, struct platform_device, dev);
-	struct imx_port *sport = platform_get_drvdata(pdev);
-	ssize_t		status = -EINVAL ;
-	
-	if ( ! sport->have_sp339e )
-	{
-		return -EINVAL ;
-	}
-		
-	if ( sport && sport->sp339e_gpio_dir )
-	{
-		long		value;
-
-		status = kstrtol(buf, 0, &value);
-		if (status == 0) {
-			gpio_set_value( sport->sp339e_gpio_dir , value ) ;
-		}
-	}
-	
-	return count ;
-}
-
-static DEVICE_ATTR(sp339e_dir, S_IRUGO | S_IWUSR, sp339e_dir_show, sp339e_dir_store);
-
-static ssize_t sp339e_enable_show(struct device *dev, struct device_attribute *attr, char *buf)
-{
-	struct platform_device *pdev = container_of(dev, struct platform_device, dev);
-	struct imx_port *sport = platform_get_drvdata(pdev);
-
-	if ( ! sport->have_sp339e )
-	{
-		return -EINVAL ;
-	}
-	if ( sport->sp339e_gpio_enable )
-	{
-		return sprintf(buf, "%d", gpio_get_value(sport->sp339e_gpio_enable));
-	}
-
-	return sprintf(buf, "0");
-}
-
-static ssize_t sp339e_enable_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
-{
-	struct platform_device *pdev = container_of(dev, struct platform_device, dev);
-	struct imx_port *sport = platform_get_drvdata(pdev);
-	ssize_t		status = -EINVAL ;
-	
-	if ( ! sport->have_sp339e )
-	{
-		return -EINVAL ;
-	}
-		
-	if ( sport && sport->sp339e_gpio_enable )
-	{
-		long		value;
-
-		status = kstrtol(buf, 0, &value);
-		if (status == 0) {
-			gpio_set_value( sport->sp339e_gpio_enable , value ) ;
-		}
-	}
-	
-	return count ;
-}
-
-static DEVICE_ATTR(sp339e_enable, S_IRUGO | S_IWUSR, sp339e_enable_show, sp339e_enable_store);
-
-static ssize_t sp339e_m0_show(struct device *dev, struct device_attribute *attr, char *buf)
-{
-	struct platform_device *pdev = container_of(dev, struct platform_device, dev);
-	struct imx_port *sport = platform_get_drvdata(pdev);
-
-	if ( ! sport->have_sp339e )
-	{
-		return -EINVAL ;
-	}
-	if ( sport->sp339e_gpio_m0 )
-	{
-		return sprintf(buf, "%d", gpio_get_value(sport->sp339e_gpio_m0));
-	}
-
-	return sprintf(buf, "0");
-}
-
-static ssize_t sp339e_m0_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
-{
-	struct platform_device *pdev = container_of(dev, struct platform_device, dev);
-	struct imx_port *sport = platform_get_drvdata(pdev);
-	ssize_t		status = -EINVAL ;
-	
-	if ( ! sport->have_sp339e )
-	{
-		return -EINVAL ;
-	}
-		
-	if ( sport && sport->sp339e_gpio_m0 )
-	{
-		long		value;
-
-		status = kstrtol(buf, 0, &value);
-		if (status == 0) {
-			gpio_set_value( sport->sp339e_gpio_m0 , value ) ;
-		}
-	}
-	
-	return count ;
-}
-
-static DEVICE_ATTR(sp339e_m0, S_IRUGO | S_IWUSR, sp339e_m0_show, sp339e_m0_store);
-
-static ssize_t sp339e_m1_show(struct device *dev, struct device_attribute *attr, char *buf)
-{
-	struct platform_device *pdev = container_of(dev, struct platform_device, dev);
-	struct imx_port *sport = platform_get_drvdata(pdev);
-
-	if ( ! sport->have_sp339e )
-	{
-		return -EINVAL ;
-	}
-	if ( sport->sp339e_gpio_m1 )
-	{
-		return sprintf(buf, "%d", gpio_get_value(sport->sp339e_gpio_m1));
-	}
-
-	return sprintf(buf, "0");
-}
-
-static ssize_t sp339e_m1_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
-{
-	struct platform_device *pdev = container_of(dev, struct platform_device, dev);
-	struct imx_port *sport = platform_get_drvdata(pdev);
-	ssize_t		status = -EINVAL ;
-	
-	if ( ! sport->have_sp339e )
-	{
-		return -EINVAL ;
-	}
-		
-	if ( sport && sport->sp339e_gpio_m1 )
-	{
-		long		value;
-
-		status = kstrtol(buf, 0, &value);
-		if (status == 0) {
-			gpio_set_value( sport->sp339e_gpio_m1 , value ) ;
-		}
-	}
-	
-	return count ;
-}
-
-static DEVICE_ATTR(sp339e_m1, S_IRUGO | S_IWUSR, sp339e_m1_show, sp339e_m1_store);
-
-static ssize_t sp339e_tm_show(struct device *dev, struct device_attribute *attr, char *buf)
-{
-	struct platform_device *pdev = container_of(dev, struct platform_device, dev);
-	struct imx_port *sport = platform_get_drvdata(pdev);
-
-	if ( ! sport->have_sp339e )
-	{
-		return -EINVAL ;
-	}
-	if ( sport->sp339e_gpio_tm )
-	{
-		return sprintf(buf, "%d", gpio_get_value(sport->sp339e_gpio_tm));
-	}
-
-	return sprintf(buf, "0");
-}
-
-static ssize_t sp339e_tm_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
-{
-	struct platform_device *pdev = container_of(dev, struct platform_device, dev);
-	struct imx_port *sport = platform_get_drvdata(pdev);
-	ssize_t		status = -EINVAL ;
-	
-	if ( ! sport->have_sp339e )
-	{
-		return -EINVAL ;
-	}
-		
-	if ( sport && sport->sp339e_gpio_tm )
-	{
-		long		value;
-
-		status = kstrtol(buf, 0, &value);
-		if (status == 0) {
-			gpio_set_value( sport->sp339e_gpio_tm , value ) ;
-		}
-	}
-	
-	return count ;
-}
-
-static DEVICE_ATTR(sp339e_tm, S_IRUGO | S_IWUSR, sp339e_tm_show, sp339e_tm_store);
-
-static ssize_t sp339e_slew_show(struct device *dev, struct device_attribute *attr, char *buf)
-{
-	struct platform_device *pdev = container_of(dev, struct platform_device, dev);
-	struct imx_port *sport = platform_get_drvdata(pdev);
-
-	if ( ! sport->have_sp339e )
-	{
-		return -EINVAL ;
-	}
-	if ( sport->sp339e_gpio_slew )
-	{
-		return sprintf(buf, "%d", gpio_get_value(sport->sp339e_gpio_slew));
-	}
-
-	return sprintf(buf, "0");
-}
-
-static ssize_t sp339e_slew_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
-{
-	struct platform_device *pdev = container_of(dev, struct platform_device, dev);
-	struct imx_port *sport = platform_get_drvdata(pdev);
-	ssize_t		status = -EINVAL ;
-	
-	if ( ! sport->have_sp339e )
-	{
-		return -EINVAL ;
-	}
-		
-	if ( sport && sport->sp339e_gpio_slew )
-	{
-		long		value;
-
-		status = kstrtol(buf, 0, &value);
-		if (status == 0) {
-			gpio_set_value( sport->sp339e_gpio_slew , value ) ;
-		}
-	}
-	
-	return count ;
-}
-
-static DEVICE_ATTR(sp339e_slew, S_IRUGO | S_IWUSR, sp339e_slew_show, sp339e_slew_store);
-
 static ssize_t sp339e_mode_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
 	struct platform_device *pdev = container_of(dev, struct platform_device, dev);
@@ -2662,7 +2403,7 @@ static ssize_t sp339e_mode_show(struct device *dev, struct device_attribute *att
 	{
 		return -EINVAL ;
 	}
-	
+
 	switch( sport->sp339e_mode )
 	{
 		case 0 : return sprintf(buf, "loop");
@@ -2672,7 +2413,7 @@ static ssize_t sp339e_mode_show(struct device *dev, struct device_attribute *att
 		default :
 			sport->sp339e_mode = 1 ;
 			return sprintf(buf, "rs232");
-			
+
 	}
 
 	return sprintf(buf, "0");
@@ -2682,12 +2423,12 @@ static ssize_t sp339e_mode_store(struct device *dev, struct device_attribute *at
 {
 	struct platform_device *pdev = container_of(dev, struct platform_device, dev);
 	struct imx_port *sport = platform_get_drvdata(pdev);
-	
+
 	if ( ! sport->have_sp339e )
 	{
 		return -EINVAL ;
 	}
-	
+
 	if ( sport )
 	{
 		if (sysfs_streq(buf, "loop"))
@@ -2728,7 +2469,7 @@ static ssize_t sp339e_mode_store(struct device *dev, struct device_attribute *at
             {
                 pinctrl_select_state(sport->pinctrl, sport->pins_rs422);
             }
-            if ( sport->sp339e_gpio_dir ) 
+            if ( sport->sp339e_gpio_dir )
             {
 				gpio_set_value( sport->sp339e_gpio_dir , 1 ) ;
 			}
@@ -2745,13 +2486,13 @@ static ssize_t sp339e_mode_store(struct device *dev, struct device_attribute *at
             {
                 pinctrl_select_state(sport->pinctrl, sport->pins_rs422);
             }
-            if ( sport->sp339e_gpio_dir ) 
+            if ( sport->sp339e_gpio_dir )
             {
 				gpio_set_value( sport->sp339e_gpio_dir , 0 ) ;
 			}
 		}
 	}
-	
+
 	return count ;
 }
 
@@ -2945,39 +2686,17 @@ static int imx_uart_probe(struct platform_device *pdev)
 
 	platform_set_drvdata(pdev, sport);
 
-	return uart_add_one_port(&imx_uart_uart_driver, &sport->port);
+	ret=uart_add_one_port(&imx_uart_uart_driver, &sport->port);
 
 	if ( sport->have_sp339e )
 	{
-		int error ;
-		error = device_create_file(&pdev->dev, &dev_attr_sp339e_dir);
-		if (error)
-			dev_err(&pdev->dev, "Error %d on creating file\n", error);
-			
-		error = device_create_file(&pdev->dev, &dev_attr_sp339e_enable);
-		if (error)
-			dev_err(&pdev->dev, "Error %d on creating file\n", error);
-			
-		error = device_create_file(&pdev->dev, &dev_attr_sp339e_m0);
-		if (error)
-			dev_err(&pdev->dev, "Error %d on creating file\n", error);
-			
-		error = device_create_file(&pdev->dev, &dev_attr_sp339e_m1);
-		if (error)
-			dev_err(&pdev->dev, "Error %d on creating file\n", error);
-			
-		error = device_create_file(&pdev->dev, &dev_attr_sp339e_tm);
-		if (error)
-			dev_err(&pdev->dev, "Error %d on creating file\n", error);
-			
-		error = device_create_file(&pdev->dev, &dev_attr_sp339e_slew);
-		if (error)
-			dev_err(&pdev->dev, "Error %d on creating file\n", error);
+		int result ;
 
-		error = device_create_file(&pdev->dev, &dev_attr_sp339e_mode);
-		if (error)
-			dev_err(&pdev->dev, "Error %d on creating file\n", error);
+		result = device_create_file(&pdev->dev, &dev_attr_sp339e_mode);
+		if (result)
+			dev_err(&pdev->dev, "Error %d on creating file\n", result);
 	}
+	return ret;
 }
 
 static int imx_uart_remove(struct platform_device *pdev)

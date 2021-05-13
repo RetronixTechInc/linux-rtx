@@ -1052,7 +1052,7 @@
     DTE mode : CSI0_DAT10 is RX; CSI0_DAT11 is TX; EIM_D19 is RTS; EIM_D20 is CTS;
     DCE mode : CSI0_DAT10 is TX; CSI0_DAT11 is RX; EIM_D19 is CTS; EIM_D20 is RTS;
     */
-    fsl,dte-mode;
+	fsl,dte-mode;
 	fsl,uart-has-rtscts;
 	fsl,sp339e;
 	fsl,sp339e-dir    = <&gpio3 20 0> ;
@@ -1081,7 +1081,7 @@
     DTE mode : CSI0_DAT14 is RX; CSI0_DAT15 is TX; KEY_ROW4 is RTS; KEY_COL4 is CTS;
     DCE mode : CSI0_DAT14 is TX; CSI0_DAT15 is RX; KEY_ROW4 is CTS; KEY_COL4 is RTS;
     */
-    fsl,dte-mode;
+	fsl,dte-mode;
 	fsl,uart-has-rtscts;
 	fsl,sp339e;
 	fsl,sp339e-dir    = <&gpio6 4 0> ;

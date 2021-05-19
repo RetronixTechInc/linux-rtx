@@ -541,7 +541,7 @@ static int gpio_keys_setup_key(struct platform_device *pdev,
 		INIT_DELAYED_WORK(&bdata->work, gpio_keys_gpio_work_func);
 
 		isr = gpio_keys_gpio_isr;
-		irqflags = IRQF_TRIGGER_RISING ;
+		irqflags = IRQF_TRIGGER_RISING|IRQF_TRIGGER_FALLING ;
 
 	} else {
 		if (!button->irq) {

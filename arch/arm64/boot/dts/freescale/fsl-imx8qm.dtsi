@@ -101,7 +101,7 @@
 		rpmsg_dma_reserved:rpmsg_dma@0x90400000 {
 			compatible = "shared-dma-pool";
 			no-map;
-			reg = <0 0x90400000 0 0x1C00000>;
+			reg = <0 0x90400000 0 0x800000>;
 		};
 		decoder_rpc: decoder_rpc@0x92000000 {
 			no-map;
@@ -118,15 +118,6 @@
 		encoder_reserved: encoder_reserved@0x94400000 {
 			no-map;
 			reg = <0 0x94400000 0 0x800000>;
-		};
-
-		/* global autoconfigured region for contiguous allocations */
-		linux,cma {
-			compatible = "shared-dma-pool";
-			reusable;
-			size = <0 0x3c000000>;
-			alloc-ranges = <0 0x96000000 0 0x3c000000>;
-			linux,cma-default;
 		};
 
 	};
@@ -256,6 +247,22 @@
 		interrupt-parent = <&gic>;
 	};
 
+	/*
+	 * vehicle core driver device node which open power domain dc by default
+	 */
+	vehicle_core: vehicle_core {
+		compatible = "nxp,imx-vehicle";
+		status = "disabled";
+	};
+
+	/*
+	 * vehicle M4 driver which can get info from MCU.
+	 */
+	vehicle_rpmsg_m4: vehicle_rpmsg_m4 {
+		compatible = "nxp,imx-vehicle-m4";
+		status = "disabled";
+	};
+
 	smmu: iommu@51400000 {
 		compatible = "arm,mmu-500";
 		interrupt-parent = <&gic>;
@@ -327,6 +334,91 @@
 	/delete-property/ cpu-idle-states;
 };
 
+/* Data for energy-aware-scheduling */
+/{
+	cpus {
+		energy-costs {
+			CPU_COST_A53: core-cost-a53 {
+				busy-cost-data = <
+					226 546
+					340 975
+					417 1914
+					453 2356
+				>;
+				idle-cost-data = <
+					94
+					94
+					94
+					0
+				>;
+			};
+			CLUSTER_COST_A53: cluster-cost-a53 {
+				busy-cost-data = <
+					226 498
+					340 816
+					417 2366
+					453 3095
+				>;
+				idle-cost-data = <
+					1037
+					1037
+					1037
+					1037
+				>;
+			};
+			CPU_COST_A72: core-cost-a72 {
+				// Hack: EnergyModel model notebook measured -178 for lowest freq
+				busy-cost-data = <
+					321 178
+					641 1520
+					834 4190
+					976 6154
+					1024 5285
+				>;
+				idle-cost-data = <
+					88
+					88
+					88
+					0
+				>;
+			};
+			CLUSTER_COST_A72: cluster-cost-a72 {
+				busy-cost-data = <
+					321 2496
+					641 3638
+					834 5454
+					976 6790
+					1024 15380
+				>;
+				idle-cost-data = <
+					1109
+					1109
+					1109
+					1109
+				>;
+			};
+		};
+	};
+};
+
+&A53_0 {
+	sched-energy-costs = <&CPU_COST_A53 &CLUSTER_COST_A53>;
+};
+&A53_1 {
+	sched-energy-costs = <&CPU_COST_A53 &CLUSTER_COST_A53>;
+};
+&A53_2 {
+	sched-energy-costs = <&CPU_COST_A53 &CLUSTER_COST_A53>;
+};
+&A53_3 {
+	sched-energy-costs = <&CPU_COST_A53 &CLUSTER_COST_A53>;
+};
+&A72_0 {
+	sched-energy-costs = <&CPU_COST_A72 &CLUSTER_COST_A72>;
+};
+&A72_1 {
+	sched-energy-costs = <&CPU_COST_A72 &CLUSTER_COST_A72>;
+};
 
 &imx8_gpu_ss {/*<freq-kHz vol-uV>*/
        operating-points = <

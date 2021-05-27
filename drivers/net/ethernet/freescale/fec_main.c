@@ -4048,29 +4048,6 @@ static const struct dev_pm_ops fec_pm_ops = {
 	SET_RUNTIME_PM_OPS(fec_runtime_suspend, fec_runtime_resume, NULL)
 };
 
-static int fec_mac_addr_setup(char *mac_addr)
-{
-	char *ptr, *p = mac_addr;
-	unsigned long tmp;
-	int i = 0, ret = 0;
-	while (p && (*p) && i < ETH_ALEN) {
-		ptr = strchr(p, ':');
-		if (ptr)
-			*ptr++ = '\0';
-		if (strlen(p)) {
-			ret = kstrtoul((const char *)p, 16, &tmp);
-			if (ret < 0 || tmp > 0xff)
-				break;
-			macaddr[i++] = tmp;
-		}
-		p = ptr;
-	}
-
-	return 0;
-}
-
-__setup("fec_mac=", fec_mac_addr_setup);
-
 static struct platform_driver fec_driver = {
 	.driver	= {
 		.name	= DRIVER_NAME,

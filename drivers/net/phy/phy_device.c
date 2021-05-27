@@ -1676,14 +1676,14 @@ EXPORT_SYMBOL(genphy_write_mmd_unsupported);
 
 int genphy_suspend(struct phy_device *phydev)
 {
-//	int value;
+	int value;
 
-//	mutex_lock(&phydev->lock);
+	mutex_lock(&phydev->lock);
 
-//	value = phy_read(phydev, MII_BMCR);
-//	phy_write(phydev, MII_BMCR, value | BMCR_PDOWN);
+	value = phy_read(phydev, MII_BMCR);
+	phy_write(phydev, MII_BMCR, value | BMCR_PDOWN);
 
-//	mutex_unlock(&phydev->lock);
+	mutex_unlock(&phydev->lock);
 
 	return 0;
 }
@@ -1691,10 +1691,10 @@ EXPORT_SYMBOL(genphy_suspend);
 
 int genphy_resume(struct phy_device *phydev)
 {
-//	int value;
+	int value;
 
-//	value = phy_read(phydev, MII_BMCR);
-//	phy_write(phydev, MII_BMCR, value & ~BMCR_PDOWN);
+	value = phy_read(phydev, MII_BMCR);
+	phy_write(phydev, MII_BMCR, value & ~BMCR_PDOWN);
 
 	return 0;
 }

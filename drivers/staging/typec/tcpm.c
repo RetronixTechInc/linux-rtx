@@ -29,6 +29,9 @@
 #include <linux/spinlock.h>
 #include <linux/usb/typec.h>
 #include <linux/workqueue.h>
+#ifdef CONFIG_PM_WAKELOCKS
+#include <linux/wakelock.h>
+#endif
 #include <linux/busfreq-imx.h>
 #include <linux/pm_qos.h>
 

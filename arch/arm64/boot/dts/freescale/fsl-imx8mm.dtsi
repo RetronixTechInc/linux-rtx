@@ -70,20 +70,12 @@
 		reg = <0x0 0x40000000 0 0x80000000>;
 	};
 
-	reserved-memory {
+	resmem: reserved-memory {
 		#address-cells = <2>;
 		#size-cells = <2>;
 		ranges;
 
 		/* global autoconfigured region for contiguous allocations */
-		linux,cma {
-			compatible = "shared-dma-pool";
-			reusable;
-			size = <0 0x28000000>;
-			alloc-ranges = <0 0x40000000 0 0x60000000>;
-			linux,cma-default;
-		};
-
 		rpmsg_reserved: rpmsg@0xb8000000 {
 			no-map;
 			reg = <0 0xb8000000 0 0x400000>;
@@ -985,7 +977,7 @@
 		only-dma-mask32 = <1>;
 	};
 
-	imx_ion {
+	imx_ion: imx_ion {
 		compatible = "fsl,mxc-ion";
 		fsl,heap-id = <0>;
 	};
@@ -1290,4 +1282,47 @@
 		"arm_pll_out", "sys1_pll_800m";
 	clock-latency = <61036>;
 	#cooling-cells = <2>;
+};
+
+/* Data for energy-aware-scheduling */
+/{
+	cpus {
+		energy-costs {
+			CPU_COST_A53: core-cost-a53 {
+				busy-cost-data = <
+					683  512
+					910  864
+					1024 1200
+				>;
+				idle-cost-data = <
+					94
+					0
+				>;
+			};
+			CLUSTER_COST_A53: cluster-cost-a53 {
+				busy-cost-data = <
+					683  512
+					910  864
+					1024 1200
+				>;
+				idle-cost-data = <
+					1037
+					1037
+				>;
+			};
+		};
+	};
+};
+
+&A53_0 {
+	sched-energy-costs = <&CPU_COST_A53 &CLUSTER_COST_A53>;
+};
+&A53_1 {
+	sched-energy-costs = <&CPU_COST_A53 &CLUSTER_COST_A53>;
+};
+&A53_2 {
+	sched-energy-costs = <&CPU_COST_A53 &CLUSTER_COST_A53>;
+};
+&A53_3 {
+	sched-energy-costs = <&CPU_COST_A53 &CLUSTER_COST_A53>;
 };

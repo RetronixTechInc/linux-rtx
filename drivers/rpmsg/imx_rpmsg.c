@@ -66,7 +66,7 @@ struct imx_rpmsg_vproc {
 	int vdev_nums;
 	int first_notify;
 	u32 none_suspend;
-#define MAX_VDEV_NUMS  8
+#define MAX_VDEV_NUMS  9
 	struct imx_virdev *ivdev[MAX_VDEV_NUMS];
 	void __iomem *mu_base;
 	struct delayed_work rpmsg_work;

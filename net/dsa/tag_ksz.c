@@ -1,6 +1,6 @@
 /*
  * net/dsa/tag_ksz.c - Microchip KSZ Switch tag format handling
- * Copyright (c) 2017-2018 Microchip Technology
+ * Copyright (c) 2017 Microchip Technology
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -11,109 +11,95 @@
 #include <linux/etherdevice.h>
 #include <linux/list.h>
 #include <linux/slab.h>
-#include <linux/dsa/ksz_dsa.h>
 #include <net/dsa.h>
 #include "dsa_priv.h"
 
-/* Usually only one byte is used for tail tag. */
-#define KSZ_INGRESS_TAG_LEN		1
-#define KSZ_EGRESS_TAG_LEN		1
+/* For Ingress (Host -> KSZ), 2 bytes are added before FCS.
+ * ---------------------------------------------------------------------------
+ * DA(6bytes)|SA(6bytes)|....|Data(nbytes)|tag0(1byte)|tag1(1byte)|FCS(4bytes)
+ * ---------------------------------------------------------------------------
+ * tag0 : Prioritization (not used now)
+ * tag1 : each bit represents port (eg, 0x01=port1, 0x02=port2, 0x10=port5)
+ *
+ * For Egress (KSZ -> Host), 1 byte is added before FCS.
+ * ---------------------------------------------------------------------------
+ * DA(6bytes)|SA(6bytes)|....|Data(nbytes)|tag0(1byte)|FCS(4bytes)
+ * ---------------------------------------------------------------------------
+ * tag0 : zero-based value represents port
+ *	  (eg, 0x00=port1, 0x02=port3, 0x06=port7)
+ */
+
+#define	KSZ_INGRESS_TAG_LEN	2
+#define	KSZ_EGRESS_TAG_LEN	1
 
 static struct sk_buff *ksz_xmit(struct sk_buff *skb, struct net_device *dev)
 {
 	struct dsa_slave_priv *p = netdev_priv(dev);
-	struct dsa_switch *ds = p->parent;
-	struct ksz_device *sw = ds->priv;
 	struct sk_buff *nskb;
-	int len;
 	int padlen;
-
-	len = KSZ_INGRESS_TAG_LEN;
-	if (sw->tag_ops->get_len)
-		len = sw->tag_ops->get_len(sw);
+	u8 *tag;
 
 	padlen = (skb->len >= ETH_ZLEN) ? 0 : ETH_ZLEN - skb->len;
 
-	nskb = alloc_skb(NET_IP_ALIGN + skb->len +
-			 padlen + len, GFP_ATOMIC);
-	if (!nskb) {
-		kfree_skb(skb);
-		return NULL;
+	if (skb_tailroom(skb) >= padlen + KSZ_INGRESS_TAG_LEN) {
+		/* Let dsa_slave_xmit() free skb */
+		if (__skb_put_padto(skb, skb->len + padlen, false))
+			return NULL;
+
+		nskb = skb;
+	} else {
+		nskb = alloc_skb(NET_IP_ALIGN + skb->len +
+				 padlen + KSZ_INGRESS_TAG_LEN, GFP_ATOMIC);
+		if (!nskb)
+			return NULL;
+		skb_reserve(nskb, NET_IP_ALIGN);
+
+		skb_reset_mac_header(nskb);
+		skb_set_network_header(nskb,
+				       skb_network_header(skb) - skb->head);
+		skb_set_transport_header(nskb,
+					 skb_transport_header(skb) - skb->head);
+		skb_copy_and_csum_dev(skb, skb_put(nskb, skb->len));
+
+		/* Let skb_put_padto() free nskb, and let dsa_slave_xmit() free
+		 * skb
+		 */
+		if (skb_put_padto(nskb, nskb->len + padlen))
+			return NULL;
+
+		consume_skb(skb);
 	}
-	skb_reserve(nskb, NET_IP_ALIGN);
 
-	skb_reset_mac_header(nskb);
-	skb_set_network_header(nskb,
-			       skb_network_header(skb) - skb->head);
-	skb_set_transport_header(nskb,
-				 skb_transport_header(skb) - skb->head);
-	skb_copy_and_csum_dev(skb, skb_put(nskb, skb->len));
-	kfree_skb(skb);
-
-	if (padlen) {
-		u8 *pad = skb_put(nskb, padlen);
-		memset(pad, 0, padlen);
-	}
-
-	sw->tag_ops->set_tag(sw, skb_put(nskb, len), skb_mac_header(nskb),
-			     p->port);
+	tag = skb_put(nskb, KSZ_INGRESS_TAG_LEN);
+	tag[0] = 0;
+	tag[1] = 1 << p->dp->index; /* destination port */
 
 	return nskb;
 }
 
-static int ksz_rcv(struct sk_buff *skb, struct net_device *dev,
-		   struct packet_type *pt, struct net_device *orig_dev)
+static struct sk_buff *ksz_rcv(struct sk_buff *skb, struct net_device *dev,
+			       struct packet_type *pt)
 {
 	struct dsa_switch_tree *dst = dev->dsa_ptr;
-	struct dsa_switch *ds;
-	struct ksz_device *sw;
+	struct dsa_port *cpu_dp = dsa_get_cpu_port(dst);
+	struct dsa_switch *ds = cpu_dp->ds;
 	u8 *tag;
-	int len;
 	int source_port;
-
-	if (unlikely(dst == NULL))
-		goto out_drop;
-	ds = dst->ds[0];
-	sw = ds->priv;
-
-	skb = skb_unshare(skb, GFP_ATOMIC);
-	if (skb == NULL)
-		goto out;
-
-	if (skb_linearize(skb))
-		goto out_drop;
 
 	tag = skb_tail_pointer(skb) - KSZ_EGRESS_TAG_LEN;
 
-	len = KSZ_EGRESS_TAG_LEN;
-	if (sw->tag_ops->get_tag)
-		len = sw->tag_ops->get_tag(sw, tag, &source_port);
-	else
-		source_port = tag[0] & 7;
+	source_port = tag[0] & 7;
+	if (source_port >= ds->num_ports || !ds->ports[source_port].netdev)
+		return NULL;
 
-	if (source_port >= DSA_MAX_PORTS || !ds->ports[source_port].netdev)
-		goto out_drop;
+	if (unlikely(ds->cpu_port_mask & BIT(source_port)))
+		return NULL;
 
-	pskb_trim_rcsum(skb, skb->len - len);
+	pskb_trim_rcsum(skb, skb->len - KSZ_EGRESS_TAG_LEN);
 
 	skb->dev = ds->ports[source_port].netdev;
-	skb_push(skb, ETH_HLEN);
-	skb->pkt_type = PACKET_HOST;
-	skb->protocol = eth_type_trans(skb, skb->dev);
 
-	skb->dev->stats.rx_packets++;
-	skb->dev->stats.rx_bytes += skb->len;
-
-	skb->offload_fwd_mark = true;
-
-	netif_receive_skb(skb);
-
-	return 0;
-
-out_drop:
-	kfree_skb(skb);
-out:
-	return 0;
+	return skb;
 }
 
 const struct dsa_device_ops ksz_netdev_ops = {

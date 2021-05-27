@@ -21,6 +21,7 @@
 #include <linux/of.h>
 #include <linux/irq.h>
 #include <linux/of_device.h>
+#include <linux/extcon.h>
 
 #include "imx-hdp.h"
 #include "imx-hdmi.h"
@@ -67,6 +68,14 @@ static inline struct imx_hdp *enc_to_imx_hdp(struct drm_encoder *e)
 {
 	return container_of(e, struct imx_hdp, encoder);
 }
+
+#ifdef CONFIG_EXTCON
+static const unsigned int imx_hdmi_extcon_cables[] = {
+	EXTCON_DISP_HDMI,
+	EXTCON_NONE,
+};
+struct extcon_dev *hdp_edev;
+#endif
 
 static inline bool imx_hdp_is_dual_mode(struct drm_display_mode *mode)
 {
@@ -567,7 +576,9 @@ void imx8qm_dp_pixel_clock_set_rate(struct hdp_clks *clks)
 		clk_set_rate(clks->av_pll, pclock);
 
 		/* Enable the 24MHz for HDP PHY */
-		sc_misc_set_control(ipc_handle, SC_R_HDMI, SC_C_MODE, 1);
+		sci_err = sc_misc_set_control(ipc_handle, SC_R_HDMI, SC_C_MODE, 1);
+		if (sci_err != SC_ERR_NONE)
+			pr_err("Failed to enable HDP PHY (%d)\n", sci_err);
 
 		sc_ipc_close(ipc_handle);
 	} else
@@ -1403,10 +1414,16 @@ static void hotplug_work_func(struct work_struct *work)
 			imx_hdp_mode_setup(hdp, &hdp->video.pre_mode);
 		DRM_INFO("HDMI/DP Cable Plug In\n");
 		enable_irq(hdp->irq[HPD_IRQ_OUT]);
+#ifdef CONFIG_EXTCON
+		extcon_set_state_sync(hdp_edev, EXTCON_DISP_HDMI, 1);
+#endif
 	} else if (connector->status == connector_status_disconnected) {
 		/* Cable Disconnedted  */
 		DRM_INFO("HDMI/DP Cable Plug Out\n");
 		enable_irq(hdp->irq[HPD_IRQ_IN]);
+#ifdef CONFIG_EXTCON
+		extcon_set_state_sync(hdp_edev, EXTCON_DISP_HDMI, 0);
+#endif
 	}
 }
 
@@ -1650,8 +1667,12 @@ static int imx_hdp_imx_bind(struct device *dev, struct device *master,
 			goto err_irq;
 		}
 		/* Cable Disconnedted, enable Plug in IRQ */
-		if (hpd == 0)
+		if (hpd == 0) {
 			enable_irq(hdp->irq[HPD_IRQ_IN]);
+#ifdef CONFIG_EXTCON
+			extcon_set_state_sync(hdp_edev, EXTCON_DISP_HDMI, 0);
+#endif
+		}
 	}
 	if (hdp->irq[HPD_IRQ_OUT] > 0) {
 		irq_set_status_flags(hdp->irq[HPD_IRQ_OUT], IRQ_NOAUTOEN);
@@ -1665,8 +1686,12 @@ static int imx_hdp_imx_bind(struct device *dev, struct device *master,
 			goto err_irq;
 		}
 		/* Cable Connected, enable Plug out IRQ */
-		if (hpd == 1)
+		if (hpd == 1) {
 			enable_irq(hdp->irq[HPD_IRQ_OUT]);
+#ifdef CONFIG_EXTCON
+			extcon_set_state_sync(hdp_edev, EXTCON_DISP_HDMI, 1);
+#endif
+		}
 	}
 #ifdef CONFIG_IMX_HDP_CEC
 	if (hdp->is_cec) {
@@ -1702,6 +1727,20 @@ static const struct component_ops imx_hdp_imx_ops = {
 
 static int imx_hdp_imx_probe(struct platform_device *pdev)
 {
+#ifdef CONFIG_EXTCON
+	int ret = 0;
+	hdp_edev = devm_extcon_dev_allocate(&pdev->dev, imx_hdmi_extcon_cables);
+	if (IS_ERR(hdp_edev)) {
+		dev_err(&pdev->dev, "failed to allocate extcon device\n");
+		goto out;
+	}
+	ret = devm_extcon_dev_register(&pdev->dev,hdp_edev);
+	if (ret < 0) {
+		dev_err(&pdev->dev, "failed to register extcon device\n");
+		goto out;
+	}
+out:
+#endif
 	return component_add(&pdev->dev, &imx_hdp_imx_ops);
 }
 

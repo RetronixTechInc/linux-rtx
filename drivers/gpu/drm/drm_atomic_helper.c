@@ -1234,7 +1234,7 @@ drm_atomic_helper_wait_for_vblanks(struct drm_device *dev,
 		ret = wait_event_timeout(dev->vblank[i].queue,
 				old_state->crtcs[i].last_vblank_count !=
 					drm_crtc_vblank_count(crtc),
-				msecs_to_jiffies(50));
+				msecs_to_jiffies(100));
 
 		WARN(!ret, "[CRTC:%d:%s] vblank wait timed out\n",
 		     crtc->base.id, crtc->name);
@@ -3188,6 +3188,7 @@ void __drm_atomic_helper_crtc_duplicate_state(struct drm_crtc *crtc,
 	state->color_mgmt_changed = false;
 	state->zpos_changed = false;
 	state->event = NULL;
+	state->fence = NULL;
 	state->pageflip_flags = 0;
 }
 EXPORT_SYMBOL(__drm_atomic_helper_crtc_duplicate_state);

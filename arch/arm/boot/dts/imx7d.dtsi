@@ -65,18 +65,10 @@
 		};
 	};
 
-	reserved-memory {
+	rsvd_mem: reserved-memory {
 		#address-cells = <1>;
 		#size-cells = <1>;
 		ranges;
-
-		/* global autoconfigured region for contiguous allocations */
-		linux,cma {
-			compatible = "shared-dma-pool";
-			reusable;
-			size = <0x14000000>;
-			linux,cma-default;
-		};
 	};
 
 	soc {
@@ -168,6 +160,11 @@
 					<&ocram 0x00905000 0x1b000>,
 					<&ocrams 0x00900000 0x4000>;
 			overw_clock = <&ocrams &clks IMX7D_OCRAM_CLK>;
+		};
+
+		imx_ion {
+			compatible = "fsl,mxc-ion";
+			fsl,heap-id = <0>;
 		};
 	};
 };

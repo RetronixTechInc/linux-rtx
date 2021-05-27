@@ -15,6 +15,33 @@
 #include "fsl-imx8qxp.dtsi"
 
 / {
+	firmware {
+		android {
+			compatible = "android,firmware";
+			fstab {
+				compatible = "android,fstab";
+				vendor {
+					compatible = "android,vendor";
+					/* sd card node which used if androidboot.storage_type=sd */
+					dev_sd = "/dev/block/platform/5b020000.usdhc/by-name/vendor";
+					/* emmc node which used if androidboot.storage_type=emmc */
+					dev_emmc = "/dev/block/platform/5b010000.usdhc/by-name/vendor";
+					type = "ext4";
+					mnt_flags = "ro,barrier=1,inode_readahead_blks=8";
+					fsmgr_flags = "wait,slotselect,avb";
+				};
+			};
+			vbmeta {
+				/*we need use FirstStageMountVBootV2 if we enable avb*/
+				compatible = "android,vbmeta";
+				/*parts means the partition witch can be mount in first stage*/
+				parts = "vbmeta,boot,system,vendor";
+			};
+		};
+	};
+};
+
+/ {
 	model = "Freescale i.MX8QXP MEK";
 	compatible = "fsl,imx8qxp-mek", "fsl,imx8qxp";
 
@@ -23,20 +50,18 @@
 		stdout-path = &lpuart0;
 	};
 
+	bt_rfkill {
+		compatible = "fsl,mxc_bt_rfkill";
+		bt-power-gpios = <&pca9557_a 1 GPIO_ACTIVE_LOW>;
+		status ="okay";
+	};
+
 	brcmfmac: brcmfmac {
 		compatible = "cypress,brcmfmac";
 		pinctrl-names = "init", "idle", "default";
 		pinctrl-0 = <&pinctrl_wifi_init>;
 		pinctrl-1 = <&pinctrl_wifi_init>;
 		pinctrl-2 = <&pinctrl_wifi>;
-	};
-
-	modem_reset: modem-reset {
-		compatible = "gpio-reset";
-		reset-gpios = <&pca9557_a 1 GPIO_ACTIVE_LOW>;
-		reset-delay-us = <2000>;
-		reset-post-delay-ms = <40>;
-		#reset-cells = <0>;
 	};
 
 	regulators {
@@ -160,6 +185,13 @@
 		esai-controller = <&esai0>;
 		audio-codec = <&cs42888>;
 		asrc-controller = <&asrc0>;
+		status = "okay";
+	};
+
+	sound-xtor {
+		compatible = "fsl,imx-audio-xtor";
+		model = "xtor-audio";
+		cpu-dai = <&sai0>;
 		status = "okay";
 	};
 
@@ -501,6 +533,15 @@
 			>;
 		};
 
+		pinctrl_sai0: sai0grp {
+			fsl,pins = <
+				SC_P_SAI0_RXD_ADMA_SAI0_RXD 0x0600004c
+				SC_P_SAI0_TXC_ADMA_SAI0_TXC 0x0600004c
+				SC_P_SAI0_TXFS_ADMA_SAI0_TXFS 0x0600004c
+				SC_P_SAI0_TXD_ADMA_SAI0_TXD 0x0600006c
+			>;
+		};
+
 		pinctrl_sai1: sai1grp {
 			fsl,pins = <
 				SC_P_SAI1_RXD_ADMA_SAI1_RXD	0x06000040
@@ -679,7 +720,6 @@
 &lpuart1 {
 	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl_lpuart1>;
-	resets = <&modem_reset>;
 	status = "okay";
 };
 
@@ -948,6 +988,17 @@
 		default-role = "source";
 		status = "okay";
 	};
+};
+
+&sai0 {
+	assigned-clocks = <&clk IMX8QXP_AUD_PLL0_DIV>,
+			<&clk IMX8QXP_AUD_ACM_AUD_PLL_CLK0_DIV>,
+			<&clk IMX8QXP_AUD_ACM_AUD_REC_CLK0_DIV>,
+			<&clk IMX8QXP_AUD_SAI_0_MCLK>;
+	assigned-clock-rates = <786432000>, <49152000>, <12288000>, <49152000>;
+	pinctrl-names = "default";
+	pinctrl-0 = <&pinctrl_sai0>;
+	status = "okay";
 };
 
 &sai1 {
@@ -1394,4 +1445,21 @@
 			};
 		};
 	};
+};
+
+&crypto {
+       status = "disabled";
+};
+
+/ {
+    reserved-memory {
+	    #address-cells = <2>;
+	    #size-cells = <2>;
+	    ranges;
+
+	    carveout_region: imx_ion@0 {
+		    compatible = "imx-ion-pool";
+		    reg = <0x0 0xf8000000 0 0x8000000>;
+	    };
+    };
 };

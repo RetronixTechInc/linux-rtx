@@ -76,17 +76,10 @@
 		ranges;
 
 		/* global autoconfigured region for contiguous allocations */
-		linux,cma {
-			compatible = "shared-dma-pool";
-			reusable;
-			size = <0 0x3c000000>;
-			alloc-ranges = <0 0x40000000 0 0x40000000>;
-			linux,cma-default;
-		};
 
-		rpmsg_reserved: rpmsg@0xb8000000 {
+		rpmsg_reserved: rpmsg@0x98000000 {
 			no-map;
-			reg = <0 0xb8000000 0 0x400000>;
+			reg = <0 0x98000000 0 0x100000>;
 		};
 	};
 
@@ -414,7 +407,7 @@
 		#thermal-sensor-cells =  <0>;
 	};
 
-	thermal-zones {
+	thermal_zones: thermal-zones {
 		/* cpu thermal */
 		cpu-thermal {
 			polling-delay-passive = <250>;

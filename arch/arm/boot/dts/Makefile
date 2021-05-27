@@ -356,150 +356,9 @@ dtb-$(CONFIG_SOC_IMX53) += \
 	imx53-usbarmory.dtb \
 	imx53-voipac-bsb.dtb
 dtb-$(CONFIG_SOC_IMX6Q) += \
-	imx6dl-apf6dev.dtb \
-	imx6dl-aristainetos_4.dtb \
-	imx6dl-aristainetos_7.dtb \
-	imx6dl-aristainetos2_4.dtb \
-	imx6dl-aristainetos2_7.dtb \
-	imx6dl-colibri-eval-v3.dtb \
-	imx6dl-cubox-i.dtb \
-	imx6dl-dfi-fs700-m60.dtb \
-	imx6dl-gw51xx.dtb \
-	imx6dl-gw52xx.dtb \
-	imx6dl-gw53xx.dtb \
-	imx6dl-gw54xx.dtb \
-	imx6dl-gw551x.dtb \
-	imx6dl-gw552x.dtb \
-	imx6dl-gw553x.dtb \
-	imx6dl-gw560x.dtb \
-	imx6dl-gw5903.dtb \
-	imx6dl-gw5904.dtb \
-	imx6dl-hummingboard.dtb \
-	imx6dl-icore.dtb \
-	imx6dl-icore-rqs.dtb \
-	imx6dl-nit6xlite.dtb \
-	imx6dl-nitrogen6x.dtb \
-	imx6dl-phytec-pbab01.dtb \
-	imx6dl-rex-basic.dtb \
-	imx6dl-riotboard.dtb \
-	imx6dl-sabreauto.dtb \
-	imx6dl-sabreauto-ecspi.dtb \
-	imx6dl-sabreauto-enetirq.dtb \
-	imx6dl-sabreauto-flexcan1.dtb \
-	imx6dl-sabreauto-gpmi-weim.dtb \
-	imx6dl-sabrelite.dtb \
-	imx6dl-sabresd.dtb \
-	imx6dl-sabresd-btwifi.dtb \
-	imx6dl-sabresd-hdcp.dtb \
-	imx6dl-sabresd-ldo.dtb \
-	imx6dl-savageboard.dtb \
-	imx6dl-ts4900.dtb \
-	imx6dl-tx6dl-comtft.dtb \
-	imx6dl-tx6s-8034.dtb \
-	imx6dl-tx6s-8035.dtb \
-	imx6dl-tx6u-801x.dtb \
-	imx6dl-tx6u-8033.dtb \
-	imx6dl-tx6u-811x.dtb \
-	imx6dl-tx6u-81xx-mb7.dtb \
-	imx6dl-udoo.dtb \
-	imx6dl-sabresd-enetirq.dtb \
-	imx6dl-wandboard.dtb \
-	imx6dl-wandboard-revb1.dtb \
-	imx6dqscm-1gb-qwks-rev2-fix-ldo.dtb \
-	imx6dqscm-1gb-qwks-rev2-interleave-android-ldo.dtb \
-	imx6dqscm-1gb-qwks-rev2-wifi-fix-ldo.dtb \
-	imx6dqscm-1gb-qwks-rev2-hdcp-fix-ldo.dtb \
-	imx6dqscm-1gb-evb-fix-ldo.dtb \
-	imx6dqscm-1gb-evb-interleave-android-ldo.dtb \
-	imx6dqscm-1gb-evb-btwifi-fix-ldo.dtb \
-	imx6dqscm-1gb-evb-enetirq-fix-ldo.dtb \
-	imx6dqscm-1gb-evb-hdcp-fix-ldo.dtb \
-	imx6dqscm-1gb-qwks-rev3-fix-ldo.dtb \
-	imx6dqscm-1gb-qwks-rev3-hdcp-fix-ldo.dtb \
-	imx6dqscm-1gb-qwks-rev3-btwifi-fix-ldo.dtb \
-	imx6q-apalis-eval.dtb \
-	imx6q-apalis-ixora.dtb \
-	imx6q-apalis-ixora-v1.1.dtb \
-	imx6q-apf6dev.dtb \
-	imx6q-arm2.dtb \
-	imx6q-arm2-hsic.dtb \
-	imx6q-b450v3.dtb \
-	imx6q-b650v3.dtb \
-	imx6q-b850v3.dtb \
-	imx6q-pop-arm2.dtb \
-	imx6q-cm-fx6.dtb \
-	imx6q-cubox-i.dtb \
-	imx6q-dfi-fs700-m60.dtb \
-	imx6q-dmo-edmqmx6.dtb \
-	imx6q-evi.dtb \
-	imx6q-gk802.dtb \
-	imx6q-gw51xx.dtb \
-	imx6q-gw52xx.dtb \
-	imx6q-gw53xx.dtb \
-	imx6q-gw5400-a.dtb \
-	imx6q-gw54xx.dtb \
-	imx6q-gw551x.dtb \
-	imx6q-gw552x.dtb \
-	imx6q-gw553x.dtb \
-	imx6q-gw560x.dtb \
-	imx6q-gw5903.dtb \
-	imx6q-gw5904.dtb \
-	imx6q-h100.dtb \
-	imx6q-hummingboard.dtb \
-	imx6q-icore.dtb \
-	imx6q-icore-ofcap10.dtb \
-	imx6q-icore-ofcap12.dtb \
-	imx6q-icore-rqs.dtb \
-	imx6q-marsboard.dtb \
-	imx6q-mccmon6.dtb \
-	imx6q-nitrogen6x.dtb \
-	imx6q-nitrogen6_max.dtb \
-	imx6q-nitrogen6_som2.dtb \
-	imx6q-novena.dtb \
-	imx6q-phytec-pbab01.dtb \
-	imx6q-rex-pro.dtb \
-	imx6q-sabreauto.dtb \
-	imx6q-sabreauto-ecspi.dtb \
-	imx6q-sabreauto-enetirq.dtb \
-	imx6q-sabreauto-flexcan1.dtb \
-	imx6q-sabreauto-gpmi-weim.dtb \
-	imx6q-sabrelite.dtb \
-	imx6q-sabresd.dtb \
-	imx6q-sabresd-btwifi.dtb \
-	imx6q-sabresd-hdcp.dtb \
-	imx6q-sabresd-ldo.dtb \
-	imx6q-sabresd-enetirq.dtb \
-	imx6q-savageboard.dtb \
-	imx6q-sbc6x.dtb \
-	imx6q-tbs2910.dtb \
-	imx6q-ts4900.dtb \
-	imx6q-tx6q-1010.dtb \
-	imx6q-tx6q-1010-comtft.dtb \
-	imx6q-tx6q-1020.dtb \
-	imx6q-tx6q-1020-comtft.dtb \
-	imx6q-tx6q-1036.dtb \
-	imx6q-tx6q-1110.dtb \
-	imx6q-tx6q-11x0-mb7.dtb \
-	imx6q-udoo.dtb \
-	imx6q-utilite-pro.dtb \
-	imx6q-wandboard.dtb \
-	imx6q-wandboard-revb1.dtb \
-	imx6q-zii-rdu2.dtb \
-	imx6qp-nitrogen6_max.dtb \
-	imx6qp-nitrogen6_som2.dtb \
-	imx6qp-sabreauto.dtb \
-	imx6qp-sabreauto-ecspi.dtb \
-	imx6qp-sabreauto-flexcan1.dtb \
-	imx6qp-sabreauto-gpmi-weim.dtb \
-	imx6qp-sabresd.dtb \
-	imx6qp-sabresd-btwifi.dtb \
-	imx6qp-sabresd-hdcp.dtb \
-	imx6qp-sabresd-ldo.dtb \
-	imx6qp-sabresd-ldo-pcie-cert.dtb \
-	imx6qp-zii-rdu2.dtb
+	imx6q-sabresd.dtb
 dtb-$(CONFIG_SOC_IMX6SL) += \
 	imx6sl-evk.dtb \
-	imx6sl-evk-btwifi.dtb \
 	imx6sl-evk-ldo.dtb \
 	imx6sl-evk-csi.dtb \
 	imx6sl-evk-uart.dtb \
@@ -1240,5 +1099,15 @@ endif
 dtstree		:= $(srctree)/$(src)
 dtb-$(CONFIG_OF_ALL_DTBS) := $(patsubst $(dtstree)/%.dts,%.dtb, $(wildcard $(dtstree)/*.dts))
 
-always		:= $(dtb-y)
+DTB_NAMES := $(subst $\",,$(CONFIG_BUILD_ARM_APPENDED_DTB_IMAGE_NAMES))
+ifneq ($(DTB_NAMES),)
+DTB_LIST := $(addsuffix .dtb,$(DTB_NAMES))
+else
+DTB_LIST := $(dtb-y)
+endif
+
+targets += dtbs dtbs_install
+targets += $(DTB_LIST)
+
+always		:= $(DTB_LIST)
 clean-files	:= *.dtb

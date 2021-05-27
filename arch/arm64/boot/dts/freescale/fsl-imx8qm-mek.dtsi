@@ -15,6 +15,33 @@
 #include "fsl-imx8qm.dtsi"
 
 / {
+	firmware {
+		android {
+			compatible = "android,firmware";
+			fstab {
+				compatible = "android,fstab";
+				vendor {
+					compatible = "android,vendor";
+					/* sd card node which used if androidboot.storage_type=sd */
+					dev_sd = "/dev/block/platform/5b020000.usdhc/by-name/vendor";
+					/* emmc node which used if androidboot.storage_type=emmc */
+					dev_emmc = "/dev/block/platform/5b010000.usdhc/by-name/vendor";
+					type = "ext4";
+					mnt_flags = "ro,barrier=1,inode_readahead_blks=8";
+					fsmgr_flags = "wait,slotselect,avb";
+				};
+			};
+			vbmeta {
+				/*we need use FirstStageMountVBootV2 if we enable avb*/
+				compatible = "android,vbmeta";
+				/*parts means the partition witch can be mount in first stage*/
+				parts = "vbmeta,boot,system,vendor";
+			};
+		};
+	};
+};
+
+/ {
 	model = "Freescale i.MX8QM MEK";
 	compatible = "fsl,imx8qm-mek", "fsl,imx8qm";
 
@@ -23,23 +50,18 @@
 		stdout-path = &lpuart0;
 	};
 
+	bt_rfkill {
+		compatible = "fsl,mxc_bt_rfkill";
+		bt-power-gpios = <&gpio4 22 GPIO_ACTIVE_LOW>;
+		status ="okay";
+	};
+
 	brcmfmac: brcmfmac {
 		compatible = "cypress,brcmfmac";
 		pinctrl-names = "init", "idle", "default";
 		pinctrl-0 = <&pinctrl_wifi_init>;
 		pinctrl-1 = <&pinctrl_wifi_init>;
 		pinctrl-2 = <&pinctrl_wifi>;
-	};
-
-	modem_reset: modem-reset {
-		compatible = "gpio-reset";
-		pinctrl-names = "default", "sleep";
-		pinctrl-0 = <&pinctrl_modem_reset>;
-		pinctrl-1 = <&pinctrl_modem_reset_sleep>;
-		reset-gpios = <&gpio4 22 GPIO_ACTIVE_LOW>;
-		reset-delay-us = <2000>;
-		reset-post-delay-ms = <40>;
-		#reset-cells = <0>;
 	};
 
 	regulators {
@@ -184,6 +206,15 @@
 		dais = <&sai6>, <&sai7>;
 		amix-controller = <&amix>;
 	};
+
+
+	sound-xtor {
+		compatible = "fsl,imx-audio-xtor";
+		model = "xtor-audio";
+		cpu-dai = <&sai0>;
+		status = "okay";
+	};
+
 
 	lvds_backlight0: lvds_backlight@0 {
 		compatible = "pwm-backlight";
@@ -390,6 +421,7 @@
 				SC_P_UART1_TX_DMA_UART1_TX		0x06000020
 				SC_P_UART1_CTS_B_DMA_UART1_CTS_B	0x06000020
 				SC_P_UART1_RTS_B_DMA_UART1_RTS_B	0x06000020
+				SC_P_QSPI1A_DQS_LSIO_GPIO4_IO22		0x00000021
 			>;
 		};
 
@@ -415,25 +447,21 @@
 			>;
 		};
 
-		pinctrl_modem_reset: modemresetgrp {
+		pinctrl_sai0: sai0grp {
 			fsl,pins = <
-				SC_P_QSPI1A_DQS_LSIO_GPIO4_IO22		0x06000021
-			>;
-		};
-
-		pinctrl_modem_reset_sleep: modemreset_sleepgrp {
-			fsl,pins = <
-				SC_P_QSPI1A_DQS_LSIO_GPIO4_IO22		0x07800021
+				SC_P_SPI0_CS1_AUD_SAI0_TXC		0x0600004c
+				SC_P_SPI2_CS1_AUD_SAI0_TXFS		0x0600004c
+				SC_P_SAI1_RXFS_AUD_SAI0_RXD		0x0600004c
+				SC_P_SAI1_RXC_AUD_SAI0_TXD		0x0600006c
 			>;
 		};
 
 		pinctrl_sai1: sai1grp {
 			fsl,pins = <
-				SC_P_SAI1_RXD_AUD_SAI1_RXD		0x06000040
-				SC_P_SAI1_RXC_AUD_SAI1_RXC		0x06000040
-				SC_P_SAI1_RXFS_AUD_SAI1_RXFS		0x06000040
-				SC_P_SAI1_TXD_AUD_SAI1_TXD		0x06000060
-				SC_P_SAI1_TXC_AUD_SAI1_TXC		0x06000040
+				SC_P_SAI1_RXD_AUD_SAI1_RXD		0x0600004c
+				SC_P_SAI1_TXFS_AUD_SAI1_TXFS		0x0600004c
+				SC_P_SAI1_TXD_AUD_SAI1_TXD		0x0600006c
+				SC_P_SAI1_TXC_AUD_SAI1_TXC		0x0600004c
 			>;
 		};
 
@@ -632,13 +660,6 @@
 			>;
 		};
 
-		pinctrl_mipi_csi0_en_rst: mipi_csi0_en_rst {
-			fsl,pins = <
-				SC_P_MIPI_CSI0_GPIO0_00_LSIO_GPIO1_IO27		0x00000021
-				SC_P_MIPI_CSI0_GPIO0_01_LSIO_GPIO1_IO28		0x00000021
-			>;
-                };
-
 		pinctrl_mipi_csi1_en_rst: mipi_csi1_en_rst {
 			fsl,pins = <
 				SC_P_MIPI_CSI1_GPIO0_00_LSIO_GPIO1_IO30         0x00000021
@@ -705,6 +726,18 @@
 	pinctrl-1 = <&pinctrl_sim0>;
 	status = "okay";
 };
+
+&sai0 {
+	assigned-clocks = <&clk IMX8QM_AUD_PLL0_DIV>,
+			<&clk IMX8QM_AUD_ACM_AUD_PLL_CLK0_DIV>,
+			<&clk IMX8QM_AUD_ACM_AUD_REC_CLK0_DIV>,
+			<&clk IMX8QM_AUD_SAI_0_MCLK>;
+	assigned-clock-rates = <786432000>, <49152000>, <12288000>, <49152000>;
+	pinctrl-names = "default";
+	pinctrl-0 = <&pinctrl_sai0>;
+	status = "okay";
+};
+
 &sai1 {
 	assigned-clocks = <&clk IMX8QM_AUD_PLL0_DIV>,
 			<&clk IMX8QM_AUD_ACM_AUD_PLL_CLK0_DIV>,
@@ -963,7 +996,6 @@
 &lpuart1 { /* BT */
 	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl_lpuart1>;
-	resets = <&modem_reset>;
 	status = "okay";
 };
 
@@ -1206,7 +1238,6 @@
 		compatible = "maxim,max9286_mipi";
 		reg = <0x6A>;
 		pinctrl-names = "default";
-		pinctrl-0 = <&pinctrl_mipi_csi0_en_rst>;
 		clocks = <&clk IMX8QM_CLK_DUMMY>;
 		clock-names = "capture_mclk";
 		mclk = <27000000>;
@@ -1510,6 +1541,10 @@
 	};
 };
 
+&crypto {
+       status = "disabled";
+};
+
 &vpu_decoder {
 	core_type = <2>;
 	status = "okay";
@@ -1519,4 +1554,15 @@
 	status = "okay";
 };
 
+/ {
+    reserved-memory {
+	    #address-cells = <2>;
+	    #size-cells = <2>;
+	    ranges;
 
+	    carveout_region: imx_ion@0 {
+		    compatible = "imx-ion-pool";
+		    reg = <0x0 0xf8000000 0 0x8000000>;
+	    };
+    };
+};

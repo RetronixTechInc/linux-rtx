@@ -128,7 +128,7 @@
 		rpmsg_dma_reserved:rpmsg_dma@0x90400000 {
 			compatible = "shared-dma-pool";
 			no-map;
-			reg = <0 0x90400000 0 0x1C00000>;
+			reg = <0 0x90400000 0 0x800000>;
 		};
 		decoder_rpc: decoder_rpc@0x92000000 {
 			no-map;
@@ -145,14 +145,6 @@
 		encoder_reserved: encoder_reserved@0x94400000 {
 			no-map;
 			reg = <0 0x94400000 0 0x800000>;
-		};
-		/* global autoconfigured region for contiguous allocations */
-		linux,cma {
-			compatible = "shared-dma-pool";
-			reusable;
-			size = <0 0x3c000000>;
-			alloc-ranges = <0 0x96000000 0 0x3c000000>;
-			linux,cma-default;
 		};
 	};
 
@@ -214,6 +206,22 @@
 
 	iomuxc: iomuxc {
 		compatible = "fsl,imx8qxp-iomuxc";
+	};
+
+	/*
+	 * vehicle core driver device node which open power domain dc by default
+	 */
+	vehicle_core: vehicle_core {
+		compatible = "nxp,imx-vehicle";
+		status = "disabled";
+	};
+
+	/*
+	 * vehicle M4 driver which can get info from MCU.
+	 */
+	vehicle_rpmsg_m4: vehicle_rpmsg_m4 {
+		compatible = "nxp,imx-vehicle-m4";
+		status = "disabled";
 	};
 
 	rtc: rtc {

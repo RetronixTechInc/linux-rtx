@@ -479,9 +479,9 @@ static int ds2482_probe(struct i2c_client *client,
 
 	/* Detect the 8-port version */
 	data->w1_count = 1;
-/*	if (ds2482_set_channel(data, 7) == 0)
+	if (ds2482_set_channel(data, 7) == 0)
 		data->w1_count = 8;
-*/
+
 	/* Set all config items to 0 (off) */
 	ds2482_send_cmd_data(data, DS2482_CMD_WRITE_CONFIG,
 		ds2482_calculate_config(extra_config));

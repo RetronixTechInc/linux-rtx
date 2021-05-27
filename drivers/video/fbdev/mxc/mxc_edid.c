@@ -30,7 +30,6 @@
 #include <linux/fb.h>
 #include <video/mxc_edid.h>
 #include "../edid.h"
-#include <linux/delay.h>
 
 #undef DEBUG  /* define this for verbose EDID parsing output */
 #ifdef DEBUG
@@ -741,8 +740,6 @@ int mxc_edid_read(struct i2c_adapter *adp, unsigned short addr,
 	/* edid first block parsing */
 	memset(&fbi->monspecs, 0, sizeof(fbi->monspecs));
 	fb_edid_to_monspecs(edid, &fbi->monspecs);
-
-	msleep(20);
 
 	if (extblknum) {
 		int i;

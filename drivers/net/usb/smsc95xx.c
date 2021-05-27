@@ -82,10 +82,6 @@ static bool turbo_mode = true;
 module_param(turbo_mode, bool, 0644);
 MODULE_PARM_DESC(turbo_mode, "Enable multiple frames per Rx transaction");
 
-static unsigned char macaddr[ETH_ALEN];
-module_param_array(macaddr, byte, NULL, 0);
-MODULE_PARM_DESC(macaddr, "SMSC95XX USB Ethernet MAC address");
-
 static int __must_check __smsc95xx_read_reg(struct usbnet *dev, u32 index,
 					    u32 *data, int in_pm)
 {
@@ -935,15 +931,6 @@ static void smsc95xx_init_mac_address(struct usbnet *dev)
 			/* eeprom values are valid so use them */
 			netif_dbg(dev, ifup, dev->net, "MAC address read from EEPROM\n");
 			return;
-		}
-	}
-
-	{
-		unsigned char *iap = macaddr;
-		if (is_valid_ether_addr(iap)) {
-			memcpy(dev->net->dev_addr, iap, ETH_ALEN);
-			netif_dbg(dev, ifup, dev->net, "MAC address read from u-boot\n");
-			return ;
 		}
 	}
 
@@ -2097,29 +2084,6 @@ static int smsc95xx_manage_power(struct usbnet *dev, int on)
 
 	return 0;
 }
-
-static int smsc95xx_mac_addr_setup(char *mac_addr)
-{
-	char *ptr, *p = mac_addr;
-	unsigned long tmp;
-	int i = 0, ret = 0;
-	while (p && (*p) && i < ETH_ALEN) {
-		ptr = strchr(p, ':');
-		if (ptr)
-			*ptr++ = '\0';
-		if (strlen(p)) {
-			ret = kstrtoul((const char *)p, 16, &tmp);
-			if (ret < 0 || tmp > 0xff)
-				break;
-			macaddr[i++] = tmp;
-		}
-		p = ptr;
-	}
-
-	return 0;
-}
-
-__setup("smsc_mac=", smsc95xx_mac_addr_setup);
 
 static const struct driver_info smsc95xx_info = {
 	.description	= "smsc95xx USB 2.0 Ethernet",

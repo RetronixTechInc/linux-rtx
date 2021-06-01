@@ -1171,6 +1171,10 @@
 	status = "okay";
 };
 
+&snvs_rtc {
+	status = "disabled";
+};
+
 &wdog1 {
 	status = "disabled";
 };

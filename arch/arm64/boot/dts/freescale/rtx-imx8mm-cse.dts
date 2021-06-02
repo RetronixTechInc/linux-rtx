@@ -285,6 +285,13 @@
 				
 				MX8MM_IOMUXC_SD1_CLK_GPIO2_IO0		0x19
 				MX8MM_IOMUXC_SD1_CMD_GPIO2_IO1 		0x19
+
+				MX8MM_IOMUXC_SAI1_RXD0_GPIO4_IO2	0x19	/* GPIO */
+				MX8MM_IOMUXC_SAI1_RXD1_GPIO4_IO3	0x19	/* GPIO */
+				MX8MM_IOMUXC_SAI1_RXC_GPIO4_IO1		0x19	/* GPIO */
+				MX8MM_IOMUXC_SAI1_RXFS_GPIO4_IO0	0x19	/* GPIO */
+				MX8MM_IOMUXC_SAI1_RXD0_GPIO4_IO2	0x19	/* GPIO */
+				MX8MM_IOMUXC_SAI1_RXD1_GPIO4_IO3	0x19	/* GPIO */
 			>;
 		};
 
@@ -491,33 +498,6 @@
 			>;
 		};
 
-		pinctrl_uart3_rs232: uart3grp1 {
-			fsl,pins = <
-				MX8MM_IOMUXC_ECSPI1_SCLK_UART3_DCE_RX		0x140
-				MX8MM_IOMUXC_ECSPI1_MOSI_UART3_DCE_TX		0x140
-				MX8MM_IOMUXC_ECSPI1_MISO_UART3_DCE_CTS_B	0x140
-				MX8MM_IOMUXC_ECSPI1_SS0_UART3_DCE_RTS_B		0x140
-			>;
-		};
-
-		pinctrl_uart3_rs422: uart3grp2 {
-			fsl,pins = <
-				MX8MM_IOMUXC_ECSPI1_SCLK_UART3_DCE_RX		0x140
-				MX8MM_IOMUXC_ECSPI1_MOSI_UART3_DCE_TX		0x140
-				MX8MM_IOMUXC_ECSPI1_MISO_GPIO5_IO8		0x19
-				MX8MM_IOMUXC_ECSPI1_SS0_UART3_DCE_RTS_B		0x140
-			>;
-		};
-
-		pinctrl_uart3_ctrl: uart3-ctrlgrp2 {
-			fsl,pins = <
-				MX8MM_IOMUXC_SAI1_RXD0_GPIO4_IO2	0x19	/* UART3_M0 */
-				MX8MM_IOMUXC_SAI1_RXD1_GPIO4_IO3	0x19	/* UART3_M1 */
-				MX8MM_IOMUXC_SAI1_RXC_GPIO4_IO1		0x19	/* UART3_TM */
-				MX8MM_IOMUXC_SAI1_RXFS_GPIO4_IO0	0x19	/* 3234_EN  */
-			>;
-		};
-
 		pinctrl_uart4_rs232: uart4grp1 {
 			fsl,pins = <
 				MX8MM_IOMUXC_ECSPI2_SCLK_UART4_DCE_RX		0x140
@@ -533,15 +513,6 @@
 				MX8MM_IOMUXC_ECSPI2_MOSI_UART4_DCE_TX		0x140
 				MX8MM_IOMUXC_ECSPI2_MISO_UART4_DCE_CTS_B	0x140
 				MX8MM_IOMUXC_ECSPI2_SS0_GPIO5_IO13		0x19
-			>;
-		};
-
-		pinctrl_uart4_ctrl: uart4-ctrlgrp2 {
-			fsl,pins = <
-				MX8MM_IOMUXC_SAI1_RXD4_GPIO4_IO6	0x19	/* UART4_M0 */
-				MX8MM_IOMUXC_SAI1_RXD5_GPIO4_IO7	0x19	/* UART4_M1 */
-				MX8MM_IOMUXC_SAI1_RXD7_GPIO4_IO9	0x19	/* UART4_TM */
-				MX8MM_IOMUXC_SAI1_RXD6_GPIO4_IO8	0x19	/* 3234_EN  */
 			>;
 		};
 
@@ -1118,23 +1089,6 @@
 &uart2 { /* console */
 	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl_uart2>;
-	status = "okay";
-};
-
-&uart3 {
-	pinctrl-names = "default", "rs422";
-	pinctrl-0 = <&pinctrl_uart3_rs232 &pinctrl_uart3_ctrl>;
-	pinctrl-1 = <&pinctrl_uart3_rs422 &pinctrl_uart3_ctrl>;
-	assigned-clocks = <&clk IMX8MM_CLK_UART3_SRC>;
-	assigned-clock-parents = <&clk IMX8MM_SYS_PLL1_80M>;
-	resets = <&modem3_reset>;
-/*    	fsl,dte-mode;	*/
-	fsl,uart-has-rtscts;
-	fsl,sp339e;
-	fsl,sp339e-m0     = <&gpio4 2 0> ;
-	fsl,sp339e-m1     = <&gpio4 3 0> ;
-	fsl,sp339e-tm     = <&gpio4 1 0> ;
-	fsl,sp339e-dir    = <&gpio5 8 0> ;
 	status = "okay";
 };
 

@@ -474,7 +474,7 @@ static int efm32_get_time( struct device *dev , struct rtc_time *tm )
 	unsigned long iRTCsec = 0 ;
 	struct i2c_client *i2cclient = to_i2c_client( dev ) ;
 	struct efm32_data *efm32data = i2c_get_clientdata( i2cclient ) ;
-	
+
 	memset( ucWrite , 0 , 64 ) ;
 	memset( ucRead  , 0 , 64 ) ;
 
@@ -542,7 +542,7 @@ static int efm32_set_time( struct device *dev, struct rtc_time *tm )
 	unsigned char ReadLength  = u8EFM32CmdvMaxLen[(EFM32_RTC_SETTIME&0x7F)].ReadLen  ;
 	int error, i;
 	unsigned long iRTCsec = 0 ;
-	
+
 	if( rtc_hctosys_ret )
 	{
 		printk(KERN_ERR "%s,　rtc_hctosys_ret error : %d \n", __FUNCTION__,rtc_hctosys_ret);
@@ -556,11 +556,155 @@ static int efm32_set_time( struct device *dev, struct rtc_time *tm )
 	memset( ucWrite , 0 , 64 ) ;
 	memset( ucRead  , 0 , 64 ) ; 
 
-	pr_info_efm32( "%s start\n" , __func__ ) ;
+	pr_info_efm32("%s start\n" , __func__ ) ;
 
 	//i2c write command setting
 	ucWrite[0] = WriteLength;
 	ucWrite[1] = EFM32_RTC_SETTIME;
+	for ( i = 0 ; i < sizeof(iRTCsec) ; i ++ )
+	{
+		ucWrite[2 + i] = (unsigned char)(iRTCsec >> (i * 8));
+	}
+	
+	for( i = 0 ; i < ucWrite[0]-1 ; i++ )
+	{
+		ucWrite[ucWrite[0]-1] += ucWrite[i] ;
+	}
+
+	error = efm32_read(dev, ucWrite, WriteLength, ucRead, ReadLength);
+	if ( error )
+	{
+		return error ;
+	}
+
+	if( ucRead[0] != ReadLength )
+	{
+		return -EINVAL;
+	}
+	if ( efm32_check_checksum( ucRead ) )
+	{
+		switch ( ucRead[1] ) 
+		{
+			case DEF_EFM32CMD_SLAVE_ACK :
+				pr_info_efm32("%s success\n" , __func__ ) ;
+				return ( 0 ) ;
+			case DEF_EFM32CMD_SLAVE_NACK :
+			case DEF_EFM32CMD_SLAVE_SENT_DATA :
+				printk(KERN_INFO "%s Command is error\n" , __func__ ) ;
+				break ;
+			default :
+				printk(KERN_INFO "%s Unknow command\n" , __func__  ) ;
+				break ;
+		}
+	}
+	return -ENOIOCTLCMD;
+}
+
+
+
+static int efm32_get_alarm( struct device *dev , struct rtc_wkalrm *alrm  )
+{
+	unsigned char ucWrite[64] ;
+	unsigned char ucRead[64]  ;
+	unsigned char WriteLength = u8EFM32CmdvMaxLen[(EFM32_RTC_GETALARM&0x7F)].WriteLen ;
+	unsigned char ReadLength  = u8EFM32CmdvMaxLen[(EFM32_RTC_GETALARM&0x7F)].ReadLen ;
+	int error, i ;
+	unsigned long iRTCsec = 0 ;
+
+	struct efm32_read_data *read_regs ;
+	struct i2c_client *i2cclient = to_i2c_client( dev ) ;
+	struct efm32_data *efm32data = i2c_get_clientdata( i2cclient ) ;
+
+	memset( ucWrite , 0 , 64 ) ;
+	memset( ucRead  , 0 , 64 ) ;
+
+	pr_info_efm32("%s start\n" , __func__ ) ;
+
+	//i2c write command setting
+	ucWrite[0] = WriteLength ;
+	ucWrite[1] = EFM32_RTC_GETALARM ;
+	
+	if ( ucWrite[0] >= 63 )
+	{
+		return -EINVAL ;
+	}	
+	
+	for ( i = 0 ; i < ucWrite[0]-1 ; i++ )
+	{
+		ucWrite[ucWrite[0]-1] += ucWrite[i] ;
+	}
+
+	error = efm32_read( dev , ucWrite , WriteLength , ucRead , ReadLength ) ;
+	if ( error )
+	{
+		return error ;
+	}
+
+	read_regs = (struct efm32_read_data *) ucRead ;
+	if( read_regs->len != ReadLength )
+	{
+		return -EINVAL ;
+	}
+
+	if( ucRead[0] != ReadLength )
+	{
+		return -EINVAL ;
+	}
+
+	if ( efm32_check_checksum( ucRead ) )
+	{
+		switch ( ucRead[1] ) 
+		{
+			case DEF_EFM32CMD_SLAVE_ACK :
+			case DEF_EFM32CMD_SLAVE_NACK :
+				printk(KERN_INFO "%s Command is error\n" , __func__ ) ;
+				break ;
+			case DEF_EFM32CMD_SLAVE_SENT_DATA :
+				for( i = 0; i < sizeof(unsigned long); i++)
+				{
+					iRTCsec |= ucRead[2 + i] << (i * 8) ;
+				}
+					
+				rtc_time_to_tm(iRTCsec, &alrm->time) ;
+				error = rtc_valid_tm(&alrm->time);
+				if (error)
+					return error;
+				return error;
+			default :
+				printk(KERN_INFO "%s Unknow command\n" , __func__  ) ;
+				break ;
+		}
+	}
+
+	pr_info_efm32("%s: %02x-%02x-%02x %02x-%02x-%02x ;batt:%02x ;checksum: %02x\n",__func__,
+			read_regs->years, read_regs->month, read_regs->day, read_regs->hours, read_regs->minutes, read_regs->seconds,
+			read_regs->batterysts, read_regs->checksum);
+
+	return -ENOIOCTLCMD;
+}
+
+static int efm32_set_alarm( struct device *dev, struct rtc_wkalrm *alrm )
+{
+	struct rtc_time *alrm_tm = &alrm->time;
+	unsigned char ucWrite[64] ;
+	unsigned char ucRead[64]  ;
+	unsigned char WriteLength = u8EFM32CmdvMaxLen[(EFM32_RTC_SETALARM&0x7F)].WriteLen ;
+	unsigned char ReadLength  = u8EFM32CmdvMaxLen[(EFM32_RTC_SETALARM&0x7F)].ReadLen  ;
+	int error, i;
+	unsigned long iRTCsec = 0 ;
+
+	error = rtc_tm_to_time(alrm_tm, &iRTCsec);
+	if(error)
+		return error ;
+
+	memset( ucWrite , 0 , 64 ) ;
+	memset( ucRead  , 0 , 64 ) ; 
+
+	pr_info_efm32("%s start\n" , __func__ ) ;
+
+	//i2c write command setting
+	ucWrite[0] = WriteLength        ;
+	ucWrite[1] = EFM32_RTC_SETALARM ;
 	for ( i = 0 ; i < sizeof(iRTCsec) ; i ++ )
 	{
 		ucWrite[2 + i] = (unsigned char)(iRTCsec >> (i * 8));
@@ -820,6 +964,8 @@ static const struct rtc_class_ops efm32_rtc_ops = {
 	.ioctl 		= efm32_rtc_ioctl,
 	.read_time	= efm32_get_time,
 	.set_time	= efm32_set_time,
+	.read_alarm 	= efm32_get_alarm,
+	.set_alarm 	= efm32_set_alarm,
 };
 
 /* -------------------------------------------------------------------------------------------------------------------------------------- */
@@ -976,7 +1122,7 @@ static int efm32_probe(struct i2c_client *client, const struct i2c_device_id *id
 	arm_pm_restart = efm32_powerreset ;
 	
 	pm_power_off = efm32_poweroff ;
-	
+
 	printk( KERN_INFO "EFM32 rtc probe succeed\n" ) ;
 	
 	return 0 ;

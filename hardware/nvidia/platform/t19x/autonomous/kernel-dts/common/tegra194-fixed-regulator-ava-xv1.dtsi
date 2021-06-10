@@ -1,0 +1,109 @@
+/*
+ * Copyright (c) 2017-2018, NVIDIA CORPORATION.  All rights reserved.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+ * more details.
+ */
+
+#include <dt-bindings/gpio/tegra194-gpio.h>
+
+/ {
+	fixed-regulators {
+		hdr40_vdd_3v3: p2822_vdd_3v3_cvb: regulator@101 {
+			compatible = "regulator-fixed";
+			reg = <101>;
+			regulator-name = "vdd-3v3-cvb";
+			regulator-min-microvolt = <3300000>;
+			regulator-max-microvolt = <3300000>;
+		};
+
+		p2822_vdd_1v8_cvb: regulator@102 {
+			compatible = "regulator-fixed";
+			reg = <102>;
+			regulator-name = "vdd-1v8-cvb";
+			regulator-min-microvolt = <1800000>;
+			regulator-max-microvolt = <1800000>;
+		};
+
+		p2822_vdd_1v8_slt: regulator@105 {
+			compatible = "regulator-fixed";
+			reg = <105>;
+			regulator-name = "vdd-1v8-slt";
+			regulator-min-microvolt = <1800000>;
+			regulator-max-microvolt = <1800000>;
+		};
+
+		p2822_vdd_3v3_slt: regulator@106 {
+			compatible = "regulator-fixed";
+			reg = <106>;
+			regulator-name = "vdd-3v3-slt";
+			regulator-min-microvolt = <3300000>;
+			regulator-max-microvolt = <3300000>;
+		};
+
+		p2822_vdd_fan: regulator@107 {
+			compatible = "regulator-fixed";
+			reg = <107>;
+			regulator-name = "vdd-fan";
+			regulator-min-microvolt = <5000000>;
+			regulator-max-microvolt = <5000000>;
+		};
+
+		usb0_pwr: regulator@108 {
+			compatible = "regulator-fixed";
+			reg = <108>;
+			regulator-name = "vdd-5v-usb0";
+			regulator-min-microvolt = <5000000>;
+			regulator-max-microvolt = <5000000>;
+			gpio = <&tegra_aon_gpio TEGRA194_AON_GPIO(AA, 6) 0>;
+			enable-active-high;
+		};
+
+		usb2_pwr: regulator@109 {
+			compatible = "regulator-fixed";
+			reg = <109>;
+			regulator-name = "vdd-5v-usb2";
+			regulator-min-microvolt = <5000000>;
+			regulator-max-microvolt = <5000000>;
+			gpio = <&tegra_main_gpio TEGRA194_MAIN_GPIO(A, 1) 0>;
+			enable-active-high;
+		};
+
+		usb1_pwr: regulator@110 {
+			compatible = "regulator-fixed";
+			reg = <110>;
+			regulator-name = "vdd-5v-usb1";
+			regulator-min-microvolt = <5000000>;
+			regulator-max-microvolt = <5000000>;
+		};
+
+		p2822_vdd_hdmi_5v0: regulator@111 {
+			compatible = "regulator-fixed";
+			reg = <111>;
+			regulator-name = "vdd-hdmi-5v0";
+			regulator-min-microvolt = <5000000>;
+			regulator-max-microvolt = <5000000>;
+			gpio = <&tegra_main_gpio TEGRA194_MAIN_GPIO(A, 3) 0>;
+			enable-active-high;
+		};
+
+/*
+		p2822_vdd_sys_en: regulator@112 {
+			compatible = "regulator-fixed";
+			reg = <113>;
+			regulator-name = "vdd_sys_en";
+			regulator-min-microvolt = <1200000>;
+			regulator-max-microvolt = <1200000>;
+			gpio = <&tegra_main_gpio TEGRA194_MAIN_GPIO(M, 5) 0>;
+			enable-active-high;
+		};
+*/
+	};
+};

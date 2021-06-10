@@ -1,0 +1,12 @@
+if I2C
+
+menu "EFM32 RTC drivers"
+
+config RTC_DRV_EFM32_AVA_XV1
+	tristate "FEM32 for AVA XV1"
+	help
+      If you say yes here you will get support for the
+      RTC of EFM32 AVA XV1 series.
+endmenu
+
+endif

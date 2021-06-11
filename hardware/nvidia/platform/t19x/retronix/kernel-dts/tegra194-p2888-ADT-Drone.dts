@@ -12,6 +12,5 @@
  * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
  * more details.
  */
-#include "common/tegra194-p2888-0001-ava-xv1-common.dtsi"
-#include "common/tegra194-ava-xv1-camera-ar0233-a00.dtsi"
+#include "common/tegra194-ADT-Drone-0000.dtsi"
 

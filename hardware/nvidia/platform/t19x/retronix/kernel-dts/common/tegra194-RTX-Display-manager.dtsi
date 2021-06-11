@@ -1,0 +1,1389 @@
+/*
+ * tegra194-ADT-plugin-manager.dtsi:
+ *
+ * Copyright (c) 2017-2018, NVIDIA CORPORATION.  All rights reserved.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; version 2 of the License.
+ *
+ * This program is distributed in the hope that it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+ * more details.
+ */
+
+/ {
+	host1x {
+		dpaux@155F0000 {
+			status = "okay";
+			compatible = "nvidia,tegra194-dpaux3-padctl";
+			/delete-property/ power-domains;
+			dpaux_default: pinmux@0 {
+				dpaux3_pins {
+					pins = "dpaux3-3";
+					function = "i2c";
+				};
+			};
+		};
+	};
+	
+	/* High Definition Audio simple bus */
+	hda@3510000 {
+		status = "okay";
+	};
+
+	/* SPDIF simple bus */
+	spdif_dit {
+		compatible = "simple-bus";
+		device_type = "spdif-dit";
+		#address-cells = <1>;
+		#size-cells = <0>;
+		status = "disabled";
+
+		spdif_dit0: spdif-dit.0@0 {
+			compatible = "linux,spdif-dit";
+			reg = <0x0>;
+			status = "disabled";
+		};
+
+		spdif_dit1: spdif-dit.1@1 {
+			compatible = "linux,spdif-dit";
+			reg = <0x1>;
+			status = "disabled";
+		};
+
+		spdif_dit2: spdif-dit.2@2 {
+			compatible = "linux,spdif-dit";
+			reg = <0x2>;
+			status = "disabled";
+		};
+
+		spdif_dit3: spdif-dit.3@3 {
+			compatible = "linux,spdif-dit";
+			reg = <0x03>;
+			status = "disabled";
+		};
+
+		spdif_dit4: spdif-dit.4@4 {
+			compatible = "linux,spdif-dit";
+			reg = <0x04>;
+			status = "disabled";
+		};
+
+		spdif_dit5: spdif-dit.5@5 {
+			compatible = "linux,spdif-dit";
+			reg = <0x05>;
+			status = "disabled";
+		};
+
+		spdif_dit6: spdif-dit.6@6 {
+			compatible = "linux,spdif-dit";
+			reg = <0x06>;
+			status = "disabled";
+		};
+
+		spdif_dit7: spdif-dit.7@7 {
+			compatible = "linux,spdif-dit";
+			reg = <0x07>;
+			status = "disabled";
+		};
+
+		spdif_dit8: spdif-dit.8@8 {
+			compatible = "linux,spdif-dit";
+			reg = <0x08>;
+			status = "disabled";
+		};
+
+		spdif_dit9: spdif-dit.9@9 {
+			compatible = "linux,spdif-dit";
+			reg = <0x09>;
+			status = "disabled";
+		};
+
+		spdif_dit10: spdif-dit.10@a {
+			compatible = "linux,spdif-dit";
+			reg = <0x0a>;
+			status = "disabled";
+		};
+
+		spdif_dit11: spdif-dit.11@b {
+			compatible = "linux,spdif-dit";
+			reg = <0x0b>;
+			status = "disabled";
+		};
+
+		spdif_dit12: spdif-dit.12@c {
+			compatible = "linux,spdif-dit";
+			reg = <0x0c>;
+			status = "disabled";
+		};
+
+		spdif_dit13: spdif-dit.13@d {
+			compatible = "linux,spdif-dit";
+			reg = <0x0d>;
+			status = "disabled";
+		};
+	};
+
+	aconnect@2a41000 {
+		status = "okay";
+
+		ahub {
+			status = "okay";
+
+			admaif@290f000 {
+				status = "okay";
+			};
+
+			sfc@2902000 {
+				status = "okay";
+			};
+
+			sfc@2902200 {
+				status = "okay";
+			};
+
+			sfc@2902400 {
+				status = "okay";
+			};
+
+			sfc@2902600 {
+				status = "okay";
+			};
+
+			spkprot@2908c00 {
+				status = "okay";
+			};
+
+			amixer@290bb00 {
+				status = "okay";
+			};
+
+			i2s@2901000 {
+				status = "okay";
+			};
+
+			i2s@2901100 {
+				status = "okay";
+			};
+
+			i2s@2901200 {
+				status = "okay";
+			};
+
+			i2s@2901300 {
+				status = "okay";
+			};
+
+			i2s@2901400 {
+				status = "okay";
+			};
+
+			i2s@2901500 {
+				status = "okay";
+			};
+
+			amx@2903000 {
+				status = "okay";
+			};
+
+			amx@2903100 {
+				status = "okay";
+			};
+
+			amx@2903200 {
+				status = "okay";
+			};
+
+			amx@2903300 {
+				status = "okay";
+			};
+
+			adx@2903800 {
+				status = "okay";
+			};
+
+			adx@2903900 {
+				status = "okay";
+			};
+
+			adx@2903a00 {
+				status = "okay";
+			};
+
+			adx@2903b00 {
+				status = "okay";
+			};
+
+			dmic@2904000 {
+				status = "okay";
+			};
+
+			dmic@2904100 {
+				status = "okay";
+			};
+
+			dmic@2904200 {
+				status = "okay";
+			};
+
+			dmic@2904300 {
+				status = "okay";
+			};
+
+			afc@2907000 {
+				status = "okay";
+			};
+
+			afc@2907100 {
+				status = "okay";
+			};
+
+			afc@2907200 {
+				status = "okay";
+			};
+
+			afc@2907300 {
+				status = "okay";
+			};
+
+			afc@2907400 {
+				status = "okay";
+			};
+
+			afc@2907500 {
+				status = "okay";
+			};
+
+			mvc@290a000 {
+				status = "okay";
+			};
+
+			mvc@290a200 {
+				status = "okay";
+			};
+
+			iqc@290e000 {
+				status = "okay";
+			};
+
+			asrc@2910000 {
+				status = "okay";
+			};
+
+			arad@290e400 {
+				status = "okay";
+			};
+
+			ahc@290b900 {
+				status = "okay";
+			};
+
+			ope@2908000 {
+				status = "okay";
+
+				peq@2908100 {
+					status = "okay";
+				};
+
+				mbdrc@2908200 {
+					status = "okay";
+				};
+			};
+
+			dspk@2905000 {
+				status = "okay";
+			};
+
+			dspk@2905100 {
+			       status = "okay";
+		       };
+		};
+
+		adma@2930000 {
+			status = "okay";
+		};
+
+		adsp_audio {
+			status = "okay";
+		};
+	};
+
+	spdif_dit {
+		status = "okay";
+
+		spdif-dit.0@0 {
+			status = "okay";
+		};
+
+		spdif-dit.1@1 {
+			status = "okay";
+		};
+
+		spdif-dit.2@2 {
+			status = "okay";
+		};
+
+		spdif-dit.3@3 {
+			status = "okay";
+		};
+
+		spdif-dit.4@4 {
+			status = "okay";
+		};
+
+		spdif-dit.5@5 {
+			status = "okay";
+		};
+
+		spdif-dit.6@6 {
+			status = "okay";
+		};
+
+		spdif-dit.7@7 {
+			status = "okay";
+		};
+
+		spdif-dit.8@8 {
+			status = "okay";
+		};
+
+		spdif-dit.9@9 {
+			status = "okay";
+		};
+
+		spdif-dit.10@a {
+			status = "okay";
+		};
+
+		spdif-dit.11@b {
+			status = "okay";
+		};
+
+		spdif-dit.12@c {
+			status = "okay";
+		};
+
+		spdif-dit.13@d {
+			status = "okay";
+		};
+	};
+
+	aconnect@2a41000 {
+		status = "okay";
+	
+		adsp_audio {
+			compr-ops = <1>;
+			num-plugin = <6>;
+			plugin-info-1 {
+				plugin-name = "mp3-dec1";
+				firmware-name = "nvmp3dec.elf";
+				widget-name = "MP3-DEC1";
+			};
+			plugin-info-2 {
+				plugin-name = "spkprot";
+				firmware-name = "nvspkprot.elf";
+				widget-name = "SPKPROT-SW";
+			};
+			plugin-info-3 {
+				plugin-name = "src";
+				firmware-name = "nvsrc.elf";
+				widget-name = "SRC";
+			};
+			plugin-info-4 {
+				plugin-name = "aac-dec1";
+				firmware-name = "nvaacdec.elf";
+				widget-name = "AAC-DEC1";
+			};
+			plugin-info-5 {
+				plugin-name = "aec";
+				firmware-name = "nvoice.elf";
+				widget-name = "AEC";
+			};
+			plugin-info-6 {
+				plugin-name = "wire";
+				firmware-name = "libnvwirefx.elf";
+				widget-name = "WIRE";
+			};
+		};
+		
+		agic-controller@2a41000 {
+			status = "okay";
+		};
+
+		adsp@2993000 {
+			status = "okay";
+		};
+		
+		/* Default for all I2S is long fsync width(31) */
+		ahub {
+			/* I2S4 in Short frame sync for BT SCO */
+			i2s@2901300 {
+				fsync-width = <0>;
+				bclk-ratio = <4>;
+			};
+		};
+				
+	};
+
+	tegra_sound: sound {
+		status = "okay";
+		nvidia,num-codec-link = <12>;
+		nvidia,num-clk = <8>;
+		nvidia,clk-rates = < 270950400	/* PLLA_x11025_RATE */
+				     11289600	/* AUD_MCLK_x11025_RATE */
+				     45158400	/* PLLA_OUT0_x11025_RATE */
+				     45158400	/* AHUB_x11025_RATE */
+				     245760000  /* PLLA_x8000_RATE */
+				     12288000	/* AUD_MCLK_x8000_RATE */
+				     49152000	/* PLLA_OUT0_x8000_RATE */
+				     49152000 >;/* AHUB_x8000_RATE */
+
+		nvidia,xbar = <&tegra_axbar>;
+		
+		compatible = "nvidia,tegra-audio-t186ref-mobile-rt565x";
+		nvidia,model = "tegra-snd-t19x-mobile-rt565x";
+		clocks = <&bpmp_clks TEGRA194_CLK_PLLA>,
+			 <&bpmp_clks TEGRA194_CLK_PLLA_OUT0>,
+			 <&bpmp_clks TEGRA194_CLK_AUD_MCLK>;
+		clock-names = "pll_a", "pll_a_out0", "extern1";
+		assigned-clocks = <&bpmp_clks TEGRA194_CLK_PLLA_OUT0>,
+				  <&bpmp_clks TEGRA194_CLK_AUD_MCLK>;
+		assigned-clock-parents = <&bpmp_clks TEGRA194_CLK_PLLA>,
+					 <&bpmp_clks TEGRA194_CLK_PLLA_OUT0>;
+
+		nvidia,audio-routing =
+			"x Headphone Jack",     "x HPO L Playback",
+			"x Headphone Jack",     "x HPO R Playback",
+			"x IN1P",               "x Mic Jack",
+			"x IN2P",               "x Mic Jack",
+			"x Int Spk",            "x SPO Playback",
+			"x DMIC L1",            "x Int Mic",
+			"x DMIC L2",            "x Int Mic",
+			"x DMIC R1",            "x Int Mic",
+			"x DMIC R2",            "x Int Mic",
+			"y Headphone",          "y OUT",
+			"y IN",                 "y Mic",
+			"z Headphone",          "z OUT",
+			"z IN",                 "z Mic",
+			"m Headphone",          "m OUT",
+			"m IN",                 "m Mic",
+			"n Headphone",          "n OUT",
+			"n IN",                 "n Mic",
+			"o Headphone",          "o OUT",
+			"o IN",                 "o Mic",
+			"a IN",                 "a Mic",
+			"b IN",                 "b Mic",
+			"c IN",                 "c Mic",
+			"d IN",                 "d Mic",
+			"d1 Headphone",         "d1 OUT",
+			"d2 Headphone",         "d2 OUT";
+
+		mclk-fs = <256>;
+
+		nvidia,dai-link-1 {
+			link-name = "rt565x-playback";
+			cpu-dai = <&tegra_i2s1>;
+			codec-dai = <&rt5658>;
+			cpu-dai-name = "I2S1";
+			codec-dai-name = "rt5659-aif1";
+			format = "i2s";
+			bit-format = "s16_le";
+			srate = <48000>;
+			num-channel = <2>;
+			ignore_suspend;
+			name-prefix = "x";
+			status = "okay";
+		};
+		
+		hdr40_snd_link_i2s: nvidia,dai-link-2 {
+			link-name = "spdif-dit-1";
+			cpu-dai = <&tegra_i2s2>;
+			codec-dai = <&spdif_dit1>;
+			cpu-dai-name = "I2S2";
+			codec-dai-name = "dit-hifi";
+			format = "i2s";
+			bit-format = "s16_le";
+			srate = <48000>;
+			num-channel = <2>;
+			ignore_suspend;
+			name-prefix = "y";
+			status = "okay";
+		};
+		nvidia,dai-link-3 {
+			link-name = "spdif-dit-2";
+			cpu-dai = <&tegra_i2s3>;
+			codec-dai = <&spdif_dit2>;
+			cpu-dai-name = "I2S3";
+			codec-dai-name = "dit-hifi";
+			format = "i2s";
+			bit-format = "s16_le";
+			srate = <48000>;
+			num-channel = <2>;
+			ignore_suspend;
+			name-prefix = "z";
+			status = "okay";
+		};
+		nvidia,dai-link-4 {
+			link-name = "spdif-dit-3";
+			cpu-dai = <&tegra_i2s4>;
+			codec-dai = <&spdif_dit3>;
+			cpu-dai-name = "I2S4";
+			codec-dai-name = "dit-hifi";
+			format = "dsp_a";
+			bit-format = "s16_le";
+			srate = <8000>;
+			num-channel = <1>;
+			ignore_suspend;
+			name-prefix = "m";
+			status = "okay";
+			tx-mask = <0xFF>;
+			rx-mask = <0xFF>;
+			bitclock-inversion;		
+		};
+		nvidia,dai-link-5 {
+			link-name = "spdif-dit-4";
+			cpu-dai = <&tegra_i2s5>;
+			codec-dai = <&spdif_dit4>;
+			cpu-dai-name = "I2S5";
+			codec-dai-name = "dit-hifi";
+			format = "i2s";
+			bit-format = "s16_le";
+			srate = <48000>;
+			num-channel = <2>;
+			ignore_suspend;
+			name-prefix = "n";
+			status = "okay";
+		};
+		nvidia,dai-link-6 {
+			link-name = "spdif-dit-6";
+			cpu-dai = <&tegra_i2s6>;
+			codec-dai = <&spdif_dit6>;
+			cpu-dai-name = "I2S6";
+			codec-dai-name = "dit-hifi";
+			format = "i2s";
+			bit-format = "s16_le";
+			srate = <8000>;
+			num-channel = <1>;
+			ignore_suspend;
+			name-prefix = "o";
+			status = "okay";
+		};
+		nvidia,dai-link-7 {
+			link-name = "spdif-dit-7";
+			cpu-dai = <&tegra_dmic1>;
+			codec-dai = <&spdif_dit7>;
+			cpu-dai-name = "DMIC1";
+			codec-dai-name = "dit-hifi";
+			format = "i2s";
+			bit-format = "s16_le";
+			srate = <48000>;
+			ignore_suspend;
+			num-channel = <2>;
+			name-prefix = "a";
+			status = "okay";
+		};
+		nvidia,dai-link-8 {
+			link-name = "spdif-dit-8";
+			cpu-dai = <&tegra_dmic2>;
+			codec-dai = <&spdif_dit8>;
+			cpu-dai-name = "DMIC2";
+			codec-dai-name = "dit-hifi";
+			format = "i2s";
+			bit-format = "s16_le";
+			srate = <48000>;
+			ignore_suspend;
+			num-channel = <2>;
+			name-prefix = "b";
+			status = "okay";
+		};
+		nvidia,dai-link-9 {
+			link-name = "spdif-dit-9";
+			cpu-dai = <&tegra_dmic3>;
+			codec-dai = <&spdif_dit9>;
+			cpu-dai-name = "DMIC3";
+			codec-dai-name = "dit-hifi";
+			format = "i2s";
+			bit-format = "s16_le";
+			srate = <48000>;
+			ignore_suspend;
+			num-channel = <2>;
+			name-prefix = "c";
+			status = "okay";
+		};
+		nvidia,dai-link-10 {
+			link-name = "spdif-dit-10";
+			cpu-dai = <&tegra_dmic4>;
+			codec-dai = <&spdif_dit10>;
+			cpu-dai-name = "DMIC4";
+			codec-dai-name = "dit-hifi";
+			format = "i2s";
+			bit-format = "s16_le";
+			srate = <48000>;
+			ignore_suspend;
+			num-channel = <2>;
+			name-prefix = "d";
+			status = "okay";
+		};
+		nvidia,dai-link-11 {
+			link-name = "dspk1-playback";
+			cpu-dai = <&tegra_dspk1>;
+			codec-dai = <&spdif_dit11>;
+			cpu-dai-name = "DSPK1";
+			codec-dai-name = "dit-hifi";
+			format = "i2s";
+			bit-format = "s16_le";
+			srate = <48000>;
+			num-channel = <2>;
+			ignore_suspend;
+			name-prefix = "d1";
+			status = "okay";
+		};
+		nvidia,dai-link-12 {
+			link-name = "dspk2-playback";
+			cpu-dai = <&tegra_dspk2>;
+			codec-dai = <&spdif_dit12>;
+			cpu-dai-name = "DSPK2";
+			codec-dai-name = "dit-hifi";
+			format = "i2s";
+			bit-format = "s16_le";
+			srate = <48000>;
+			num-channel = <2>;
+			ignore_suspend;
+			name-prefix = "d2";
+			status = "okay";
+		};
+
+	};
+	
+	
+	
+	
+};
+
+/* Display Configure */
+&head0 {
+	status = "okay";
+	nvidia,fb-bpp = <32>;
+	nvidia,fbmem-size = <265420800>; /* 8K (7680*4320) 32bpp double buffered */
+	nvidia,fb-flags = <TEGRA_FB_FLIP_ON_PROBE>;
+	win-mask = <0x3>;
+	nvidia,fb-win = <0>;
+	nvidia,dc-connector = <&sor2>;
+	nvidia,dc-flags = <TEGRA_DC_FLAG_ENABLED>;
+	avdd_hdmi-supply = <&p2888_spmic_sd0>; /* 1v0 */
+	avdd_hdmi_pll-supply = <&p2888_spmic_sd1>; /* 1v8 */
+	vdd_hdmi_5v0-supply = <&p2822_vdd_hdmi_5v0>; /* 5v0 */
+	extcon-cables = <&typec_port0 2 &typec_port1 2>;
+	extcon-cable-names = "typec0", "typec1";
+	#extcon-cells = <1>;
+};
+
+&head1 {
+	status = "okay";
+	nvidia,fb-bpp = <32>;
+	nvidia,fbmem-size = <265420800>; /* 8K (7680*4320) 32bpp double buffered */
+	nvidia,fb-flags = <TEGRA_FB_FLIP_ON_PROBE>;
+	win-mask = <0xC>;
+	nvidia,fb-win = <2>;
+	nvidia,dc-connector = <&sor0>;
+	nvidia,dc-flags = <TEGRA_DC_FLAG_ENABLED>;
+	vdd-dp-pwr-supply = <&p2888_spmic_sd0>;
+	avdd-dp-pll-supply = <&p2888_spmic_sd1>;
+	vdd-edp-sec-mode-supply = <&battery_reg>;
+	vdd-dp-pad-supply = <&battery_reg>;
+	vdd_hdmi_5v0-supply = <&p2822_vdd_hdmi_5v0>;
+	extcon-cables = <&typec_port0 2 &typec_port1 2>;
+	extcon-cable-names = "typec0", "typec1";
+	#extcon-cells = <1>;
+};
+
+&head2 {
+	status = "okay";
+	nvidia,fb-bpp = <32>;
+	nvidia,fbmem-size = <265420800>; /* 8K (7680*4320) 32bpp double buffered */
+	nvidia,fb-flags = <TEGRA_FB_FLIP_ON_PROBE>;
+	win-mask = <0x30>;
+	nvidia,fb-win = <4>;
+	nvidia,dc-connector = <&sor1>;
+	nvidia,dc-flags = <TEGRA_DC_FLAG_ENABLED>;
+	vdd-dp-pwr-supply = <&p2888_spmic_sd0>;
+	avdd-dp-pll-supply = <&p2888_spmic_sd1>;
+	vdd-edp-sec-mode-supply = <&battery_reg>;
+	vdd-dp-pad-supply = <&battery_reg>;
+	vdd_hdmi_5v0-supply = <&p2822_vdd_hdmi_5v0>;
+	extcon-cables = <&typec_port0 2 &typec_port1 2>;
+	extcon-cable-names = "typec0", "typec1";
+	#extcon-cells = <1>;
+};
+
+&sor0 {
+	nvidia,hpd-gpio = <&tegra_main_gpio TEGRA194_MAIN_GPIO(M, 0) GPIO_ACTIVE_HIGH>;
+	nvidia,ddc-i2c-bus = <&dp_aux_ch0_i2c>;
+};
+
+&sor1 {
+	nvidia,hpd-gpio = <&tegra_main_gpio TEGRA194_MAIN_GPIO(M, 1) GPIO_ACTIVE_HIGH>;
+	nvidia,ddc-i2c-bus = <&dp_aux_ch1_i2c>;
+};
+
+&sor2 {
+	nvidia,hpd-gpio = <&tegra_main_gpio TEGRA194_MAIN_GPIO(M, 2) GPIO_ACTIVE_HIGH>;
+	nvidia,ddc-i2c-bus = <&dp_aux_ch2_i2c>;
+};
+
+&sor3 {
+	nvidia,hpd-gpio = <&tegra_main_gpio TEGRA194_MAIN_GPIO(M, 3) GPIO_ACTIVE_HIGH>;
+	nvidia,ddc-i2c-bus = <&dp_aux_ch3_i2c>;
+};
+
+&sor0_hdmi_display {
+	generic-infoframe-type = <HDMI_INFOFRAME_TYPE_HDR>;
+	disp-default-out {
+		nvidia,out-type = <TEGRA_DC_OUT_HDMI>;
+		nvidia,out-hotplug-state = <0>;
+		nvidia,out-parent-clk = "pll_d";
+		nvidia,out-xres = <4096>;
+		nvidia,out-yres = <2160>;
+	};
+};
+
+&sor1_hdmi_display {
+	generic-infoframe-type = <HDMI_INFOFRAME_TYPE_HDR>;
+	disp-default-out {
+		nvidia,out-type = <TEGRA_DC_OUT_HDMI>;
+		nvidia,out-hotplug-state = <0>;
+		nvidia,out-parent-clk = "plld2";
+		nvidia,out-xres = <4096>;
+		nvidia,out-yres = <2160>;
+	};
+};
+
+&sor2_hdmi_display {
+	generic-infoframe-type = <HDMI_INFOFRAME_TYPE_HDR>;
+	disp-default-out {
+		nvidia,out-type = <TEGRA_DC_OUT_HDMI>;
+		nvidia,out-hotplug-state = <0>;
+		nvidia,out-parent-clk = "plld3";
+		nvidia,out-xres = <4096>;
+		nvidia,out-yres = <2160>;
+	};
+};
+
+&sor3_hdmi_display {
+	generic-infoframe-type = <HDMI_INFOFRAME_TYPE_HDR>;
+	disp-default-out {
+		nvidia,out-type = <TEGRA_DC_OUT_HDMI>;
+		nvidia,out-hotplug-state = <0>;
+		nvidia,out-parent-clk = "plld4";
+		nvidia,out-xres = <4096>;
+		nvidia,out-yres = <2160>;
+	};
+};
+
+&sor0_dp_display {
+	nvidia,is_ext_dp_panel = <1>;
+	nvidia,pc2-disabled;
+	disp-default-out {
+		nvidia,out-type = <TEGRA_DC_OUT_DP>;
+		nvidia,out-hotplug-state = <0>;
+		nvidia,out-parent-clk = "pll_d";
+		nvidia,out-xres = <4096>;
+		nvidia,out-yres = <2160>;
+	};
+	/* Setting for LT data */
+	lt-data {
+		tegra-dp-vs-regs {
+			/* postcursor2 L0 */
+			pc2_l0 = <
+				/* pre-emphasis: L0, L1, L2, L3 */
+				0x15 0x1c 0x23 0x2d /* voltage swing: L0 */
+				0x20 0x27 0x2f /* L1 */
+				0x2c 0x36 /* L2 */
+				0x3c /* L3 */
+			>;
+			/* postcursor2 L1 - UNUSED */
+			pc2_l1 = <
+				0x00 0x00 0x00 0x00
+				0x00 0x00 0x00
+				0x00 0x00
+				0x00
+			>;
+			/* postcursor2 L2 - UNUSED */
+			pc2_l2 = <
+				0x00 0x00 0x00 0x00
+				0x00 0x00 0x00
+				0x00 0x00
+				0x00
+			>;
+			/* postcursor2 L3 - UNUSED */
+			pc2_l3 = <
+				0x00 0x00 0x00 0x00
+				0x00 0x00 0x00
+				0x00 0x00
+				0x00
+			>;
+		};
+		tegra-dp-pe-regs {
+			/* postcursor2 L0 */
+			pc2_l0 = <
+				/* pre-emphasis: L0, L1, L2, L3 */
+				0x00 0x0b 0x18 0x2d /* voltage swing: L0 */
+				0x00 0x0f 0x20 /* L1 */
+				0x01 0x18 /* L2 */
+				0x00 /* L3 */
+			>;
+			/* postcursor2 L1 - UNUSED */
+			pc2_l1 = <
+				0x00 0x00 0x00 0x00
+				0x00 0x00 0x00
+				0x00 0x00
+				0x00
+			>;
+			/* postcursor2 L2 - UNUSED */
+			pc2_l2 = <
+				0x00 0x00 0x00 0x00
+				0x00 0x00 0x00
+				0x00 0x00
+				0x00
+			>;
+			/* postcursor2 L3 - UNUSED */
+			pc2_l3 = <
+				0x00 0x00 0x00 0x00
+				0x00 0x00 0x00
+				0x00 0x00
+				0x00
+			>;
+		};
+		tegra-dp-pc-regs {
+			/* postcursor2 L0 */
+			pc2_l0 = <
+				/* pre-emphasis: L0, L1, L2, L3 */
+				0x00 0x00 0x00 0x00 /* voltage swing: L0 */
+				0x00 0x00 0x00 /* L1 */
+				0x00 0x00 /* L2 */
+				0x00 /* L3 */
+			>;
+			/* postcursor2 L1 - UNUSED */
+			pc2_l1 = <
+				0x00 0x00 0x00 0x00
+				0x00 0x00 0x00
+				0x00 0x00
+				0x00
+			>;
+			/* postcursor2 L2 - UNUSED */
+			pc2_l2 = <
+				0x00 0x00 0x00 0x00
+				0x00 0x00 0x00
+				0x00 0x00
+				0x00
+			>;
+			/* postcursor2 L3 - UNUSED */
+			pc2_l3 = <
+				0x00 0x00 0x00 0x00
+				0x00 0x00 0x00
+				0x00 0x00
+				0x00
+			>;
+		};
+		tegra-dp-tx-pu {
+			/* postcursor2 L0 */
+			pc2_l0 = <
+				/* pre-emphasis: L0, L1, L2, L3 */
+				0x20 0x30 0x40 0x60 /* voltage swing: L0 */
+				0x30 0x40 0x60 /* L1 */
+				0x40 0x60 /* L2 */
+				0x60 /* L3 */
+			>;
+			/* postcursor2 L1 - UNUSED */
+			pc2_l1 = <
+				0x00 0x00 0x00 0x00
+				0x00 0x00 0x00
+				0x00 0x00
+				0x00
+			>;
+			/* postcursor2 L2 - UNUSED */
+			pc2_l2 = <
+				0x00 0x00 0x00 0x00
+				0x00 0x00 0x00
+				0x00 0x00
+				0x00
+			>;
+			/* postcursor2 L3 - UNUSED */
+			pc2_l3 = <
+				0x00 0x00 0x00 0x00
+				0x00 0x00 0x00
+				0x00 0x00
+				0x00
+			>;
+		};
+	};//lt-data;
+};
+
+&sor1_dp_display {
+	nvidia,is_ext_dp_panel = <1>;
+	nvidia,pc2-disabled;
+	disp-default-out {
+		nvidia,out-type = <TEGRA_DC_OUT_DP>;
+		nvidia,out-hotplug-state = <0>;
+		nvidia,out-parent-clk = "plld2";
+		nvidia,out-xres = <4096>;
+		nvidia,out-yres = <2160>;
+	};
+	/* Setting for LT data */
+	lt-data {
+		tegra-dp-vs-regs {
+			/* postcursor2 L0 */
+			pc2_l0 = <
+				/* pre-emphasis: L0, L1, L2, L3 */
+				0x15 0x1c 0x23 0x2d /* voltage swing: L0 */
+				0x20 0x27 0x2f /* L1 */
+				0x2c 0x36 /* L2 */
+				0x3c /* L3 */
+			>;
+			/* postcursor2 L1 - UNUSED */
+			pc2_l1 = <
+				0x00 0x00 0x00 0x00
+				0x00 0x00 0x00
+				0x00 0x00
+				0x00
+			>;
+			/* postcursor2 L2 - UNUSED */
+			pc2_l2 = <
+				0x00 0x00 0x00 0x00
+				0x00 0x00 0x00
+				0x00 0x00
+				0x00
+			>;
+			/* postcursor2 L3 - UNUSED */
+			pc2_l3 = <
+				0x00 0x00 0x00 0x00
+				0x00 0x00 0x00
+				0x00 0x00
+				0x00
+			>;
+		};
+		tegra-dp-pe-regs {
+			/* postcursor2 L0 */
+			pc2_l0 = <
+				/* pre-emphasis: L0, L1, L2, L3 */
+				0x00 0x0b 0x18 0x2d /* voltage swing: L0 */
+				0x00 0x0f 0x20 /* L1 */
+				0x01 0x18 /* L2 */
+				0x00 /* L3 */
+			>;
+			/* postcursor2 L1 - UNUSED */
+			pc2_l1 = <
+				0x00 0x00 0x00 0x00
+				0x00 0x00 0x00
+				0x00 0x00
+				0x00
+			>;
+			/* postcursor2 L2 - UNUSED */
+			pc2_l2 = <
+				0x00 0x00 0x00 0x00
+				0x00 0x00 0x00
+				0x00 0x00
+				0x00
+			>;
+			/* postcursor2 L3 - UNUSED */
+			pc2_l3 = <
+				0x00 0x00 0x00 0x00
+				0x00 0x00 0x00
+				0x00 0x00
+				0x00
+			>;
+		};
+		tegra-dp-pc-regs {
+			/* postcursor2 L0 */
+			pc2_l0 = <
+				/* pre-emphasis: L0, L1, L2, L3 */
+				0x00 0x00 0x00 0x00 /* voltage swing: L0 */
+				0x00 0x00 0x00 /* L1 */
+				0x00 0x00 /* L2 */
+				0x00 /* L3 */
+			>;
+			/* postcursor2 L1 - UNUSED */
+			pc2_l1 = <
+				0x00 0x00 0x00 0x00
+				0x00 0x00 0x00
+				0x00 0x00
+				0x00
+			>;
+			/* postcursor2 L2 - UNUSED */
+			pc2_l2 = <
+				0x00 0x00 0x00 0x00
+				0x00 0x00 0x00
+				0x00 0x00
+				0x00
+			>;
+			/* postcursor2 L3 - UNUSED */
+			pc2_l3 = <
+				0x00 0x00 0x00 0x00
+				0x00 0x00 0x00
+				0x00 0x00
+				0x00
+			>;
+		};
+		tegra-dp-tx-pu {
+			/* postcursor2 L0 */
+			pc2_l0 = <
+				/* pre-emphasis: L0, L1, L2, L3 */
+				0x20 0x30 0x40 0x60 /* voltage swing: L0 */
+				0x30 0x40 0x60 /* L1 */
+				0x40 0x60 /* L2 */
+				0x60 /* L3 */
+			>;
+			/* postcursor2 L1 - UNUSED */
+			pc2_l1 = <
+				0x00 0x00 0x00 0x00
+				0x00 0x00 0x00
+				0x00 0x00
+				0x00
+			>;
+			/* postcursor2 L2 - UNUSED */
+			pc2_l2 = <
+				0x00 0x00 0x00 0x00
+				0x00 0x00 0x00
+				0x00 0x00
+				0x00
+			>;
+			/* postcursor2 L3 - UNUSED */
+			pc2_l3 = <
+				0x00 0x00 0x00 0x00
+				0x00 0x00 0x00
+				0x00 0x00
+				0x00
+			>;
+		};
+	};//lt-data;
+};
+
+&sor2_dp_display {
+	nvidia,is_ext_dp_panel = <1>;
+	nvidia,pc2-disabled;
+	disp-default-out {
+		nvidia,out-type = <TEGRA_DC_OUT_DP>;
+		nvidia,out-hotplug-state = <0>;
+		nvidia,out-parent-clk = "plld3";
+		nvidia,out-xres = <4096>;
+		nvidia,out-yres = <2160>;
+	};
+	/* Setting for LT data */
+	lt-data {
+		tegra-dp-vs-regs {
+			/* postcursor2 L0 */
+			pc2_l0 = <
+				/* pre-emphasis: L0, L1, L2, L3 */
+				0x15 0x1c 0x23 0x2d /* voltage swing: L0 */
+				0x20 0x27 0x2f /* L1 */
+				0x2c 0x36 /* L2 */
+				0x3c /* L3 */
+			>;
+			/* postcursor2 L1 - UNUSED */
+			pc2_l1 = <
+				0x00 0x00 0x00 0x00
+				0x00 0x00 0x00
+				0x00 0x00
+				0x00
+			>;
+			/* postcursor2 L2 - UNUSED */
+			pc2_l2 = <
+				0x00 0x00 0x00 0x00
+				0x00 0x00 0x00
+				0x00 0x00
+				0x00
+			>;
+			/* postcursor2 L3 - UNUSED */
+			pc2_l3 = <
+				0x00 0x00 0x00 0x00
+				0x00 0x00 0x00
+				0x00 0x00
+				0x00
+			>;
+		};
+		tegra-dp-pe-regs {
+			/* postcursor2 L0 */
+			pc2_l0 = <
+				/* pre-emphasis: L0, L1, L2, L3 */
+				0x00 0x0b 0x18 0x2d /* voltage swing: L0 */
+				0x00 0x0f 0x20 /* L1 */
+				0x01 0x18 /* L2 */
+				0x00 /* L3 */
+			>;
+			/* postcursor2 L1 - UNUSED */
+			pc2_l1 = <
+				0x00 0x00 0x00 0x00
+				0x00 0x00 0x00
+				0x00 0x00
+				0x00
+			>;
+			/* postcursor2 L2 - UNUSED */
+			pc2_l2 = <
+				0x00 0x00 0x00 0x00
+				0x00 0x00 0x00
+				0x00 0x00
+				0x00
+			>;
+			/* postcursor2 L3 - UNUSED */
+			pc2_l3 = <
+				0x00 0x00 0x00 0x00
+				0x00 0x00 0x00
+				0x00 0x00
+				0x00
+			>;
+		};
+		tegra-dp-pc-regs {
+			/* postcursor2 L0 */
+			pc2_l0 = <
+				/* pre-emphasis: L0, L1, L2, L3 */
+				0x00 0x00 0x00 0x00 /* voltage swing: L0 */
+				0x00 0x00 0x00 /* L1 */
+				0x00 0x00 /* L2 */
+				0x00 /* L3 */
+			>;
+			/* postcursor2 L1 - UNUSED */
+			pc2_l1 = <
+				0x00 0x00 0x00 0x00
+				0x00 0x00 0x00
+				0x00 0x00
+				0x00
+			>;
+			/* postcursor2 L2 - UNUSED */
+			pc2_l2 = <
+				0x00 0x00 0x00 0x00
+				0x00 0x00 0x00
+				0x00 0x00
+				0x00
+			>;
+			/* postcursor2 L3 - UNUSED */
+			pc2_l3 = <
+				0x00 0x00 0x00 0x00
+				0x00 0x00 0x00
+				0x00 0x00
+				0x00
+			>;
+		};
+		tegra-dp-tx-pu {
+			/* postcursor2 L0 */
+			pc2_l0 = <
+				/* pre-emphasis: L0, L1, L2, L3 */
+				0x20 0x30 0x40 0x60 /* voltage swing: L0 */
+				0x30 0x40 0x60 /* L1 */
+				0x40 0x60 /* L2 */
+				0x60 /* L3 */
+			>;
+			/* postcursor2 L1 - UNUSED */
+			pc2_l1 = <
+				0x00 0x00 0x00 0x00
+				0x00 0x00 0x00
+				0x00 0x00
+				0x00
+			>;
+			/* postcursor2 L2 - UNUSED */
+			pc2_l2 = <
+				0x00 0x00 0x00 0x00
+				0x00 0x00 0x00
+				0x00 0x00
+				0x00
+			>;
+			/* postcursor2 L3 - UNUSED */
+			pc2_l3 = <
+				0x00 0x00 0x00 0x00
+				0x00 0x00 0x00
+				0x00 0x00
+				0x00
+			>;
+		};
+	};//lt-data;
+};
+
+&sor3_dp_display {
+	nvidia,is_ext_dp_panel = <1>;
+	nvidia,pc2-disabled;
+	disp-default-out {
+		nvidia,out-type = <TEGRA_DC_OUT_DP>;
+		nvidia,out-hotplug-state = <0>;
+		nvidia,out-parent-clk = "plld4";
+		nvidia,out-xres = <4096>;
+		nvidia,out-yres = <2160>;
+	};
+	/* Setting for LT data */
+	lt-data {
+		tegra-dp-vs-regs {
+			/* postcursor2 L0 */
+			pc2_l0 = <
+				/* pre-emphasis: L0, L1, L2, L3 */
+				0x15 0x1c 0x23 0x2d /* voltage swing: L0 */
+				0x20 0x27 0x2f /* L1 */
+				0x2c 0x36 /* L2 */
+				0x3c /* L3 */
+			>;
+			/* postcursor2 L1 - UNUSED */
+			pc2_l1 = <
+				0x00 0x00 0x00 0x00
+				0x00 0x00 0x00
+				0x00 0x00
+				0x00
+			>;
+			/* postcursor2 L2 - UNUSED */
+			pc2_l2 = <
+				0x00 0x00 0x00 0x00
+				0x00 0x00 0x00
+				0x00 0x00
+				0x00
+			>;
+			/* postcursor2 L3 - UNUSED */
+			pc2_l3 = <
+				0x00 0x00 0x00 0x00
+				0x00 0x00 0x00
+				0x00 0x00
+				0x00
+			>;
+		};
+		tegra-dp-pe-regs {
+			/* postcursor2 L0 */
+			pc2_l0 = <
+				/* pre-emphasis: L0, L1, L2, L3 */
+				0x00 0x0b 0x18 0x2d /* voltage swing: L0 */
+				0x00 0x0f 0x20 /* L1 */
+				0x01 0x18 /* L2 */
+				0x00 /* L3 */
+			>;
+			/* postcursor2 L1 - UNUSED */
+			pc2_l1 = <
+				0x00 0x00 0x00 0x00
+				0x00 0x00 0x00
+				0x00 0x00
+				0x00
+			>;
+			/* postcursor2 L2 - UNUSED */
+			pc2_l2 = <
+				0x00 0x00 0x00 0x00
+				0x00 0x00 0x00
+				0x00 0x00
+				0x00
+			>;
+			/* postcursor2 L3 - UNUSED */
+			pc2_l3 = <
+				0x00 0x00 0x00 0x00
+				0x00 0x00 0x00
+				0x00 0x00
+				0x00
+			>;
+		};
+		tegra-dp-pc-regs {
+			/* postcursor2 L0 */
+			pc2_l0 = <
+				/* pre-emphasis: L0, L1, L2, L3 */
+				0x00 0x00 0x00 0x00 /* voltage swing: L0 */
+				0x00 0x00 0x00 /* L1 */
+				0x00 0x00 /* L2 */
+				0x00 /* L3 */
+			>;
+			/* postcursor2 L1 - UNUSED */
+			pc2_l1 = <
+				0x00 0x00 0x00 0x00
+				0x00 0x00 0x00
+				0x00 0x00
+				0x00
+			>;
+			/* postcursor2 L2 - UNUSED */
+			pc2_l2 = <
+				0x00 0x00 0x00 0x00
+				0x00 0x00 0x00
+				0x00 0x00
+				0x00
+			>;
+			/* postcursor2 L3 - UNUSED */
+			pc2_l3 = <
+				0x00 0x00 0x00 0x00
+				0x00 0x00 0x00
+				0x00 0x00
+				0x00
+			>;
+		};
+		tegra-dp-tx-pu {
+			/* postcursor2 L0 */
+			pc2_l0 = <
+				/* pre-emphasis: L0, L1, L2, L3 */
+				0x20 0x30 0x40 0x60 /* voltage swing: L0 */
+				0x30 0x40 0x60 /* L1 */
+				0x40 0x60 /* L2 */
+				0x60 /* L3 */
+			>;
+			/* postcursor2 L1 - UNUSED */
+			pc2_l1 = <
+				0x00 0x00 0x00 0x00
+				0x00 0x00 0x00
+				0x00 0x00
+				0x00
+			>;
+			/* postcursor2 L2 - UNUSED */
+			pc2_l2 = <
+				0x00 0x00 0x00 0x00
+				0x00 0x00 0x00
+				0x00 0x00
+				0x00
+			>;
+			/* postcursor2 L3 - UNUSED */
+			pc2_l3 = <
+				0x00 0x00 0x00 0x00
+				0x00 0x00 0x00
+				0x00 0x00
+				0x00
+			>;
+		};
+	};//lt-data;
+};
+
+&sor0 {
+	status = "okay";
+	nvidia,active-panel = <&sor0_dp_display>;
+	nvidia,typec-port = /bits/ 8 <0>;
+};
+
+&sor0_dp_display {
+	status = "okay";
+	nvidia,is_ext_dp_panel = <1>;
+};
+
+&sor1 {
+	status = "okay";
+	nvidia,active-panel = <&sor1_dp_display>;
+	nvidia,typec-port = /bits/ 8 <1>;
+};
+
+&sor1_dp_display {
+	status = "okay";
+	nvidia,is_ext_dp_panel = <1>;
+};
+
+&sor2 {
+	status = "okay";
+	nvidia,active-panel = <&sor2_hdmi_display>;
+};
+
+&sor2_hdmi_display {
+	status = "okay";
+	disp-default-out {
+		nvidia,out-flags = <TEGRA_DC_OUT_HOTPLUG_LOW>;
+	};
+};
+
+&dpaux0 {
+	status = "okay";
+};
+
+&dpaux1 {
+	status = "okay";
+};
+
+&dpaux2 {
+	status = "okay";
+};
+
+&tegra_cec {
+	status = "okay";
+};

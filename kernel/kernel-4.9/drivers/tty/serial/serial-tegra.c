@@ -46,7 +46,6 @@
 #include <linux/tty_flip.h>
 #include <linux/timer.h>
 #include <linux/kthread.h>
-#include <linux/of_gpio.h>
 
 #define TEGRA_UART_TYPE				"TEGRA_UART"
 #define TX_EMPTY_STATUS				(UART_LSR_TEMT | UART_LSR_THRE)
@@ -62,7 +61,6 @@
 #define TEGRA_UART_IRDA_CSR			0x08
 #define TEGRA_UART_SIR_ENABLED			0x80
 
-#define TEGRA_UART_RX_CAT			2
 #define TEGRA_UART_TX_PIO			1
 #define TEGRA_UART_TX_DMA			2
 #define TEGRA_UART_MIN_DMA			16
@@ -170,20 +168,6 @@ struct tegra_uart_port {
 	int					error_tolerance_low_range;
 	int					error_tolerance_high_range;
 	bool					disable_pio_mode;
-
-	int 					forceoff;
-
-	unsigned int				have_sp339e:1;
-	int					sp339e_mode;
-	int					sp339e_gpio_dir;
-	int					sp339e_gpio_enable;
-	int					sp339e_gpio_m0;
-	int					sp339e_gpio_m1;
-	int					sp339e_gpio_tm;
-	int					sp339e_gpio_slew;
-    	struct pinctrl *pinctrl_uart;
-	struct pinctrl_state *pins_rs232;
-	struct pinctrl_state *pins_rs422;
 };
 
 static void tegra_uart_start_next_tx(struct tegra_uart_port *tup);
@@ -657,17 +641,6 @@ static void tegra_uart_start_tx(struct uart_port *u)
 
 	if (!uart_circ_empty(xmit) && !tup->tx_in_progress)
 		tegra_uart_start_next_tx(tup);
-
-	if (tup->sp339e_mode == 2) {
-		if ( tup->sp339e_gpio_dir ) {
-			if (tup->rx_in_progress == TEGRA_UART_RX_CAT) {
-				gpio_direction_output(tup->sp339e_gpio_dir, 1); //invert, enable rx, disable tx
-			}
-			else {
-				gpio_direction_output(tup->sp339e_gpio_dir, 0); //invert, enable tx, disable rx
-			}
-		}
-	}
 }
 
 static unsigned int tegra_uart_tx_empty(struct uart_port *u)
@@ -683,7 +656,6 @@ static unsigned int tegra_uart_tx_empty(struct uart_port *u)
 			ret = TIOCSER_TEMT;
 	}
 	spin_unlock_irqrestore(&u->lock, flags);
-
 	return ret;
 }
 
@@ -696,6 +668,7 @@ static void tegra_uart_stop_tx(struct uart_port *u)
 
 	if (tup->tx_in_progress != TEGRA_UART_TX_DMA)
 		return;
+
 	dmaengine_terminate_all(tup->tx_dma_chan);
 	dmaengine_tx_status(tup->tx_dma_chan, tup->tx_cookie, &state);
 	count = tup->tx_bytes_requested - state.residue;
@@ -1058,7 +1031,6 @@ static irqreturn_t tegra_uart_isr(int irq, void *data)
 					return IRQ_HANDLED;
 				}
 				if (tup->rx_in_progress) {
-					tup->rx_in_progress = TEGRA_UART_RX_CAT;
 					ier = tup->ier_shadow;
 					ier |= (UART_IER_RLSI | UART_IER_RTOIE |
 						TEGRA_UART_IER_EORD);
@@ -1116,13 +1088,6 @@ static void tegra_uart_stop_rx(struct uart_port *u)
 	struct tty_port *port = &tup->uport.state->port;
 	struct dma_tx_state state;
 	unsigned long ier;
-
-	if (tup->sp339e_mode == 2){
-		if ( tup->sp339e_gpio_dir )
-		{
-			gpio_direction_output(tup->sp339e_gpio_dir, 1); //invert, enable rx, disable tx
-		}
-	}
 
 	if (tup->rts_active && tup->is_hw_flow_enabled)
 		set_rts(tup, false);
@@ -1420,12 +1385,6 @@ static int tegra_uart_startup(struct uart_port *u)
 	struct tegra_uart_port *tup = to_tegra_uport(u);
 	int ret;
 
-	if (tup->sp339e_mode == 2){
-		if ( tup->sp339e_gpio_dir )
-		{
-			gpio_direction_output(tup->sp339e_gpio_dir, 1); //invert, enable rx, disable tx
-		}
-	}
 	if (!tup->use_tx_pio) {
 		ret = tegra_uart_dma_channel_allocate(tup, false);
 		if (ret < 0) {
@@ -1663,7 +1622,6 @@ static int tegra_uart_parse_dt(struct platform_device *pdev,
 	u32 pval;
 	int count;
 	int n_entries;
-	int gpio;
 
 	port = of_alias_get_id(np, "serial");
 	if (port < 0) {
@@ -1731,158 +1689,6 @@ static int tegra_uart_parse_dt(struct platform_device *pdev,
 	} else
 		tup->n_adjustable_baud_rates = 0;
 
-	if (of_get_property(np, "nvidia,sp339e", NULL))
-		tup->have_sp339e = 1;
-
-	if ( tup->have_sp339e )
-	{
-		dev_err(&pdev->dev, "==============have_sp339e==============\n");
-		tup->sp339e_mode = 1 ;
-		gpio = of_get_named_gpio( np , "nvidia,sp339e-dir" , 0 ) ;
-		if ( gpio_is_valid( gpio ) )
-		{
-			tup->sp339e_gpio_dir = gpio ;
-			if ( gpio_request_one( tup->sp339e_gpio_dir , GPIOF_DIR_OUT , "sp339e-dir" ) == 0 )
-			{
-				gpio_set_value( tup->sp339e_gpio_dir , 1 ) ;
-			} 
-			else 
-			{
-				dev_err( &pdev->dev , "cannot request gpio for sp339e dir pin\n" ) ;
-				tup->sp339e_gpio_dir = 0 ;
-			}
-		}
-		else
-		{
-			dev_err( &pdev->dev , "cannot request gpio for sp339e dir pin\n" ) ;
-		}
-		
-		gpio = of_get_named_gpio( np , "nvidia,sp339e-enable" , 0 ) ;
-		if ( gpio_is_valid( gpio ) )
-		{
-			tup->sp339e_gpio_enable = gpio ;	
-			if ( gpio_request_one( tup->sp339e_gpio_enable , GPIOF_DIR_OUT , "sp339e-enable" ) == 0 )
-			{
-				gpio_set_value( tup->sp339e_gpio_enable , 1 ) ;
-			} 
-			else 
-			{
-				dev_err( &pdev->dev , "cannot request gpio for sp339e enable pin\n" ) ;
-				tup->sp339e_gpio_enable = 0 ;
-			}
-		}
-		else
-		{
-			dev_err( &pdev->dev , "cannot request gpio for sp339e enable pin\n" ) ;
-		}
-		
-		gpio = of_get_named_gpio( np , "nvidia,sp339e-m0" , 0 ) ;
-		if ( gpio_is_valid( gpio ) )
-		{
-			tup->sp339e_gpio_m0 = gpio ;	
-			if ( gpio_request_one( tup->sp339e_gpio_m0 , GPIOF_DIR_OUT , "sp339e-m0" ) == 0 )
-			{
-				gpio_set_value( tup->sp339e_gpio_m0 , 1 ) ;
-			} 
-			else 
-			{
-				dev_err( &pdev->dev , "cannot request gpio for sp339e m0 pin\n" ) ;
-				tup->sp339e_gpio_m0 = 0 ;
-			}
-		}
-		else
-		{
-			dev_err( &pdev->dev , "cannot request gpio for sp339e m0 pin\n" ) ;
-		}
-
-		gpio = of_get_named_gpio( np , "nvidia,sp339e-m1" , 0 ) ;
-		if ( gpio_is_valid( gpio ) )
-		{
-			tup->sp339e_gpio_m1 = gpio ;	
-			if ( gpio_request_one( tup->sp339e_gpio_m1 , GPIOF_DIR_OUT , "sp339e-m1" ) == 0 )
-			{
-				gpio_set_value( tup->sp339e_gpio_m1 , 0 ) ;
-			} 
-			else 
-			{
-				dev_err( &pdev->dev , "cannot request gpio for sp339e m1 pin\n" ) ;
-				tup->sp339e_gpio_m1 = 0 ;
-			}
-		}
-		else
-		{
-			dev_err( &pdev->dev , "cannot request gpio for sp339e m1 pin\n" ) ;
-		}
-
-		gpio = of_get_named_gpio( np , "nvidia,sp339e-tm" , 0 ) ;
-		if ( gpio_is_valid( gpio ) )
-		{
-			tup->sp339e_gpio_tm = gpio ;	
-			if ( gpio_request_one( tup->sp339e_gpio_tm , GPIOF_DIR_OUT , "sp339e-tm" ) == 0 )
-			{
-				gpio_set_value( tup->sp339e_gpio_tm , 0 ) ;
-			} 
-			else 
-			{
-				dev_err( &pdev->dev , "cannot request gpio for sp339e tm pin\n" ) ;
-				tup->sp339e_gpio_tm = 0 ;
-			}
-		}
-		else
-		{
-			dev_err( &pdev->dev , "cannot request gpio for sp339e tm pin\n" ) ;
-		}
-
-		gpio = of_get_named_gpio( np , "nvidia,sp339e-slew" , 0 ) ;
-		if ( gpio_is_valid( gpio ) )
-		{
-			tup->sp339e_gpio_slew = gpio ;	
-			if ( gpio_request_one( tup->sp339e_gpio_slew , GPIOF_DIR_OUT , "sp339e-slew" ) == 0 )
-			{
-				gpio_set_value( tup->sp339e_gpio_slew , 0 ) ;
-			} 
-			else 
-			{
-				dev_err( &pdev->dev , "cannot request gpio for sp339e slew pin\n" ) ;
-				tup->sp339e_gpio_slew = 0 ;
-			}
-		}
-		else
-		{
-			dev_err( &pdev->dev , "cannot request gpio for sp339e slew pin\n" ) ;
-		}
-
-	        tup->pinctrl_uart = devm_pinctrl_get(&pdev->dev);
-		if (IS_ERR_OR_NULL(tup->pinctrl_uart)) {
-			dev_err( &pdev->dev, "Missing pinctrl info, err: %ld\n", PTR_ERR(tup->pinctrl_uart));
-			tup->pinctrl_uart = NULL;
-			return 0;
-		}
-	        tup->pins_rs232 = pinctrl_lookup_state(tup->pinctrl_uart, "rs232");
-		if (IS_ERR_OR_NULL(tup->pins_rs232)) {
-			dev_err( &pdev->dev, "Missing tup->pins_rs232 state, err:%ld\n", PTR_ERR(tup->pins_rs232));
-		}
-	        tup->pins_rs422 = pinctrl_lookup_state(tup->pinctrl_uart, "rs422");
-		if (IS_ERR_OR_NULL(tup->pins_rs422)) {
-			dev_err( &pdev->dev, "Missing tup->pins_rs422 state, err:%ld\n", PTR_ERR(tup->pins_rs422));
-		}
-	}else
-	{
-		gpio = of_get_named_gpio( np , "nvidia,forceoff" , 0 ) ;
-		if ( gpio_is_valid( gpio ) )
-		{
-			tup->forceoff = gpio ;
-			if ( gpio_request_one( tup->forceoff , GPIOF_DIR_OUT , "forceoff" ) == 0 )
-			{
-				gpio_set_value( tup->forceoff , 1 ) ;
-			}
-			else
-			{
-				dev_err( &pdev->dev , "cannot request gpio for forceoff dir pin\n" ) ;
-				tup->forceoff = 0 ;
-			}
-		}
-	}
 	return 0;
 }
 
@@ -1949,385 +1755,6 @@ static void tegra_uart_debugfs_deinit(struct tegra_uart_port *tup)
 static void tegra_uart_debugfs_init(struct tegra_uart_port *tup) {}
 static void tegra_uart_debugfs_deinit(struct tegra_uart_port *tup) {}
 #endif
-
-/* ---------------------------------------------------------------------
- * sp339e
---------------------------------------------------------------------- */
-static ssize_t sp339e_dir_show(struct device *dev, struct device_attribute *attr, char *buf)
-{
-	struct platform_device *pdev = container_of(dev, struct platform_device, dev);
-	struct tegra_uart_port *tup = platform_get_drvdata(pdev);
-
-	if ( ! tup->have_sp339e )
-	{
-		return -EINVAL ;
-	}
-	if ( tup->sp339e_gpio_dir )
-	{
-		return sprintf(buf, "%d", gpio_get_value(tup->sp339e_gpio_dir));
-	}
-
-	return sprintf(buf, "0");
-
-}
-
-static ssize_t sp339e_dir_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
-{
-	struct platform_device *pdev = container_of(dev, struct platform_device, dev);
-	struct tegra_uart_port *tup = platform_get_drvdata(pdev);
-	ssize_t		status = -EINVAL ;
-	
-	if ( ! tup->have_sp339e )
-	{
-		return -EINVAL ;
-	}
-		
-	if ( tup && tup->sp339e_gpio_dir )
-	{
-		long		value;
-
-		status = kstrtol(buf, 0, &value);
-		if (status == 0) {
-			gpio_set_value( tup->sp339e_gpio_dir , value ) ;
-		}
-	}
-	
-	return count ;
-}
-
-static DEVICE_ATTR(sp339e_dir, S_IRUGO | S_IWUSR, sp339e_dir_show, sp339e_dir_store);
-
-static ssize_t sp339e_enable_show(struct device *dev, struct device_attribute *attr, char *buf)
-{
-	struct platform_device *pdev = container_of(dev, struct platform_device, dev);
-	struct tegra_uart_port *tup = platform_get_drvdata(pdev);
-
-	if ( ! tup->have_sp339e )
-	{
-		return -EINVAL ;
-	}
-	if ( tup->sp339e_gpio_enable )
-	{
-		return sprintf(buf, "%d", gpio_get_value(tup->sp339e_gpio_enable));
-	}
-
-	return sprintf(buf, "0");
-}
-
-static ssize_t sp339e_enable_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
-{
-	struct platform_device *pdev = container_of(dev, struct platform_device, dev);
-	struct tegra_uart_port *tup = platform_get_drvdata(pdev);
-	ssize_t		status = -EINVAL ;
-	
-	if ( ! tup->have_sp339e )
-	{
-		return -EINVAL ;
-	}
-		
-	if ( tup && tup->sp339e_gpio_enable )
-	{
-		long		value;
-
-		status = kstrtol(buf, 0, &value);
-		if (status == 0) {
-			gpio_set_value( tup->sp339e_gpio_enable , value ) ;
-		}
-	}
-	
-	return count ;
-}
-
-static DEVICE_ATTR(sp339e_enable, S_IRUGO | S_IWUSR, sp339e_enable_show, sp339e_enable_store);
-
-static ssize_t sp339e_m0_show(struct device *dev, struct device_attribute *attr, char *buf)
-{
-	struct platform_device *pdev = container_of(dev, struct platform_device, dev);
-	struct tegra_uart_port *tup = platform_get_drvdata(pdev);
-
-	if ( ! tup->have_sp339e )
-	{
-		return -EINVAL ;
-	}
-	if ( tup->sp339e_gpio_m0 )
-	{
-		return sprintf(buf, "%d", gpio_get_value(tup->sp339e_gpio_m0));
-	}
-
-	return sprintf(buf, "0");
-}
-
-static ssize_t sp339e_m0_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
-{
-	struct platform_device *pdev = container_of(dev, struct platform_device, dev);
-	struct tegra_uart_port *tup = platform_get_drvdata(pdev);
-	ssize_t		status = -EINVAL ;
-	
-	if ( ! tup->have_sp339e )
-	{
-		return -EINVAL ;
-	}
-		
-	if ( tup && tup->sp339e_gpio_m0 )
-	{
-		long		value;
-
-		status = kstrtol(buf, 0, &value);
-		if (status == 0) {
-			gpio_set_value( tup->sp339e_gpio_m0 , value ) ;
-		}
-	}
-	
-	return count ;
-}
-
-static DEVICE_ATTR(sp339e_m0, S_IRUGO | S_IWUSR, sp339e_m0_show, sp339e_m0_store);
-
-static ssize_t sp339e_m1_show(struct device *dev, struct device_attribute *attr, char *buf)
-{
-	struct platform_device *pdev = container_of(dev, struct platform_device, dev);
-	struct tegra_uart_port *tup = platform_get_drvdata(pdev);
-
-	if ( ! tup->have_sp339e )
-	{
-		return -EINVAL ;
-	}
-	if ( tup->sp339e_gpio_m1 )
-	{
-		return sprintf(buf, "%d", gpio_get_value(tup->sp339e_gpio_m1));
-	}
-
-	return sprintf(buf, "0");
-}
-
-static ssize_t sp339e_m1_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
-{
-	struct platform_device *pdev = container_of(dev, struct platform_device, dev);
-	struct tegra_uart_port *tup = platform_get_drvdata(pdev);
-	ssize_t		status = -EINVAL ;
-	
-	if ( ! tup->have_sp339e )
-	{
-		return -EINVAL ;
-	}
-		
-	if ( tup && tup->sp339e_gpio_m1 )
-	{
-		long		value;
-
-		status = kstrtol(buf, 0, &value);
-		if (status == 0) {
-			gpio_set_value( tup->sp339e_gpio_m1 , value ) ;
-		}
-	}
-	
-	return count ;
-}
-
-static DEVICE_ATTR(sp339e_m1, S_IRUGO | S_IWUSR, sp339e_m1_show, sp339e_m1_store);
-
-static ssize_t sp339e_tm_show(struct device *dev, struct device_attribute *attr, char *buf)
-{
-	struct platform_device *pdev = container_of(dev, struct platform_device, dev);
-	struct tegra_uart_port *tup = platform_get_drvdata(pdev);
-
-	if ( ! tup->have_sp339e )
-	{
-		return -EINVAL ;
-	}
-	if ( tup->sp339e_gpio_tm )
-	{
-		return sprintf(buf, "%d", gpio_get_value(tup->sp339e_gpio_tm));
-	}
-
-	return sprintf(buf, "0");
-}
-
-static ssize_t sp339e_tm_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
-{
-	struct platform_device *pdev = container_of(dev, struct platform_device, dev);
-	struct tegra_uart_port *tup = platform_get_drvdata(pdev);
-	ssize_t		status = -EINVAL ;
-	
-	if ( ! tup->have_sp339e )
-	{
-		return -EINVAL ;
-	}
-		
-	if ( tup && tup->sp339e_gpio_tm )
-	{
-		long		value;
-
-		status = kstrtol(buf, 0, &value);
-		if (status == 0) {
-			gpio_set_value( tup->sp339e_gpio_tm , value ) ;
-		}
-	}
-	
-	return count ;
-}
-
-static DEVICE_ATTR(sp339e_tm, S_IRUGO | S_IWUSR, sp339e_tm_show, sp339e_tm_store);
-
-static ssize_t sp339e_slew_show(struct device *dev, struct device_attribute *attr, char *buf)
-{
-	struct platform_device *pdev = container_of(dev, struct platform_device, dev);
-	struct tegra_uart_port *tup = platform_get_drvdata(pdev);
-
-	if ( ! tup->have_sp339e )
-	{
-		return -EINVAL ;
-	}
-	if ( tup->sp339e_gpio_slew )
-	{
-		return sprintf(buf, "%d", gpio_get_value(tup->sp339e_gpio_slew));
-	}
-
-	return sprintf(buf, "0");
-}
-
-static ssize_t sp339e_slew_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
-{
-	struct platform_device *pdev = container_of(dev, struct platform_device, dev);
-	struct tegra_uart_port *tup = platform_get_drvdata(pdev);
-	ssize_t		status = -EINVAL ;
-	
-	if ( ! tup->have_sp339e )
-	{
-		return -EINVAL ;
-	}
-		
-	if ( tup && tup->sp339e_gpio_slew )
-	{
-		long		value;
-
-		status = kstrtol(buf, 0, &value);
-		if (status == 0) {
-			gpio_set_value( tup->sp339e_gpio_slew , value ) ;
-		}
-	}
-	
-	return count ;
-}
-
-static DEVICE_ATTR(sp339e_slew, S_IRUGO | S_IWUSR, sp339e_slew_show, sp339e_slew_store);
-
-static ssize_t sp339e_mode_show(struct device *dev, struct device_attribute *attr, char *buf)
-{
-	struct platform_device *pdev = container_of(dev, struct platform_device, dev);
-	struct tegra_uart_port *tup = platform_get_drvdata(pdev);
-
-	if ( ! tup->have_sp339e )
-	{
-		return -EINVAL ;
-	}
-	
-	switch( tup->sp339e_mode )
-	{
-		case 0 : return sprintf(buf, "loop");
-		case 1 : return sprintf(buf, "rs232");
-		case 2 : return sprintf(buf, "rs485");
-		case 3 : return sprintf(buf, "rs422");
-		default :
-			tup->sp339e_mode = 1 ;
-			return sprintf(buf, "rs232");
-			
-	}
-
-	return sprintf(buf, "0");
-}
-
-static ssize_t sp339e_mode_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
-{
-	struct platform_device *pdev = container_of(dev, struct platform_device, dev);
-	struct tegra_uart_port *tup = platform_get_drvdata(pdev);
-	int ret = 0;
-	
-	if ( ! tup->have_sp339e )
-	{
-		return -EINVAL ;
-	}
-	
-	if ( tup )
-	{
-		if (sysfs_streq(buf, "loop"))
-		{
-			tup->sp339e_mode = 0 ;
-			if ( tup->sp339e_gpio_m0 && tup->sp339e_gpio_m1 )
-			{
-				gpio_set_value( tup->sp339e_gpio_m0 , 0 ) ;
-				gpio_set_value( tup->sp339e_gpio_m1 , 0 ) ;
-				gpio_set_value( tup->sp339e_gpio_tm , 0 ) ;
-			}
-		    	if ( tup->pinctrl_uart && tup->pins_rs232 )
-		   	 {
-		        	ret = pinctrl_select_state(tup->pinctrl_uart, tup->pins_rs232);
-				if (ret < 0)
-					dev_warn(&pdev->dev,"setting pins_rs232 failed, ret: %d\n", ret);
-		   	 }
-		}
-		if (sysfs_streq(buf, "rs232"))
-		{
-			tup->sp339e_mode = 1 ;
-			if ( tup->sp339e_gpio_m0 && tup->sp339e_gpio_m1 )
-			{
-				gpio_set_value( tup->sp339e_gpio_m0 , 1 ) ;
-				gpio_set_value( tup->sp339e_gpio_m1 , 0 ) ;
-				gpio_set_value( tup->sp339e_gpio_tm , 0 ) ;
-			}
-            		if ( tup->pinctrl_uart && tup->pins_rs232 )
-            		{
-                		ret = pinctrl_select_state(tup->pinctrl_uart, tup->pins_rs232);
-				if (ret < 0)
-					dev_warn(&pdev->dev,"setting pins_rs232 failed, ret: %d\n", ret);
-            		}
-		}
-		if (sysfs_streq(buf, "rs485"))
-		{
-			tup->sp339e_mode = 2 ;
-			if ( tup->sp339e_gpio_m0 && tup->sp339e_gpio_m1 )
-			{
-				gpio_set_value( tup->sp339e_gpio_m0 , 0 ) ;
-				gpio_set_value( tup->sp339e_gpio_m1 , 1 ) ;
-				gpio_set_value( tup->sp339e_gpio_tm , 1 ) ;
-			}
-            		if ( tup->pinctrl_uart && tup->pins_rs422 )
-            		{
-                		ret = pinctrl_select_state(tup->pinctrl_uart, tup->pins_rs422);
-				if (ret < 0)
-					dev_warn(&pdev->dev,"setting pins_rs422 failed, ret: %d\n", ret);
-            		}
-            		if ( tup->sp339e_gpio_dir ) 
-            		{
-				gpio_direction_output(tup->sp339e_gpio_dir, 1);	//invert, enable rx, disable tx
-			}
-		}
-		if (sysfs_streq(buf, "rs422"))
-		{
-			tup->sp339e_mode = 3 ;
-			if ( tup->sp339e_gpio_m0 && tup->sp339e_gpio_m1 )
-			{
-				gpio_set_value( tup->sp339e_gpio_m0 , 1 ) ;
-				gpio_set_value( tup->sp339e_gpio_m1 , 1 ) ;
-				gpio_set_value( tup->sp339e_gpio_tm , 1 ) ;
-			}
-            		if ( tup->pinctrl_uart && tup->pins_rs422 )
-            		{
-                		ret = pinctrl_select_state(tup->pinctrl_uart, tup->pins_rs422);
-				if (ret < 0)
-					dev_warn(&pdev->dev,"setting pins_rs422 failed, ret: %d\n", ret);
-            		}
-            		if ( tup->sp339e_gpio_dir ) 
-            		{
-				gpio_direction_output(tup->sp339e_gpio_dir, 0);	//invert, enable tx
-			}
-		}
-	}
-	
-	return count ;
-}
-
-static DEVICE_ATTR(sp339e_mode, S_IRUGO | S_IWUSR, sp339e_mode_show, sp339e_mode_store);
 
 static struct tegra_uart_chip_data tegra20_uart_chip_data = {
 	.tx_fifo_full_status		= false,
@@ -2467,38 +1894,6 @@ static int tegra_uart_probe(struct platform_device *pdev)
 	if (ret < 0) {
 		dev_err(&pdev->dev, "Failed to add uart port, err %d\n", ret);
 		return ret;
-	}
-
-	if ( tup->have_sp339e )
-	{
-		int error ;
-		error = device_create_file(&pdev->dev, &dev_attr_sp339e_dir);
-		if (error)
-			dev_err(&pdev->dev, "Error %d on creating file\n", error);
-			
-		error = device_create_file(&pdev->dev, &dev_attr_sp339e_enable);
-		if (error)
-			dev_err(&pdev->dev, "Error %d on creating file\n", error);
-			
-		error = device_create_file(&pdev->dev, &dev_attr_sp339e_m0);
-		if (error)
-			dev_err(&pdev->dev, "Error %d on creating file\n", error);
-			
-		error = device_create_file(&pdev->dev, &dev_attr_sp339e_m1);
-		if (error)
-			dev_err(&pdev->dev, "Error %d on creating file\n", error);
-			
-		error = device_create_file(&pdev->dev, &dev_attr_sp339e_tm);
-		if (error)
-			dev_err(&pdev->dev, "Error %d on creating file\n", error);
-			
-		error = device_create_file(&pdev->dev, &dev_attr_sp339e_slew);
-		if (error)
-			dev_err(&pdev->dev, "Error %d on creating file\n", error);
-
-		error = device_create_file(&pdev->dev, &dev_attr_sp339e_mode);
-		if (error)
-			dev_err(&pdev->dev, "Error %d on creating file\n", error);
 	}
 
 	if (tup->enable_rx_buffer_throttle) {

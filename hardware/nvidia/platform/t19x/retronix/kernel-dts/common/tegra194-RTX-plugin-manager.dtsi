@@ -1,0 +1,310 @@
+/*
+ * tegra194-ADT-plugin-manager.dtsi:
+ *
+ * Copyright (c) 2017-2018, NVIDIA CORPORATION.  All rights reserved.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; version 2 of the License.
+ *
+ * This program is distributed in the hope that it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+ * more details.
+ *
+ * ls /proc/device-tree/chosen/plugin-manager/ids/
+ * ls /proc/device-tree/chosen/plugin-manager/odm-data/
+ */
+
+/ {
+	plugin-manager {
+		fragment-p2888-mods {
+			odm-data = "mods-build";
+			override@0 {
+				target = <&gpcdma>;
+				_overlay_ {
+					nvidia,bypass-smmu;
+				};
+			};
+		};
+
+		fragement-tegra-wdt-en {
+			odm-data = "enable-denver-wdt";
+			override@0 {
+				target = <&tegra_wdt>;
+				_overlay_ {
+					status = "okay";
+				};
+			};
+		};
+
+		fragemen-tegra-wdt-dis {
+			odm-data = "disable-denver-wdt";
+			override@0 {
+				target = <&tegra_pmc>;
+				_overlay_ {
+					nvidia,enable-halt-in-fiq;
+				};
+			};
+		};
+
+		fragement-soft-wdt {
+			odm-data = "enable-pmic-wdt",
+				   "enable-denver-wdt";
+			override@0 {
+				target = <&soft_wdt>;
+				_overlay_ {
+					status = "disabled";
+				};
+			};
+		};
+
+		fragment-pcie-c1-rp {
+			ids = "<2822-0000-200";
+			override@0 {
+				target = <&{/pcie@14100000}>;
+				_overlay_ {
+					nvidia,max-speed = <1>;
+				};
+			};
+		};
+
+		fragment-pcie-older-than-p2822-B00 {
+			ids = "<2822-0000-400";
+			override@0 {
+				target = <&{/pcie@14100000}>;
+				_overlay_ {
+					nvidia,disable-aspm-states = <0xf>;
+				};
+			};
+			override@1 {
+				target = <&{/pcie@141a0000}>;
+				_overlay_ {
+					delete-target-property = "nvidia,plat-gpios";
+				};
+			};
+			override@2 {
+				target = <&{/gpio@2200000}>;
+				_overlay_ {
+					pcie-reg-enable {
+						status = "disabled";
+					};
+				};
+			};
+		};
+
+		fragment-disable-uphy-rx-idle {
+			ids = "<=2822-0000-300";
+			override@0 {
+				target = <&{/hsio_p2u/p2u@03e10000}>;
+				_overlay_ {
+					append-string-property = "nvidia,disable-uphy-rx-idle";
+				};
+			};
+		};
+
+		fragment-pcie-c5-rp {
+			odm-anded-override;
+			odm-data = "disable-pcie-c5-endpoint", "enable-nvhs-uphy-pcie-c5";
+			override@0 {
+				target = <&{/pcie@141a0000}>;
+				_overlay_ {
+					status = "okay";
+				};
+			};
+			override@1 {
+				target = <&{/pcie_ep@141a0000}>;
+				_overlay_ {
+					status = "disabled";
+				};
+			};
+			override@2 {
+				target = <&{/gpio@c2f0000/pex-refclk-sel-low}>;
+				_overlay_ {
+					status = "okay";
+				};
+			};
+		};
+
+		fragment-pcie-c5-ep {
+			odm-anded-override;
+			odm-data = "enable-pcie-c5-endpoint", "enable-nvhs-uphy-pcie-c5";
+			override@0 {
+				target = <&{/pcie@141a0000}>;
+				_overlay_ {
+					status = "disabled";
+				};
+			};
+			override@1 {
+				target = <&{/pcie_ep@141a0000}>;
+				_overlay_ {
+					status = "okay";
+				};
+			};
+			override@2 {
+				target = <&{/gpio@c2f0000/pex-refclk-sel-high}>;
+				_overlay_ {
+					status = "okay";
+				};
+			};
+		};
+
+		fragement-pmic-wdt-en {
+			odm-data = "enable-pmic-wdt";
+			override@0 {
+				target = <&p2888_spmic_wdt>;
+				_overlay_ {
+					status = "okay";
+				};
+			};
+		};
+
+		fragment-tegra-ufs-lane10 {
+			odm-data = "enable-ufs-uphy-l10";
+			override@0 {
+				target = <&tegra_ufs>;
+				_overlay_ {
+					status = "okay";
+				};
+			};
+		};
+		
+		pwm-fan-polarity {
+			ids = "<2822-0000-400";
+			override@0 {
+				target = <&pwm_fan_shared_data>;
+				_overlay_ {
+					pwm_polarity = <PWM_POLARITY_INVERTED>;
+				};
+			};
+			override@1 {
+				target = <&pwm_fan_shared_data>;
+				_overlay_ {
+					suspend_state = <1>;
+				};
+			};
+		};
+
+		ufs-cd {
+			ids = "<2822-0000-400";
+			override@0 {
+				target = <&{/ufshci@2450000}>;
+				_overlay_ {
+					status = "disabled";
+				};
+			};
+		};
+
+		usb-vbus-en0-gpio-value {
+			ids = "<2822-0000-400";
+			override@0 {
+				target = <&p2822_vdd_5v_sata>;
+				_overlay_ {
+					delete-target-property = "enable-active-high";
+				};
+			};
+		};
+		
+		fragment-e2614-common@0 {
+			ids = "2614-0000-*";
+			overrides@0 {
+				target = <&e2614_i2c_mux>;
+				_overlay_ {
+					status = "okay";
+				};
+			};
+			overrides@1 {
+				target = <&e2614_gpio_i2c_1_20>;
+				_overlay_ {
+					status = "okay";
+				};
+			};
+			overrides@8 {
+				target = <&vdd_1v8_aud2>;
+				_overlay_ {
+					status = "okay";
+				};
+			};
+
+			overrides@10 {
+				target = <&tegra_sound>;
+				_overlay_ {
+					nvidia,audio-routing =
+						"x Headphone Jack",     "x HPO L Playback",
+						"x Headphone Jack",     "x HPO R Playback",
+						"x IN1P",               "x Mic Jack",
+						"x IN2P",               "x Mic Jack",
+						"x Int Spk",            "x SPO Playback",
+						"x DMIC L1",            "x Int Mic",
+						"x DMIC L2",            "x Int Mic",
+						"x DMIC R1",            "x Int Mic",
+						"x DMIC R2",            "x Int Mic",
+						"y Headphone",          "y HPO L Playback",
+						"y Headphone",          "y HPO R Playback",
+						"y IN1P",               "y Mic",
+						"z Headphone",          "z OUT",
+						"z IN",                 "z Mic",
+						"m Headphone",          "m OUT",
+						"m IN",                 "m Mic",
+						"n Headphone",          "n OUT",
+						"n IN",                 "n Mic",
+						"o Headphone",          "o OUT",
+						"o IN",                 "o Mic",
+						"a IN",                 "a Mic",
+						"b IN",                 "b Mic",
+						"c IN",                 "c Mic",
+						"d IN",                 "d Mic",
+						"d1 Headphone",         "d1 OUT",
+						"d2 Headphone",         "d2 OUT";
+				};
+			};
+
+			overrides@11 {
+				target = <&hdr40_snd_link_i2s>;
+				_overlay_ {
+					link-name = "rt565x-codec-sysclk-bclk1";
+					codec-dai = <&e2614_rt5658>;
+					codec-dai-name = "rt5659-aif1";
+				};
+			};
+		};
+
+		fragment-e2614-a00@1 {
+			ids = "2614-0000-000";
+			overrides@0 {
+				target = <&e2614_rt5658>;
+				_overlay_ {
+					status = "okay";
+				};
+			};
+			overrides@1 {
+				target = <&hdr40_snd_link_i2s>;
+				_overlay_ {
+					link-name = "rt565x-codec-sysclk-bclk1";
+					codec-dai = <&e2614_rt5658>;
+					codec-dai-name = "rt5659-aif1";
+				};
+			};
+		};
+
+		fragment-e2614-b00@2 {
+			ids = "2614-0000-100";
+			overrides@0 {
+				target = <&e2614_rt5658_i2c3>;
+				_overlay_ {
+					status = "okay";
+				};
+			};
+
+			overrides@1 {
+				target = <&hdr40_snd_link_i2s>;
+				_overlay_ {
+					link-name = "rt565x-codec-sysclk-bclk1";
+					codec-dai = <&e2614_rt5658_i2c3>;
+					codec-dai-name = "rt5659-aif1";
+				};
+			};
+		};
+				
+	};	
+};

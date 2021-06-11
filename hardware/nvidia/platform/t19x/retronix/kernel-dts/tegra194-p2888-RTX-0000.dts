@@ -1,5 +1,7 @@
 /*
- * Copyright (c) 2017, NVIDIA CORPORATION.  All rights reserved.
+ * Top level DTS file for CVM:P2888-0001 and CVB:P2822-0000.
+ *
+ * Copyright (c) 2017-2019, NVIDIA CORPORATION.  All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -10,13 +12,5 @@
  * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
  * more details.
  */
-
-#include <t19x-common-platforms/tegra194-thermal.dtsi>
-/ {
-	bpmp_i2c {
-		tegra_tmp451: temp-sensor@4c {
-			vdd-supply = <&p2822_vdd_1v8_slt>;
-		};
-	};
-};
+#include "common/tegra194-RTX-p2822-0000.dtsi"
 

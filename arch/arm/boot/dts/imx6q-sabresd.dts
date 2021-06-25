@@ -179,6 +179,54 @@
 			gpios = <&gpio3 18 1>;
 		};
 
+		/* current_gpio3 = <&gpio4 21 0>; 117 */
+		current_gpio3 {
+			/*gpio-export,name = "current_gpio3";*/
+			gpio-export,output = <1>;
+			gpio-export,direction_may_change ;
+			gpios = <&gpio4 21 1>;
+		};
+
+		/* current_gpio4 = <&gpio4 22 0>; 118 */
+		current_gpio4 {
+			/*gpio-export,name = "current_gpio4";*/
+			gpio-export,output = <1>;
+			gpio-export,direction_may_change ;
+			gpios = <&gpio4 22 1>;
+		};
+
+		/* current_gpio5 = <&gpio4 23 0>; 119 */
+		current_gpio5 {
+			/*gpio-export,name = "current_gpio5";*/
+			gpio-export,output = <1>;
+			gpio-export,direction_may_change ;
+			gpios = <&gpio4 23 1>;
+		};
+
+		/* current_gpio6 = <&gpio4 24 0>; 120 */
+		current_gpio6 {
+			/*gpio-export,name = "current_gpio6";*/
+			gpio-export,output = <1>;
+			gpio-export,direction_may_change ;
+			gpios = <&gpio4 24 1>;
+		};
+
+		/* current_gpio7 = <&gpio1 7 0>; 7 */
+		current_gpio7 {
+			/*gpio-export,name = "current_gpio7";*/
+			gpio-export,output = <0>;
+			gpio-export,direction_may_change ;
+			gpios = <&gpio1 7 1>;
+		};
+
+		/* current_gpio8 = <&gpio1 8 0>; 8 */
+		current_gpio8 {
+			/*gpio-export,name = "current_gpio8";*/
+			gpio-export,output = <1>;
+			gpio-export,direction_may_change ;
+			gpios = <&gpio1 8 1>;
+		};
+
 		/* 3234_en = <&gpio3 22 1>; 86 */
 		3234_en {
 			/*gpio-export,name = "3234_en";*/
@@ -186,38 +234,6 @@
 			gpio-export,direction_may_change ;
 			gpios = <&gpio3 22 1>;
 		};
-
-		/* UR1_M1 = <&gpio6 8 0>; 168
-		UR1_M1 {
-			gpio-export,name = "UR1_M1";
-			gpio-export,output = <0>;
-			gpio-export,direction_may_change ;
-			gpios = <&gpio6 8 0>;
-		}; */
-
-		/* UR1_M0 = <&gpio6 7 1>; 167
-		UR1_M0 {
-			gpio-export,name = "UR1_M0";
-			gpio-export,output = <1>;
-			gpio-export,direction_may_change ;
-			gpios = <&gpio6 7 1>;
-		}; */
-
-		/* UR1_TM = <&gpio6 16 0>; 176
-		UR1_TM {
-			gpio-export,name = "UR1_TM";
-			gpio-export,output = <0>;
-			gpio-export,direction_may_change ;
-			gpios = <&gpio6 16 0>;
-		};	 */
-
-		/* amp_standby = <&gpio4 10 0>; 106
-		amp_standby {
-			gpio-export,output = <1>;
-			gpio-export,direction_may_change ;
-			gpios = <&gpio4 10 1>;
-		}; */
-
 	};
 
 	sound {
@@ -369,31 +385,6 @@
 	status = "okay";
 };
 
-&ecspi3 {
-	fsl,spi-num-chipselects = <1>;
-	cs-gpios = <&gpio4 24 0>;
-	pinctrl-names = "default";
-	pinctrl-0 = <&pinctrl_cspi3_pitx>;
-	status = "okay";
-
-    	/*flash: en25q32b@0 {
-        compatible = "fsl,en25q32b";
-        spi-max-frequency = <50000000>;
-        reg = <0>;
-	};*/
-
-	flash: microchip@0 {
-		compatible = "mchip,25lc01a0";
-		spi-max-frequency = <1000000>;
-        size = <128>;
-        pagesize = <16>;
-        address-width = <8>;
-        /*spi-cpha;
-        spi-cpol;*/
-		reg = <0>;
-	};
-};
-
 &fec {
 	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl_enet_pitx>;
@@ -402,12 +393,6 @@
 	phy-reset-fall-duration = <1>;
 	phy-reset-rise-duration = <20>;
 	phy-reset-boot-on;
-	status = "okay";
-};
-
-&can1 {
-	pinctrl-names = "default";
-	pinctrl-0 = <&pinctrl_flexcan1_pitx>;
 	status = "okay";
 };
 
@@ -616,8 +601,14 @@
 				MX6QDL_PAD_SD1_DAT2__GPIO1_IO19				0x80000000	/* LVDS_BLEN */
 
 				/* GPIO */
-				MX6QDL_PAD_EIM_A25__GPIO5_IO02				0x80000000	/* GPIO1 */
-				MX6QDL_PAD_EIM_D18__GPIO3_IO18				0x80000000	/* GPIO2 */
+				MX6QDL_PAD_EIM_A25__GPIO5_IO02			0x80000000	/* GPIO1 */
+				MX6QDL_PAD_EIM_D18__GPIO3_IO18			0x80000000	/* GPIO2 */
+				MX6QDL_PAD_DISP0_DAT0__GPIO4_IO21			0x80000000	/* GPIO3 */
+				MX6QDL_PAD_DISP0_DAT1__GPIO4_IO22			0x80000000	/* GPIO4 */
+				MX6QDL_PAD_DISP0_DAT2__GPIO4_IO23			0x80000000	/* GPIO5 */
+				MX6QDL_PAD_DISP0_DAT3__GPIO4_IO24			0x80000000	/* GPIO6 */
+				MX6QDL_PAD_GPIO_7__GPIO1_IO07				0x80000000	/* GPIO7 */
+				MX6QDL_PAD_GPIO_8__GPIO1_IO08				0x80000000	/* GPIO8 */
 
 				/* Audio Codec */
 				MX6QDL_PAD_GPIO_0__CCM_CLKO1				0x130b0		/* SGTL5000 sys_mclk */

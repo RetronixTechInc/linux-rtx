@@ -73,6 +73,8 @@
 #define YCBCR422_8BITS		3
 #define XVYCC444            4
 
+static int hdmi_HPD_EN = 1;
+
 /*
  * We follow a flowchart which is in the "Synopsys DesignWare Courses
  * HDMI Transmitter Controller User Guide, 1.30a", section 3.1
@@ -90,6 +92,11 @@ static const struct fb_videomode vga_mode = {
 	/* 640x480 @ 60 Hz, 31.5 kHz hsync */
 	NULL, 60, 640, 480, 39721, 48, 16, 33, 10, 96, 2, 0,
 	FB_VMODE_NONINTERLACED | FB_VMODE_ASPECT_4_3, FB_MODE_IS_VESA,
+};
+static const struct fb_videomode wvga_mode = {
+	"NULL", 60, 800, 480, 37037, 40, 60, 10, 10, 20, 10,
+	FB_SYNC_HOR_HIGH_ACT | FB_SYNC_VERT_HIGH_ACT,
+	FB_VMODE_NONINTERLACED,0
 };
 
 #ifdef CONFIG_EXTCON
@@ -1806,6 +1813,7 @@ static void mxc_hdmi_edid_rebuild_modelist(struct mxc_hdmi *hdmi)
 
 	fb_destroy_modelist(&hdmi->fbi->modelist);
 	fb_add_videomode(&vga_mode, &hdmi->fbi->modelist);
+	fb_add_videomode(&wvga_mode, &hdmi->fbi->modelist);
 
 	for (i = 0; i < hdmi->fbi->monspecs.modedb_len; i++) {
 		/*
@@ -2026,8 +2034,16 @@ static void hotplug_worker(struct work_struct *work)
 	char event_string[32];
 	char *envp[] = { event_string, NULL };
 
-	phy_int_stat = hdmi->latest_intr_stat;
-	phy_int_pol = hdmi_readb(HDMI_PHY_POL0);
+	if(hdmi_HPD_EN)
+	{
+		phy_int_stat = hdmi->latest_intr_stat;
+		phy_int_pol = hdmi_readb(HDMI_PHY_POL0);
+	}
+	else
+	{
+		phy_int_stat = HDMI_IH_PHY_STAT0_HPD;
+		phy_int_pol = HDMI_PHY_HPD;
+	}
 
 	dev_dbg(&hdmi->pdev->dev, "phy_int_stat=0x%x, phy_int_pol=0x%x\n",
 			phy_int_stat, phy_int_pol);
@@ -2084,9 +2100,12 @@ static void hotplug_worker(struct work_struct *work)
 	spin_lock_irqsave(&hdmi->irq_lock, flags);
 
 	/* Re-enable HPD interrupts */
-	phy_int_mask = hdmi_readb(HDMI_PHY_MASK0);
-	phy_int_mask &= ~HDMI_PHY_HPD;
-	hdmi_writeb(phy_int_mask, HDMI_PHY_MASK0);
+	if(hdmi_HPD_EN)
+	{
+		phy_int_mask = hdmi_readb(HDMI_PHY_MASK0);
+		phy_int_mask &= ~HDMI_PHY_HPD;
+		hdmi_writeb(phy_int_mask, HDMI_PHY_MASK0);
+	}
 
 	/* Unmute interrupts */
 	hdmi_writeb(~HDMI_IH_MUTE_PHY_STAT0_HPD, HDMI_IH_MUTE_PHY_STAT0);
@@ -2667,6 +2686,11 @@ static int mxc_hdmi_disp_init(struct mxc_dispdrv_handle *disp,
 		goto ereqirq;
 	}
 
+	if(!hdmi_HPD_EN)
+	{
+		schedule_delayed_work(&(hdmi->hotplug_work), msecs_to_jiffies(50));
+	}
+
 	ret = device_create_file(&hdmi->pdev->dev, &dev_attr_fb_name);
 	if (ret < 0)
 		dev_warn(&hdmi->pdev->dev,
@@ -3010,3 +3034,18 @@ module_init(mxc_hdmi_i2c_init);
 module_exit(mxc_hdmi_i2c_exit);
 
 MODULE_AUTHOR("Freescale Semiconductor, Inc.");
+
+/****************************************************************************
+ *
+ * Parsing functions for the HDMI HPD PIN Disable specific kernel command line
+ * options.
+ *
+ ****************************************************************************/
+ static int __init parse_HPD_PIN(char *str)
+{
+	hdmi_HPD_EN = 0;
+
+	return 1;
+}
+__setup("HPD_DIS",	parse_HPD_PIN);
+

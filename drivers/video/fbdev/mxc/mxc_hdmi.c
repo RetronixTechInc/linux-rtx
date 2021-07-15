@@ -3047,5 +3047,5 @@ MODULE_AUTHOR("Freescale Semiconductor, Inc.");
 
 	return 1;
 }
-__setup("HPD_DIS",	parse_HPD_PIN);
+__setup("hpddis",	parse_HPD_PIN);
 

@@ -2119,7 +2119,7 @@ static int smsc95xx_mac_addr_setup(char *mac_addr)
 	return 0;
 }
 
-__setup("smsc=", smsc95xx_mac_addr_setup);
+__setup("smsc_mac=", smsc95xx_mac_addr_setup);
 
 static const struct driver_info smsc95xx_info = {
 	.description	= "smsc95xx USB 2.0 Ethernet",

@@ -142,7 +142,7 @@ static void efm32_keeppower( struct efm32_data *efm32data , int enable )
 	{
 		if ( efm32data->gpio_power != -1 )
 		{
-			gpio_set_value( efm32data->gpio_power , enable ? 1 : 0 ) ;
+			gpio_set_value_cansleep( efm32data->gpio_power , enable ? 1 : 0 ) ;
 		}
 	}
 }
@@ -154,7 +154,7 @@ static void efm32_boot( struct efm32_data *efm32data , int enable )
 	{
 		if ( efm32data->gpio_boot != -1 )
 		{
-			gpio_set_value( efm32data->gpio_boot , enable ? 1 : 0 ) ;
+			gpio_set_value_cansleep( efm32data->gpio_boot , enable ? 1 : 0 ) ;
 		}
 	}
 }
@@ -166,7 +166,7 @@ static void efm32_reset( struct efm32_data *efm32data , int enable )
 	{
 		if ( efm32data->gpio_reset != -1 )
 		{
-			gpio_set_value( efm32data->gpio_reset , enable ? 1 : 0 ) ;
+			gpio_set_value_cansleep( efm32data->gpio_reset , enable ? 1 : 0 ) ;
 		}
 	}
 }
@@ -910,7 +910,7 @@ static int efm32_probe(struct i2c_client *client, const struct i2c_device_id *id
 			efm32data->gpio_power = gpio ;
 			if ( devm_gpio_request( &client->dev , efm32data->gpio_power , "efm32 power" ) == 0 )
 			{
-				gpio_set_value( efm32data->gpio_power , 0 ) ;
+				gpio_set_value_cansleep( efm32data->gpio_power , 0 ) ;
 			} 
 			else 
 			{
@@ -931,7 +931,7 @@ static int efm32_probe(struct i2c_client *client, const struct i2c_device_id *id
 			efm32data->gpio_boot = gpio ;
 			if ( devm_gpio_request( &client->dev , efm32data->gpio_boot , "efm32 boot" ) == 0 )
 			{
-				gpio_set_value( efm32data->gpio_boot , 0 ) ;
+				gpio_set_value_cansleep( efm32data->gpio_boot , 0 ) ;
 			} 
 			else 
 			{
@@ -952,7 +952,7 @@ static int efm32_probe(struct i2c_client *client, const struct i2c_device_id *id
 			efm32data->gpio_reset = gpio ;
 			if ( devm_gpio_request( &client->dev , efm32data->gpio_reset , "efm32 reset" ) == 0 )
 			{
-				gpio_set_value( efm32data->gpio_reset , 0 ) ;
+				gpio_set_value_cansleep( efm32data->gpio_reset , 0 ) ;
 			} 
 			else 
 			{

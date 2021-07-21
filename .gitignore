@@ -41,6 +41,7 @@ Module.symvers
 *.dwo
 *.su
 *.c.[012]*.*
+*.dtb
 
 #
 # Top-level generic files

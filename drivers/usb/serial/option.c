@@ -235,6 +235,8 @@ static void option_instat_callback(struct urb *urb);
 #define BANDRICH_PRODUCT_1012			0x1012
 
 #define QUALCOMM_VENDOR_ID			0x05C6
+#define SIMCOM_PRODUCT_PID_90DB			0x90DB
+#define SIMCOM_PRODUCT_PID_9000			0x9000
 /* These Quectel products use Qualcomm's vendor ID */
 #define QUECTEL_PRODUCT_UC20			0x9003
 #define QUECTEL_PRODUCT_UC15			0x9090
@@ -342,8 +344,10 @@ static void option_instat_callback(struct urb *urb);
 #define TOSHIBA_PRODUCT_HSDPA_MINICARD		0x1302
 #define TOSHIBA_PRODUCT_G450			0x0d45
 
-#define ALINK_VENDOR_ID				0x1e0e
-#define SIMCOM_PRODUCT_SIM7100E			0x9001 /* Yes, ALINK_VENDOR_ID */
+#define SIMCOM_PRODUCT_VID_1E0E			0x1E0E
+#define SIMCOM_PRODUCT_PID_9001			0x9001
+#define SIMCOM_PRODUCT_PID_9011			0x9011
+#define SIMCOM_PRODUCT_PID_902B			0x902B
 #define ALINK_PRODUCT_PH300			0x9100
 #define ALINK_PRODUCT_3GU			0x9200
 
@@ -1080,6 +1084,10 @@ static const struct usb_device_id option_ids[] = {
 	/* u-blox products using Qualcomm vendor ID */
 	{ USB_DEVICE(QUALCOMM_VENDOR_ID, UBLOX_PRODUCT_R410M),
 	  .driver_info = RSVD(1) | RSVD(3) },
+	{ USB_DEVICE(QUALCOMM_VENDOR_ID, SIMCOM_PRODUCT_PID_90DB),
+	  .driver_info = RSVD(2) | RSVD(3) | RSVD(4) | RSVD(5) | RSVD(6) | RSVD(7) },
+	{ USB_DEVICE(QUALCOMM_VENDOR_ID, SIMCOM_PRODUCT_PID_9000),
+	  .driver_info = RSVD(4) | RSVD(5) | RSVD(6) | RSVD(7) },
 	/* Quectel products using Quectel vendor ID */
 	{ USB_DEVICE(QUECTEL_VENDOR_ID, QUECTEL_PRODUCT_EC21),
 	  .driver_info = RSVD(4) },
@@ -1753,8 +1761,8 @@ static const struct usb_device_id option_ids[] = {
 
 	{ USB_DEVICE(BENQ_VENDOR_ID, BENQ_PRODUCT_H10) },
 	{ USB_DEVICE(DLINK_VENDOR_ID, DLINK_PRODUCT_DWM_652) },
-	{ USB_DEVICE(ALINK_VENDOR_ID, DLINK_PRODUCT_DWM_652_U5) }, /* Yes, ALINK_VENDOR_ID */
-	{ USB_DEVICE(ALINK_VENDOR_ID, DLINK_PRODUCT_DWM_652_U5A) },
+	{ USB_DEVICE(SIMCOM_PRODUCT_VID_1E0E, DLINK_PRODUCT_DWM_652_U5) }, /* Yes, ALINK_VENDOR_ID */
+	{ USB_DEVICE(SIMCOM_PRODUCT_VID_1E0E, DLINK_PRODUCT_DWM_652_U5A) },
 	{ USB_DEVICE(QISDA_VENDOR_ID, QISDA_PRODUCT_H21_4512) },
 	{ USB_DEVICE(QISDA_VENDOR_ID, QISDA_PRODUCT_H21_4523) },
 	{ USB_DEVICE(QISDA_VENDOR_ID, QISDA_PRODUCT_H20_4515) },
@@ -1762,11 +1770,15 @@ static const struct usb_device_id option_ids[] = {
 	{ USB_DEVICE(QISDA_VENDOR_ID, QISDA_PRODUCT_H20_4519) },
 	{ USB_DEVICE(TOSHIBA_VENDOR_ID, TOSHIBA_PRODUCT_G450) },
 	{ USB_DEVICE(TOSHIBA_VENDOR_ID, TOSHIBA_PRODUCT_HSDPA_MINICARD ) }, /* Toshiba 3G HSDPA == Novatel Expedite EU870D MiniCard */
-	{ USB_DEVICE(ALINK_VENDOR_ID, 0x9000) },
-	{ USB_DEVICE(ALINK_VENDOR_ID, ALINK_PRODUCT_PH300) },
-	{ USB_DEVICE_AND_INTERFACE_INFO(ALINK_VENDOR_ID, ALINK_PRODUCT_3GU, 0xff, 0xff, 0xff) },
-	{ USB_DEVICE(ALINK_VENDOR_ID, SIMCOM_PRODUCT_SIM7100E),
-	  .driver_info = RSVD(5) | RSVD(6) },
+	{ USB_DEVICE(SIMCOM_PRODUCT_VID_1E0E, 0x9000) },
+	{ USB_DEVICE(SIMCOM_PRODUCT_VID_1E0E, ALINK_PRODUCT_PH300) },
+	{ USB_DEVICE_AND_INTERFACE_INFO(SIMCOM_PRODUCT_VID_1E0E, ALINK_PRODUCT_3GU, 0xff, 0xff, 0xff) },
+	{ USB_DEVICE(SIMCOM_PRODUCT_VID_1E0E, SIMCOM_PRODUCT_PID_9001),
+	  .driver_info = RSVD(4) | RSVD(5) | RSVD(6) | RSVD(7) },
+	{ USB_DEVICE(SIMCOM_PRODUCT_VID_1E0E, SIMCOM_PRODUCT_PID_9011),
+	  .driver_info = RSVD(0) | RSVD(1) | RSVD(6) | RSVD(7) },
+	{ USB_DEVICE(SIMCOM_PRODUCT_VID_1E0E, SIMCOM_PRODUCT_PID_902B),
+	  .driver_info = RSVD(4) | RSVD(5) | RSVD(6) | RSVD(7) },
 	{ USB_DEVICE_INTERFACE_CLASS(0x1e0e, 0x9003, 0xff) },	/* Simcom SIM7500/SIM7600 MBIM mode */
 	{ USB_DEVICE(ALCATEL_VENDOR_ID, ALCATEL_PRODUCT_X060S_X200),
 	  .driver_info = NCTRL(0) | NCTRL(1) | RSVD(4) },
@@ -2011,6 +2023,28 @@ static int option_probe(struct usb_serial *serial,
 				&serial->interface->cur_altsetting->desc;
 	struct usb_device_descriptor *dev_desc = &serial->dev->descriptor;
 	unsigned long device_flags = id->driver_info;
+
+	if (serial->dev->descriptor.idVendor == SIMCOM_PRODUCT_VID_1E0E &&
+	    serial->dev->descriptor.idProduct == SIMCOM_PRODUCT_PID_9001 &&
+	    serial->interface->cur_altsetting->desc.bInterfaceNumber >= 4 )
+	{
+			return -ENODEV;
+	}
+	if (serial->dev->descriptor.idVendor == SIMCOM_PRODUCT_VID_1E0E &&
+	    serial->dev->descriptor.idProduct == SIMCOM_PRODUCT_PID_9011 )
+	{
+		if (serial->interface->cur_altsetting->desc.bInterfaceNumber <= 1 ||
+		serial->interface->cur_altsetting->desc.bInterfaceNumber >= 6)
+			return -ENODEV;
+	}
+	if (serial->dev->descriptor.idVendor == SIMCOM_PRODUCT_VID_1E0E &&
+	    serial->dev->descriptor.idProduct == SIMCOM_PRODUCT_PID_902B &&
+	    serial->interface->cur_altsetting->desc.bInterfaceNumber >= 4 )
+			return -ENODEV;
+	if (serial->dev->descriptor.idVendor == QUALCOMM_VENDOR_ID &&
+	    serial->dev->descriptor.idProduct == SIMCOM_PRODUCT_PID_90DB &&
+	    serial->interface->cur_altsetting->desc.bInterfaceNumber >= 2 )
+			return -ENODEV;
 
 	/* Never bind to the CD-Rom emulation interface	*/
 	if (iface_desc->bInterfaceClass == 0x08)

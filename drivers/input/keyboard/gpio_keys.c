@@ -345,11 +345,28 @@ static DEVICE_ATTR(disabled_switches, S_IWUSR | S_IRUGO,
 		   gpio_keys_show_disabled_switches,
 		   gpio_keys_store_disabled_switches);
 
+static ssize_t value_show(struct device *dev,struct device_attribute *attr,char *buf)
+{
+	struct platform_device *pdev = to_platform_device(dev);
+	struct gpio_keys_drvdata *ddata = platform_get_drvdata(pdev);
+
+	//for first value
+	struct gpio_button_data *bdata = &ddata->data[0];
+	int state = gpiod_get_value_cansleep(bdata->gpiod);
+
+//	if (pdata->inverted)
+//		state = !state;
+	return sprintf(buf, "%d\n", state);
+}
+
+static DEVICE_ATTR(value, S_IWUSR | S_IRUGO, value_show, NULL);
+
 static struct attribute *gpio_keys_attrs[] = {
 	&dev_attr_keys.attr,
 	&dev_attr_switches.attr,
 	&dev_attr_disabled_keys.attr,
 	&dev_attr_disabled_switches.attr,
+	&dev_attr_value.attr,
 	NULL,
 };
 

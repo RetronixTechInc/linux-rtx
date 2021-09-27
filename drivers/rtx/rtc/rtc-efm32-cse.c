@@ -69,10 +69,10 @@ struct MaxLength{
 };
 
 struct MaxLength u8EFM32CmdvMaxLen[] = {
-	{	7     , 	3	}, // EFM32_SET_CLOCK
-	{	7     , 	3	}, // EFM32_SET_ALARM
-	{	3     , 	8	}, // EFM32_GET_CLOCK
-	{	3     , 	8	}, // EFM32_GET_ALARM
+	{	11     , 	3	}, // EFM32_SET_CLOCK
+	{	11     , 	3	}, // EFM32_SET_ALARM
+	{	3     , 	11	}, // EFM32_GET_CLOCK
+	{	3     , 	11	}, // EFM32_GET_ALARM
 	{	3     , 	3	}, // EFM32_RESET
 	{	19     , 	3	}, // EFM32_SENT_AESDATA
 	{	3     , 	19	}, // EFM32_GET_AESDATA

@@ -30,7 +30,7 @@
 		pinctrl-names = "default";
 		pinctrl-0 = <&pinctrl_gpio_led>;
 
-		data_green {
+/*		data_green {
 			label = "data_green";
 			gpios = <&pca6416 6 GPIO_ACTIVE_HIGH>;
 			linux,default-trigger = "mmc2";
@@ -41,7 +41,7 @@
 			gpios = <&pca6416 7 GPIO_ACTIVE_LOW>;
 			linux,default-trigger = "mmc2";
 			default-state = "off";
-		};
+		};*/
 		usb1_onoff {
 			label = "usb1_onoff";
 			gpios = <&pca6416 8 GPIO_ACTIVE_HIGH>;

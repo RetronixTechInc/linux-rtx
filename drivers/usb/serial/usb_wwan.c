@@ -373,7 +373,7 @@ int usb_wwan_open(struct tty_struct *tty, struct usb_serial_port *port)
 	int i, err;
 	struct urb *urb;
 
-	int ret;
+/*	int ret;
 	ret = gpio_request(498, "lte_green");
 	if (ret<0)
 		printk("%s: gpio_request failed for gpio %d\n", __func__, 498);
@@ -386,7 +386,7 @@ int usb_wwan_open(struct tty_struct *tty, struct usb_serial_port *port)
 	else
     		gpio_direction_output(499, 0);
 	gpio_free(498);
-	gpio_free(499);
+	gpio_free(499);*/
 
 
 
@@ -446,7 +446,7 @@ void usb_wwan_close(struct usb_serial_port *port)
 	struct usb_wwan_intf_private *intfdata = usb_get_serial_data(serial);
 	struct urb *urb;
 
-	int ret;
+/*	int ret;
 	ret = gpio_request(498, "lte_green");
 	if (ret<0)
 		printk("%s: gpio_request failed for gpio %d\n", __func__, 498);
@@ -459,7 +459,7 @@ void usb_wwan_close(struct usb_serial_port *port)
 	else
     		gpio_direction_output(499, 1);
 	gpio_free(498);
-	gpio_free(499);
+	gpio_free(499);*/
 
 
 	portdata = usb_get_serial_port_data(port);
@@ -517,7 +517,7 @@ int usb_wwan_port_probe(struct usb_serial_port *port)
 	u8 *buffer;
 	int i;
 
-	int ret;
+/*	int ret;
 	ret = gpio_request(498, "lte_green");
 	if (ret<0)
 		printk("%s: gpio_request failed for gpio %d\n", __func__, 498);
@@ -530,7 +530,7 @@ int usb_wwan_port_probe(struct usb_serial_port *port)
 	else
     		gpio_direction_output(499, 1);
 	gpio_free(498);
-	gpio_free(499);
+	gpio_free(499);*/
 
 	if (!port->bulk_in_size || !port->bulk_out_size)
 		return -ENODEV;

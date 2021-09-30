@@ -1125,8 +1125,8 @@
 	gnss {
 		compatible = "u-blox,neo-m8";
 		current-speed = <9600>;
-		ubx_data,green_led = <&pca6416 4 GPIO_ACTIVE_HIGH>;
-		ubx_data,red_led = <&pca6416 5 GPIO_ACTIVE_HIGH>;
+/*		ubx_data,green_led = <&pca6416 4 GPIO_ACTIVE_HIGH>;
+		ubx_data,red_led = <&pca6416 5 GPIO_ACTIVE_HIGH>;*/
 	};
 };
 

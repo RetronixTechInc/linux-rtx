@@ -121,22 +121,22 @@
 		};
 	};
 
-	wakeup_gpio2 {
+	wakeup_gpio1 {
 		compatible = "gpio-keys";
-		sensor2 {
-			label = "sensor2";
-			gpios = <&gpio1 7 GPIO_ACTIVE_HIGH>;
+		sensor1 {
+			label = "sensor1";
+			gpios = <&gpio1 6 GPIO_ACTIVE_HIGH>;
 			linux,code = <KEY_POWER>;
 			gpio-key,wakeup;
 			linux,can-disable;
 		};
 	};
 
-	wakeup_gpio3 {
+	wakeup_gpio2 {
 		compatible = "gpio-keys";
-		sensor3 {
-			label = "sensor3";
-			gpios = <&gpio1 8 GPIO_ACTIVE_HIGH>;
+		sensor2 {
+			label = "sensor2";
+			gpios = <&gpio1 7 GPIO_ACTIVE_HIGH>;
 			linux,code = <KEY_POWER>;
 			gpio-key,wakeup;
 			linux,can-disable;

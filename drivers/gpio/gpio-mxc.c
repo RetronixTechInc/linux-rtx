@@ -841,6 +841,64 @@ static int __maybe_unused mxc_gpio_noirq_resume(struct device *dev)
 
 static int __maybe_unused mxc_gpio_suspend(struct device *dev)
 {
+	int ret;
+	{
+		ret = gpio_request(496, "power_green");
+		if (ret<0)
+			printk("%s: gpio_request failed for gpio %d\n", __func__, 496);
+		else
+			gpio_direction_output(496, 1);
+		ret = gpio_request(497, "power_red");
+		if (ret<0)
+			printk("%s: gpio_request failed for gpio %d\n", __func__, 497);
+		else
+			gpio_direction_output(497, 0);
+	}
+	{
+		ret = gpio_request(498, "lte_green");
+		if (ret<0)
+			printk("%s: gpio_request failed for gpio %d\n", __func__, 498);
+		else
+			gpio_direction_output(498, 1);
+		ret = gpio_request(499, "lte_red");
+		if (ret<0)
+			printk("%s: gpio_request failed for gpio %d\n", __func__, 499);
+		else
+			gpio_direction_output(499, 1);
+	}
+	{
+		ret = gpio_request(500, "gps_green");
+		if (ret<0)
+			printk("%s: gpio_request failed for gpio %d\n", __func__, 500);
+		else
+			gpio_direction_output(500, 1);
+		ret = gpio_request(501, "gps_red");
+		if (ret<0)
+			printk("%s: gpio_request failed for gpio %d\n", __func__, 501);
+		else
+			gpio_direction_output(501, 1);
+	}
+	{
+		ret = gpio_request(502, "data_green");
+		if (ret<0)
+			printk("%s: gpio_request failed for gpio %d\n", __func__, 502);
+		else
+			gpio_direction_output(502, 1);
+		ret = gpio_request(503, "data_red");
+		if (ret<0)
+			printk("%s: gpio_request failed for gpio %d\n", __func__, 503);
+		else
+			gpio_direction_output(503, 1);
+	}
+	gpio_free(496);
+	gpio_free(497);
+	gpio_free(498);
+	gpio_free(499);
+	gpio_free(500);
+	gpio_free(501);
+	gpio_free(502);
+	gpio_free(503);
+
 	struct platform_device *pdev = to_platform_device(dev);
 	int irq = platform_get_irq(pdev, 0);
 	struct irq_data *data = irq_get_irq_data(irq);
@@ -853,6 +911,16 @@ static int __maybe_unused mxc_gpio_suspend(struct device *dev)
 
 static int __maybe_unused mxc_gpio_resume(struct device *dev)
 {
+	int ret;
+	{
+		ret = gpio_request(497, "power_red");
+		if (ret<0)
+			printk("%s: gpio_request failed for gpio %d\n", __func__, 497);
+		else
+			gpio_direction_output(497, 1);
+	}
+	gpio_free(497);
+
 	struct platform_device *pdev = to_platform_device(dev);
 	int irq = platform_get_irq(pdev, 0);
 	struct irq_data *data = irq_get_irq_data(irq);

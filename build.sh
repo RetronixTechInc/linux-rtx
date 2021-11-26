@@ -142,6 +142,7 @@ fi
 #TARGET_CUSTOMER="RTX-Q7"
 #TARGET_CUSTOMER="RTX-PITX-B10"
 TARGET_CUSTOMER="RTX-PITX-B21"
+#TARGET_CUSTOMER="RTX-PITX-B21-DDR2G"
 #TARGET_CUSTOMER="RTX-PITX-B21-AWS"
 #TARGET_CUSTOMER="ADLINK-ABB"
 #TARGET_CUSTOMER="AcBel-VPP"
@@ -151,78 +152,58 @@ TARGET_CUSTOMER="RTX-PITX-B21"
 #TARGET_CUSTOMER="PITX-OHGA-JP"
 
 ########################################################################
+TARGET_VENDER="rtx"
+TARGET_SOC="imx6q"
+TARGET_SUBCONFIG=""
+TARGET_SUBDTB=""
 case "${TARGET_CUSTOMER}" in
 	"RTX-A6")
-		TARGET_VENDER="rtx"
-		TARGET_SOC="imx6q"
 		TARGET_BOARD="a6"
-		TARGET_SUBBOARD=""
 		;;
 	"RTX-A6Plus")
-		TARGET_VENDER="rtx"
-		TARGET_SOC="imx6q"
 		TARGET_BOARD="a6plus"
-		TARGET_SUBBOARD=""
 		;;
 	"RTX-Q7")
-		TARGET_VENDER="rtx"
-		TARGET_SOC="imx6q"
 		TARGET_BOARD="q7"
-		TARGET_SUBBOARD=""
 		;;
 	"RTX-PITX-B10")
-		TARGET_VENDER="rtx"
-		TARGET_SOC="imx6q"
 		TARGET_BOARD="pitx-b10"
-		TARGET_SUBBOARD=""
 		;;
 	"RTX-PITX-B21")
-		TARGET_VENDER="rtx"
-		TARGET_SOC="imx6q"
 		TARGET_BOARD="pitx-b21"
-		TARGET_SUBBOARD=""
+		;;
+	"RTX-PITX-B21-DDR2G")
+		TARGET_BOARD="pitx-b21"
+		TARGET_SUBDTB="ddr2g"
 		;;
 	"RTX-PITX-B21-AWS")
-		TARGET_VENDER="rtx"
-		TARGET_SOC="imx6q"
 		TARGET_BOARD="pitx-b21"
-		TARGET_SUBBOARD="aws-greengrass"
+		TARGET_SUBCONFIG="aws-greengrass"
 		;;
 	"ADLINK-ABB")
-		TARGET_VENDER="rtx"
 		TARGET_SOC="imx6dl"
 		TARGET_BOARD="adlink"
-		TARGET_SUBBOARD="abb"
+		TARGET_SUBCONFIG="abb"
 		;;
 	"AcBel-VPP")
-		TARGET_VENDER="rtx"
-		TARGET_SOC="imx6q"
 		TARGET_BOARD="pitx-b10"
-		TARGET_SUBBOARD="acbel-vpp"
+		TARGET_SUBCONFIG="acbel-vpp"
 		;;
 	"PITX-AOPEN" )
-		TARGET_VENDER="rtx"
-		TARGET_SOC="imx6q"
 		TARGET_BOARD="pitx-b21"
-		TARGET_SUBBOARD="aopen"
+		TARGET_SUBCONFIG="aopen"
 		;;
 	"ROM-7420" )
 		TARGET_VENDER="advantech"
-		TARGET_SOC="imx6q"
 		TARGET_BOARD="rom7420"
-		TARGET_SUBBOARD=""
 		;;
 	"PITX-CSE-JP" )
-		TARGET_VENDER="rtx"
-		TARGET_SOC="imx6q"
 		TARGET_BOARD="pitx-b21"
-		TARGET_SUBBOARD="cse-jp"
+		TARGET_SUBCONFIG="cse-jp"
 		;;
 	"PITX-OHGA-JP" )
-		TARGET_VENDER="rtx"
-		TARGET_SOC="imx6q"
 		TARGET_BOARD="pitx-b21"
-		TARGET_SUBBOARD="ohga-jp"
+		TARGET_SUBCONFIG="ohga-jp"
 		;;
     *)
 		echo "Please set the target customer."
@@ -240,19 +221,21 @@ fi
 ########################################################################
 if [ ! "${TARGET_VENDER}" == "" ] ; then
 	KERNEL_PROJECT_CONFIG=${TARGET_VENDER}
+	KERNEL_BOARD_DTB=${TARGET_VENDER}
 fi
 
 if [ ! "${TARGET_SOC}" == "" ] ; then
 	KERNEL_PROJECT_CONFIG=${KERNEL_PROJECT_CONFIG}-${TARGET_SOC}
+	KERNEL_BOARD_DTB=${KERNEL_BOARD_DTB}-${TARGET_SOC}
 fi
 
 if [ ! "${TARGET_BOARD}" == "" ] ; then
 	KERNEL_PROJECT_CONFIG=${KERNEL_PROJECT_CONFIG}-${TARGET_BOARD}
+	KERNEL_BOARD_DTB=${KERNEL_BOARD_DTB}-${TARGET_BOARD}
 fi
-KERNEL_BOARD_DTB=${KERNEL_PROJECT_CONFIG}
 
-if [ ! "${TARGET_SUBBOARD}" == "" ] ; then
-	KERNEL_PROJECT_CONFIG=${KERNEL_PROJECT_CONFIG}-${TARGET_SUBBOARD}
+if [ ! "${TARGET_SUBCONFIG}" == "" ] ; then
+	KERNEL_PROJECT_CONFIG=${KERNEL_PROJECT_CONFIG}-${TARGET_SUBCONFIG}
 fi
 
 if [ "${IS_ANDROID_BUILD}" == "yes" ] ; then
@@ -262,10 +245,16 @@ fi
 
 KERNEL_PROJECT_CONFIG=rtx/configs/${KERNEL_PROJECT_CONFIG}_defconfig
 
-KERNEL_DTB=${KERNEL_BOARD_DTB}
+
 cd ${TOP}/arch/arm/boot/dts/
+if [ ! "${TARGET_SUBDTB}" == "" ] ; then
+	KERNEL_DTB=${KERNEL_BOARD_DTB}-${TARGET_SUBDTB}
+else
+    KERNEL_DTB=${KERNEL_BOARD_DTB}
+fi
+
 KERNEL_DTB_DTS=${KERNEL_DTB}.dts
-KERNEL_DTB_DTSI=${KERNEL_DTB}-iomux.dtsi
+KERNEL_DTB_DTSI=${KERNEL_BOARD_DTB}-iomux.dtsi
 KERNEL_SOC_DTSI=${TARGET_VENDER}-${TARGET_SOC}-soc.dtsi
 if [ ! -f "${KERNEL_DTB_DTS}" ] ; then
 	ln -s ../../../../rtx/dts/${KERNEL_DTB_DTS} ${KERNEL_DTB_DTS}
@@ -487,7 +476,8 @@ case "${1}" in
 		echo "TARGET_VENDER               = ${TARGET_VENDER}"
 		echo "TARGET_SOC                  = ${TARGET_SOC}"
 		echo "TARGET_BOARD                = ${TARGET_BOARD}"
-		echo "TARGET_SUBBOARD             = ${TARGET_SUBBOARD}"
+		echo "TARGET_SUBCONFIG            = ${TARGTARGET_SUBCONFIGET_SUBDTB}"
+		echo "TARGET_SUBDTB               = ${TARGET_SUBDTB}"
 		echo "KERNEL_PROJECT_CONFIG       = ${KERNEL_PROJECT_CONFIG}"
 		echo "KERNEL_DTB                  = ${KERNEL_DTB}"
 		echo "IS_ANDROID_BUILD            = ${IS_ANDROID_BUILD}"

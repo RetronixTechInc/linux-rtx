@@ -36,9 +36,9 @@
 
 #define AR0233_MIN_GAIN         (1)
 
-#define AR0233_MAX_GAIN         (30)
+#define AR0233_MAX_GAIN         (8)
 
-#define AR0233_MAX_GAIN_REG     ((AR0233_MAX_GAIN - AR0233_MIN_GAIN) * 10 / 3)
+#define AR0233_MAX_GAIN_REG     (0x7ff)
 
 #define AR0233_DEFAULT_FRAME_LENGTH	(1346)
 
@@ -51,6 +51,8 @@
 #define AR0233_COARSE_ADDR_MSB		0x3012
 
 #define AR0233_GROUP_HOLD_ADDR		0x3022
+
+#define AR0233_ANALOG_GAIN    		0x305E
 
 const struct of_device_id ar0233_of_match[] = {
 	{ .compatible = "nvidia,ar0233",},
@@ -324,63 +326,43 @@ static int ar0233_set_group_hold(struct tegracam_device *tc_dev, bool val)
 	return 0;
 }
 
-static inline void ar0233_get_gain_regs(ar0233_reg *regs,
-				u16 gain, u16 fgain)
+static inline void ar0233_get_gain_reg(ar0233_reg *regs,
+				u16 gain)
 {
-	regs->addr = AR0233_GAIN_ADDR;
+	regs->addr = AR0233_ANALOG_GAIN;
 	regs->val = (gain) & 0xffff;
-	(regs+1)->addr = AR0233_FINE_GAIN_ADDR;
-	(regs+1)->val = (fgain) & 0xffff;
+
 }
 
 static int ar0233_set_gain(struct tegracam_device *tc_dev, s64 val)
 {
 	struct camera_common_data *s_data = tc_dev->s_data;
+	struct device *dev = tc_dev->dev;
+	ar0233_reg reg_list[1];
+	int err;
+	u16 gain = (u16)val;
+	u16 gain_reg = 0;
 
-	ar0233_reg reg_list[2];
-	int i = 0;
-	u16 gain;
-	s32 gain64;
-	u16 fgain;
+	dev_dbg(dev, "%s: gain: %d\n",  __func__, gain);
 
-	if (val < AR0233_MIN_GAIN)
-		val = AR0233_MIN_GAIN;
-	else if (val > AR0233_MAX_GAIN)
-		val = AR0233_MAX_GAIN;
-
-	gain64 = (s32)val;
-	gain = (u16)(gain64);
-
-	if (val >= 25 && val <= 30) {
-		gain = 5;
-		fgain = val/2;
-	} else if (val >= 20 && val < 25) {
-		gain = 4;
-		fgain = val/2;
-	} else if (val >= 15 && val < 20) {
-		gain = 3;
-		fgain = val/2;
-	} else if (val >= 10 && val < 15) {
-		gain = 2;
-		fgain = val/2;
-	} else if (val >= 5 && val < 10) {
-		gain = 1;
-		fgain = val;
-	} else if (val >= 1 && val < 5) {
-		gain = 0;
-		fgain = val;
+	if (gain >= 800) {
+		gain_reg = 0x7ff;
+	} else {
+		gain_reg = gain * 2048 / 800;
 	}
 
-	ar0233_get_gain_regs(reg_list, gain, fgain);
-
-	for (i = 0; i < 2; i++) {
-		ar0233_write_reg(s_data, reg_list[i].addr, reg_list[i].val);
-	}
+	dev_dbg(dev, "%s: db: %d\n",  __func__, gain_reg);
+	if (gain > AR0233_MAX_GAIN_REG)
+		gain = AR0233_MAX_GAIN_REG;
+	ar0233_get_gain_reg(reg_list, gain_reg);
+	err = ar0233_write_reg(s_data, reg_list[0].addr,
+			reg_list[0].val);
+	if (err)
+		goto fail;
 	return 0;
-
-//fail:
-//	dev_info(dev, "%s: GAIN control error\n", __func__);
-//	return err;
+fail:
+	dev_info(dev, "%s: GAIN control error\n", __func__);
+	return err;
 }
 
 static int ar0233_set_frame_rate(struct tegracam_device *tc_dev, s64 val)

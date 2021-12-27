@@ -317,11 +317,11 @@
 				pix_clk_hz = "135030720";
 				serdes_pix_clk_hz = "833333333";
 
-				gain_factor = "1";
-				min_gain_val = "1"; /* dB */
-				max_gain_val = "30"; /* dB */
+				gain_factor = "100";
+				min_gain_val = "100"; /* dB */
+				max_gain_val = "800"; /* dB */
 				step_gain_val = "1"; /* 0.3 */
-				default_gain = "1";
+				default_gain = "100";
 				min_hdr_ratio = "1";
 				max_hdr_ratio = "1";
 				framerate_factor = "1000000";
@@ -330,7 +330,7 @@
 				step_framerate = "1";
 				default_framerate = "30000000";
 				exposure_factor = "1000000";
-				min_exp_time = "59"; /*us, 2 lines*/
+				min_exp_time = "49"; /*us, 2 lines*/
 				max_exp_time = "33333";
 				step_exp_time = "1";
 				default_exp_time = "33333";/* us */
@@ -358,11 +358,11 @@
 				pix_clk_hz = "146983200";
 				serdes_pix_clk_hz = "833333333";
 
-				gain_factor = "1";
-				min_gain_val = "1"; /* dB */
-				max_gain_val = "30"; /* dB */
+				gain_factor = "100";
+				min_gain_val = "100"; /* dB */
+				max_gain_val = "800"; /* dB */
 				step_gain_val = "1"; /* 0.3 */
-				default_gain = "1";
+				default_gain = "100";
 				min_hdr_ratio = "1";
 				max_hdr_ratio = "1";
 				framerate_factor = "1000000";
@@ -371,7 +371,7 @@
 				step_framerate = "1";
 				default_framerate = "30000000";
 				exposure_factor = "1000000";
-				min_exp_time = "59"; /*us, 2 lines*/
+				min_exp_time = "49"; /*us, 2 lines*/
 				max_exp_time = "33333";
 				step_exp_time = "1";
 				default_exp_time = "33333";/* us */
@@ -445,11 +445,11 @@
 				pix_clk_hz = "135030720";
 				serdes_pix_clk_hz = "833333333";
 
-				gain_factor = "1";
-				min_gain_val = "1"; /* dB */
-				max_gain_val = "30"; /* dB */
+				gain_factor = "100";
+				min_gain_val = "100"; /* dB */
+				max_gain_val = "800"; /* dB */
 				step_gain_val = "1"; /* 0.3 */
-				default_gain = "1";
+				default_gain = "100";
 				min_hdr_ratio = "1";
 				max_hdr_ratio = "1";
 				framerate_factor = "1000000";
@@ -458,7 +458,7 @@
 				step_framerate = "1";
 				default_framerate = "30000000";
 				exposure_factor = "1000000";
-				min_exp_time = "59"; /*us, 2 lines*/
+				min_exp_time = "49"; /*us, 2 lines*/
 				max_exp_time = "33333";
 				step_exp_time = "1";
 				default_exp_time = "33333";/* us */
@@ -486,11 +486,11 @@
 				pix_clk_hz = "146983200";
 				serdes_pix_clk_hz = "833333333";
 
-				gain_factor = "1";
-				min_gain_val = "1"; /* dB */
-				max_gain_val = "30"; /* dB */
+				gain_factor = "100";
+				min_gain_val = "100"; /* dB */
+				max_gain_val = "800"; /* dB */
 				step_gain_val = "1"; /* 0.3 */
-				default_gain = "1";
+				default_gain = "100";
 				min_hdr_ratio = "1";
 				max_hdr_ratio = "1";
 				framerate_factor = "1000000";
@@ -499,7 +499,7 @@
 				step_framerate = "1";
 				default_framerate = "30000000";
 				exposure_factor = "1000000";
-				min_exp_time = "59"; /*us, 2 lines*/
+				min_exp_time = "49"; /*us, 2 lines*/
 				max_exp_time = "33333";
 				step_exp_time = "1";
 				default_exp_time = "33333";/* us */
@@ -573,11 +573,11 @@
 				pix_clk_hz = "135030720";
 				serdes_pix_clk_hz = "833333333";
 
-				gain_factor = "1";
-				min_gain_val = "1"; /* dB */
-				max_gain_val = "30"; /* dB */
+				gain_factor = "100";
+				min_gain_val = "100"; /* dB */
+				max_gain_val = "800"; /* dB */
 				step_gain_val = "1"; /* 0.3 */
-				default_gain = "1";
+				default_gain = "100";
 				min_hdr_ratio = "1";
 				max_hdr_ratio = "1";
 				framerate_factor = "1000000";
@@ -586,7 +586,7 @@
 				step_framerate = "1";
 				default_framerate = "30000000";
 				exposure_factor = "1000000";
-				min_exp_time = "59"; /*us, 2 lines*/
+				min_exp_time = "49"; /*us, 2 lines*/
 				max_exp_time = "33333";
 				step_exp_time = "1";
 				default_exp_time = "33333";/* us */
@@ -614,11 +614,11 @@
 				pix_clk_hz = "146983200";
 				serdes_pix_clk_hz = "833333333";
 
-				gain_factor = "1";
-				min_gain_val = "1"; /* dB */
-				max_gain_val = "30"; /* dB */
+				gain_factor = "100";
+				min_gain_val = "100"; /* dB */
+				max_gain_val = "800"; /* dB */
 				step_gain_val = "1"; /* 0.3 */
-				default_gain = "1";
+				default_gain = "100";
 				min_hdr_ratio = "1";
 				max_hdr_ratio = "1";
 				framerate_factor = "1000000";
@@ -627,7 +627,7 @@
 				step_framerate = "1";
 				default_framerate = "30000000";
 				exposure_factor = "1000000";
-				min_exp_time = "59"; /*us, 2 lines*/
+				min_exp_time = "49"; /*us, 2 lines*/
 				max_exp_time = "33333";
 				step_exp_time = "1";
 				default_exp_time = "33333";/* us */
@@ -701,11 +701,11 @@
 				pix_clk_hz = "135030720";
 				serdes_pix_clk_hz = "833333333";
 
-				gain_factor = "1";
-				min_gain_val = "1"; /* dB */
-				max_gain_val = "30"; /* dB */
+				gain_factor = "100";
+				min_gain_val = "100"; /* dB */
+				max_gain_val = "800"; /* dB */
 				step_gain_val = "1"; /* 0.3 */
-				default_gain = "1";
+				default_gain = "100";
 				min_hdr_ratio = "1";
 				max_hdr_ratio = "1";
 				framerate_factor = "1000000";
@@ -714,7 +714,7 @@
 				step_framerate = "1";
 				default_framerate = "30000000";
 				exposure_factor = "1000000";
-				min_exp_time = "59"; /*us, 2 lines*/
+				min_exp_time = "49"; /*us, 2 lines*/
 				max_exp_time = "33333";
 				step_exp_time = "1";
 				default_exp_time = "33333";/* us */
@@ -742,11 +742,11 @@
 				pix_clk_hz = "146983200";
 				serdes_pix_clk_hz = "833333333";
 
-				gain_factor = "1";
-				min_gain_val = "1"; /* dB */
-				max_gain_val = "30"; /* dB */
+				gain_factor = "100";
+				min_gain_val = "100"; /* dB */
+				max_gain_val = "800"; /* dB */
 				step_gain_val = "1"; /* 0.3 */
-				default_gain = "1";
+				default_gain = "100";
 				min_hdr_ratio = "1";
 				max_hdr_ratio = "1";
 				framerate_factor = "1000000";
@@ -755,7 +755,7 @@
 				step_framerate = "1";
 				default_framerate = "30000000";
 				exposure_factor = "1000000";
-				min_exp_time = "59"; /*us, 2 lines*/
+				min_exp_time = "49"; /*us, 2 lines*/
 				max_exp_time = "33333";
 				step_exp_time = "1";
 				default_exp_time = "33333";/* us */
@@ -829,11 +829,11 @@
 				pix_clk_hz = "135030720";
 				serdes_pix_clk_hz = "833333333";
 
-				gain_factor = "1";
-				min_gain_val = "1"; /* dB */
-				max_gain_val = "30"; /* dB */
+				gain_factor = "100";
+				min_gain_val = "100"; /* dB */
+				max_gain_val = "800"; /* dB */
 				step_gain_val = "1"; /* 0.3 */
-				default_gain = "1";
+				default_gain = "100";
 				min_hdr_ratio = "1";
 				max_hdr_ratio = "1";
 				framerate_factor = "1000000";
@@ -842,7 +842,7 @@
 				step_framerate = "1";
 				default_framerate = "30000000";
 				exposure_factor = "1000000";
-				min_exp_time = "59"; /*us, 2 lines*/
+				min_exp_time = "49"; /*us, 2 lines*/
 				max_exp_time = "33333";
 				step_exp_time = "1";
 				default_exp_time = "33333";/* us */
@@ -870,11 +870,11 @@
 				pix_clk_hz = "146983200";
 				serdes_pix_clk_hz = "833333333";
 
-				gain_factor = "1";
-				min_gain_val = "1"; /* dB */
-				max_gain_val = "30"; /* dB */
+				gain_factor = "100";
+				min_gain_val = "100"; /* dB */
+				max_gain_val = "800"; /* dB */
 				step_gain_val = "1"; /* 0.3 */
-				default_gain = "1";
+				default_gain = "100";
 				min_hdr_ratio = "1";
 				max_hdr_ratio = "1";
 				framerate_factor = "1000000";
@@ -883,7 +883,7 @@
 				step_framerate = "1";
 				default_framerate = "30000000";
 				exposure_factor = "1000000";
-				min_exp_time = "59"; /*us, 2 lines*/
+				min_exp_time = "49"; /*us, 2 lines*/
 				max_exp_time = "33333";
 				step_exp_time = "1";
 				default_exp_time = "33333";/* us */
@@ -957,11 +957,11 @@
 				pix_clk_hz = "135030720";
 				serdes_pix_clk_hz = "833333333";
 
-				gain_factor = "1";
-				min_gain_val = "1"; /* dB */
-				max_gain_val = "30"; /* dB */
+				gain_factor = "100";
+				min_gain_val = "100"; /* dB */
+				max_gain_val = "800"; /* dB */
 				step_gain_val = "1"; /* 0.3 */
-				default_gain = "1";
+				default_gain = "100";
 				min_hdr_ratio = "1";
 				max_hdr_ratio = "1";
 				framerate_factor = "1000000";
@@ -970,7 +970,7 @@
 				step_framerate = "1";
 				default_framerate = "30000000";
 				exposure_factor = "1000000";
-				min_exp_time = "59"; /*us, 2 lines*/
+				min_exp_time = "49"; /*us, 2 lines*/
 				max_exp_time = "33333";
 				step_exp_time = "1";
 				default_exp_time = "33333";/* us */
@@ -998,11 +998,11 @@
 				pix_clk_hz = "146983200";
 				serdes_pix_clk_hz = "833333333";
 
-				gain_factor = "1";
-				min_gain_val = "1"; /* dB */
-				max_gain_val = "30"; /* dB */
+				gain_factor = "100";
+				min_gain_val = "100"; /* dB */
+				max_gain_val = "800"; /* dB */
 				step_gain_val = "1"; /* 0.3 */
-				default_gain = "1";
+				default_gain = "100";
 				min_hdr_ratio = "1";
 				max_hdr_ratio = "1";
 				framerate_factor = "1000000";
@@ -1011,7 +1011,7 @@
 				step_framerate = "1";
 				default_framerate = "30000000";
 				exposure_factor = "1000000";
-				min_exp_time = "59"; /*us, 2 lines*/
+				min_exp_time = "49"; /*us, 2 lines*/
 				max_exp_time = "33333";
 				step_exp_time = "1";
 				default_exp_time = "33333";/* us */
@@ -1085,11 +1085,11 @@
 				pix_clk_hz = "135030720";
 				serdes_pix_clk_hz = "833333333";
 
-				gain_factor = "1";
-				min_gain_val = "1"; /* dB */
-				max_gain_val = "30"; /* dB */
+				gain_factor = "100";
+				min_gain_val = "100"; /* dB */
+				max_gain_val = "800"; /* dB */
 				step_gain_val = "1"; /* 0.3 */
-				default_gain = "1";
+				default_gain = "100";
 				min_hdr_ratio = "1";
 				max_hdr_ratio = "1";
 				framerate_factor = "1000000";
@@ -1098,7 +1098,7 @@
 				step_framerate = "1";
 				default_framerate = "30000000";
 				exposure_factor = "1000000";
-				min_exp_time = "59"; /*us, 2 lines*/
+				min_exp_time = "49"; /*us, 2 lines*/
 				max_exp_time = "33333";
 				step_exp_time = "1";
 				default_exp_time = "33333";/* us */
@@ -1126,11 +1126,11 @@
 				pix_clk_hz = "146983200";
 				serdes_pix_clk_hz = "833333333";
 
-				gain_factor = "1";
-				min_gain_val = "1"; /* dB */
-				max_gain_val = "30"; /* dB */
+				gain_factor = "100";
+				min_gain_val = "100"; /* dB */
+				max_gain_val = "800"; /* dB */
 				step_gain_val = "1"; /* 0.3 */
-				default_gain = "1";
+				default_gain = "100";
 				min_hdr_ratio = "1";
 				max_hdr_ratio = "1";
 				framerate_factor = "1000000";
@@ -1139,7 +1139,7 @@
 				step_framerate = "1";
 				default_framerate = "30000000";
 				exposure_factor = "1000000";
-				min_exp_time = "59"; /*us, 2 lines*/
+				min_exp_time = "49"; /*us, 2 lines*/
 				max_exp_time = "33333";
 				step_exp_time = "1";
 				default_exp_time = "33333";/* us */
@@ -1213,11 +1213,11 @@
 				pix_clk_hz = "135030720";
 				serdes_pix_clk_hz = "833333333";
 
-				gain_factor = "1";
-				min_gain_val = "1"; /* dB */
-				max_gain_val = "30"; /* dB */
+				gain_factor = "100";
+				min_gain_val = "100"; /* dB */
+				max_gain_val = "800"; /* dB */
 				step_gain_val = "1"; /* 0.3 */
-				default_gain = "1";
+				default_gain = "100";
 				min_hdr_ratio = "1";
 				max_hdr_ratio = "1";
 				framerate_factor = "1000000";
@@ -1226,7 +1226,7 @@
 				step_framerate = "1";
 				default_framerate = "30000000";
 				exposure_factor = "1000000";
-				min_exp_time = "59"; /*us, 2 lines*/
+				min_exp_time = "49"; /*us, 2 lines*/
 				max_exp_time = "33333";
 				step_exp_time = "1";
 				default_exp_time = "33333";/* us */
@@ -1254,11 +1254,11 @@
 				pix_clk_hz = "146983200";
 				serdes_pix_clk_hz = "833333333";
 
-				gain_factor = "1";
-				min_gain_val = "1"; /* dB */
-				max_gain_val = "30"; /* dB */
+				gain_factor = "100";
+				min_gain_val = "100"; /* dB */
+				max_gain_val = "800"; /* dB */
 				step_gain_val = "1"; /* 0.3 */
-				default_gain = "1";
+				default_gain = "100";
 				min_hdr_ratio = "1";
 				max_hdr_ratio = "1";
 				framerate_factor = "1000000";
@@ -1267,7 +1267,7 @@
 				step_framerate = "1";
 				default_framerate = "30000000";
 				exposure_factor = "1000000";
-				min_exp_time = "59"; /*us, 2 lines*/
+				min_exp_time = "49"; /*us, 2 lines*/
 				max_exp_time = "33333";
 				step_exp_time = "1";
 				default_exp_time = "33333";/* us */

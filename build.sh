@@ -113,7 +113,7 @@ CROSS_COMPILE=${CROSS_COMPILE_PATH}/${CROSS_COMPILE_TOOL}/${CROSS_COMPILE_GCC}
 if [ $(echo ${CROSS_COMPILE_GCC} | grep hf- | wc -l) = 1 ]; then
 	check_version
 	echo "REV=${REV}"
-	if [ ${REV} == "18.04" ]; then
+	if [ ${REV} != "16.04" ]; then
 		export LC_ALL=C
 	else
 		unset LC_ALL

@@ -82,6 +82,10 @@ if [ -z $CROSS_COMPILE_PATH ];then
 	[ -d /opt/cross ] && CROSS_COMPILE_PATH=/opt/cross
 fi
 
+if [ -z $CROSS_COMPILE_PATH ];then
+	[ -d /mnt/ext4t/toolchains ] && CROSS_COMPILE_PATH=/mnt/ext4t/toolchains
+fi
+
 #### Define the CROSS COMPILE TOOL #########################################################
 #CROSS_COMPILE_TOOL=rtx-gcc-4.9.3-glibc-2.19-hf-32bits/bin
 #CROSS_COMPILE_TOOL=rtx-gcc-4.9.3-glibc-2.19-hf-64bits/arm-rtx-linux-gnueabihf/bin

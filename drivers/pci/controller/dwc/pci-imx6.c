@@ -1950,7 +1950,7 @@ static int imx6_add_pcie_port(struct imx6_pcie *imx6_pcie,
 
 	ret = dw_pcie_host_init(pp);
 	if (ret) {
-		dev_err(dev, "failed to initialize host\n");
+		//~ dev_err(dev, "failed to initialize host\n");
 		return ret;
 	}
 

@@ -335,7 +335,7 @@
 };
 
 &gpc {
-	fsl,ldo-bypass = <1>;
+	fsl,ldo-bypass = <0>;
 };
 
 &hdmi_audio {

@@ -1950,7 +1950,7 @@ static int imx6_add_pcie_port(struct imx6_pcie *imx6_pcie,
 
 	ret = dw_pcie_host_init(pp);
 	if (ret) {
-		//~ dev_err(dev, "failed to initialize host\n");
+		dev_warn(dev, "Can't to initialize host\n");
 		return ret;
 	}
 
@@ -2693,7 +2693,7 @@ static int imx6_pcie_probe(struct platform_device *pdev)
 				dev_info(dev, "To do the compliance tests.\n");
 				ret = 0;
 			} else {
-				dev_err(dev, "unable to add pcie port.\n");
+				dev_info(dev, "unable to add pcie device.\n");
 			}
 			goto err_ret;
 		}

@@ -339,10 +339,10 @@ static struct dentry *start_creating(const char *name, struct dentry *parent)
 	dentry = lookup_one_len(name, parent, strlen(name));
 	if (!IS_ERR(dentry) && d_really_is_positive(dentry)) {
 		if (d_is_dir(dentry))
-			pr_err("Directory '%s' with parent '%s' already present!\n",
+			pr_info("Directory '%s' with parent '%s' already present!\n",
 			       name, parent->d_name.name);
 		else
-			pr_err("File '%s' in directory '%s' already present!\n",
+			pr_info("File '%s' in directory '%s' already present!\n",
 			       name, parent->d_name.name);
 		dput(dentry);
 		dentry = ERR_PTR(-EEXIST);

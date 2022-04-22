@@ -2247,7 +2247,7 @@ static int imx_uart_probe_dt(struct imx_port *sport,
 		sport->sp339e_mode = 1 ;
 		
 		gpio = of_get_named_gpio( np , "fsl,sp339e-dir" , 0 ) ;
-		if ( gpio_is_valid( gpio ) )
+		if ( gpio >=0 && gpio_is_valid( gpio ) )
 		{
 			sport->sp339e_gpio_dir = gpio ;
 			if ( gpio_request_one( sport->sp339e_gpio_dir , GPIOF_DIR_OUT , "sp3339e-dir" ) == 0 )
@@ -2260,13 +2260,9 @@ static int imx_uart_probe_dt(struct imx_port *sport,
 				sport->sp339e_gpio_dir = 0 ;
 			}
 		}
-		else
-		{
-			dev_err( &pdev->dev , "cannot request gpio for sp339e dir pin\n" ) ;
-		}
 
 		gpio = of_get_named_gpio( np , "fsl,sp339e-enable" , 0 ) ;
-		if ( gpio_is_valid( gpio ) )
+		if ( gpio >=0 && gpio_is_valid( gpio ) )
 		{
 			sport->sp339e_gpio_enable = gpio ;
 			if ( gpio_request_one( sport->sp339e_gpio_enable , GPIOF_DIR_OUT , "sp3339e-enable" ) == 0 )
@@ -2279,13 +2275,9 @@ static int imx_uart_probe_dt(struct imx_port *sport,
 				sport->sp339e_gpio_enable = 0 ;
 			}
 		}
-		else
-		{
-			dev_err( &pdev->dev , "cannot request gpio for sp339e enable pin\n" ) ;
-		}
 
 		gpio = of_get_named_gpio( np , "fsl,sp339e-m0" , 0 ) ;
-		if ( gpio_is_valid( gpio ) )
+		if ( gpio >=0 && gpio_is_valid( gpio ) )
 		{
 			sport->sp339e_gpio_m0 = gpio ;
 			if ( gpio_request_one( sport->sp339e_gpio_m0 , GPIOF_DIR_OUT , "sp3339e-m0" ) == 0 )
@@ -2298,13 +2290,9 @@ static int imx_uart_probe_dt(struct imx_port *sport,
 				sport->sp339e_gpio_m0 = 0 ;
 			}
 		}
-		else
-		{
-			dev_err( &pdev->dev , "cannot request gpio for sp339e m0 pin\n" ) ;
-		}
 
 		gpio = of_get_named_gpio( np , "fsl,sp339e-m1" , 0 ) ;
-		if ( gpio_is_valid( gpio ) )
+		if ( gpio >=0 && gpio_is_valid( gpio ) )
 		{
 			sport->sp339e_gpio_m1 = gpio ;
 			if ( gpio_request_one( sport->sp339e_gpio_m1 , GPIOF_DIR_OUT , "sp3339e-m1" ) == 0 )
@@ -2317,13 +2305,9 @@ static int imx_uart_probe_dt(struct imx_port *sport,
 				sport->sp339e_gpio_m1 = 0 ;
 			}
 		}
-		else
-		{
-			dev_err( &pdev->dev , "cannot request gpio for sp339e m1 pin\n" ) ;
-		}
 
 		gpio = of_get_named_gpio( np , "fsl,sp339e-tm" , 0 ) ;
-		if ( gpio_is_valid( gpio ) )
+		if ( gpio >=0 && gpio_is_valid( gpio ) )
 		{
 			sport->sp339e_gpio_tm = gpio ;
 			if ( gpio_request_one( sport->sp339e_gpio_tm , GPIOF_DIR_OUT , "sp3339e-tm" ) == 0 )
@@ -2336,13 +2320,9 @@ static int imx_uart_probe_dt(struct imx_port *sport,
 				sport->sp339e_gpio_tm = 0 ;
 			}
 		}
-		else
-		{
-			dev_err( &pdev->dev , "cannot request gpio for sp339e tm pin\n" ) ;
-		}
 
 		gpio = of_get_named_gpio( np , "fsl,sp339e-slew" , 0 ) ;
-		if ( gpio_is_valid( gpio ) )
+		if ( gpio >=0 && gpio_is_valid( gpio ) )
 		{
 			sport->sp339e_gpio_slew = gpio ;
 			if ( gpio_request_one( sport->sp339e_gpio_slew , GPIOF_DIR_OUT , "sp3339e-slew" ) == 0 )
@@ -2355,14 +2335,10 @@ static int imx_uart_probe_dt(struct imx_port *sport,
 				sport->sp339e_gpio_slew = 0 ;
 			}
 		}
-		else
-		{
-			dev_err( &pdev->dev , "cannot request gpio for sp339e slew pin\n" ) ;
-		}
 
-	        sport->pinctrl = devm_pinctrl_get(&pdev->dev);
-	        sport->pins_rs232 = pinctrl_lookup_state(sport->pinctrl,	PINCTRL_STATE_DEFAULT);
-	        sport->pins_rs422 = pinctrl_lookup_state(sport->pinctrl,	"rs422");
+		sport->pinctrl = devm_pinctrl_get(&pdev->dev);
+		sport->pins_rs232 = pinctrl_lookup_state(sport->pinctrl,	PINCTRL_STATE_DEFAULT);
+		sport->pins_rs422 = pinctrl_lookup_state(sport->pinctrl,	"rs422");
 
 	}
 

@@ -726,8 +726,8 @@ static int mxs_charger_data_contact_detect(struct mxs_phy *x)
 	}
 
 	if (i == MXS_USB_CHARGER_DATA_CONTACT_TIMEOUT) {
-		dev_err(x->phy.dev,
-			"Data pin can't make good contact.\n");
+		dev_info(x->phy.dev,
+			"OTG ID pin is floating.\n");
 		/* Disable charger detector */
 		regmap_write(regmap, ANADIG_USB1_CHRG_DETECT_SET,
 				ANADIG_USB1_CHRG_DETECT_EN_B |

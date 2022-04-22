@@ -30,68 +30,62 @@
 		reg = <0x10000000 0x40000000>;
 	};
 
-	regulators {
-		compatible = "simple-bus";
-		#address-cells = <1>;
-		#size-cells = <0>;
+	reg_1p8v: 1p8v {
+		compatible = "regulator-fixed";
+		regulator-name = "1P8V";
+		regulator-min-microvolt = <1800000>;
+		regulator-max-microvolt = <1800000>;
+		regulator-always-on;
+	};
 
-		reg_1p8v: 1p8v {
-			compatible = "regulator-fixed";
-			regulator-name = "1P8V";
-			regulator-min-microvolt = <1800000>;
-			regulator-max-microvolt = <1800000>;
-			regulator-always-on;
-		};
+	reg_2p5v: 2p5v {
+		compatible = "regulator-fixed";
+		regulator-name = "2P5V";
+		regulator-min-microvolt = <2500000>;
+		regulator-max-microvolt = <2500000>;
+		regulator-always-on;
+	};
 
-		reg_2p5v: 2p5v {
-			compatible = "regulator-fixed";
-			regulator-name = "2P5V";
-			regulator-min-microvolt = <2500000>;
-			regulator-max-microvolt = <2500000>;
-			regulator-always-on;
-		};
+	reg_3p3v: 3p3v {
+		compatible = "regulator-fixed";
+		regulator-name = "3P3V";
+		regulator-min-microvolt = <3300000>;
+		regulator-max-microvolt = <3300000>;
+		regulator-always-on;
+	};
 
-		reg_3p3v: 3p3v {
-			compatible = "regulator-fixed";
-			regulator-name = "3P3V";
-			regulator-min-microvolt = <3300000>;
-			regulator-max-microvolt = <3300000>;
-			regulator-always-on;
-		};
+	reg_usb_otg_vbus: usb_otg_vbus {
+		compatible = "regulator-fixed";
+		regulator-name = "usb_otg_vbus";
+		regulator-min-microvolt = <5000000>;
+		regulator-max-microvolt = <5000000>;
+		gpio = <&gpio4 15 0>;
+		enable-active-high;
+	};
 
-		reg_usb_otg_vbus: usb_otg_vbus {
-			compatible = "regulator-fixed";
-			regulator-name = "usb_otg_vbus";
-			regulator-min-microvolt = <5000000>;
-			regulator-max-microvolt = <5000000>;
-			gpio = <&gpio4 15 0>;
-			enable-active-high;
-		};
+	reg_usb_h1_vbus: usb_h1_vbus {
+		compatible = "regulator-fixed";
+		regulator-name = "usb_h1_vbus";
+		regulator-min-microvolt = <5000000>;
+		regulator-max-microvolt = <5000000>;
+		gpio = <&gpio4 6 0>;
+		enable-active-high;
+	};
 
-		reg_usb_h1_vbus: usb_h1_vbus {
-			compatible = "regulator-fixed";
-			regulator-name = "usb_h1_vbus";
-			regulator-min-microvolt = <5000000>;
-			regulator-max-microvolt = <5000000>;
-			gpio = <&gpio4 6 0>;
-			enable-active-high;
-		};
+	reg_backlight: backlight {
+		compatible = "regulator-fixed";
+		regulator-name = "lcd-supply";
+		startup-delay-us = <5000>;
+		enable-active-high;
+	};
 
-		reg_backlight: backlight {
-			compatible = "regulator-fixed";
-			regulator-name = "lcd-supply";
-			startup-delay-us = <5000>;
-			enable-active-high;
-		};
-
-		reg_hdmi: regulator-hdmi {
-			compatible = "regulator-fixed";
-			regulator-name = "hdmi-5v-supply";
-			regulator-min-microvolt = <5000000>;
-			regulator-max-microvolt = <5000000>;
-			enable-active-high;
-			hdmi-5v-supply = <&swbst_reg>;
-		};
+	reg_hdmi: regulator-hdmi {
+		compatible = "regulator-fixed";
+		regulator-name = "hdmi-5v-supply";
+		regulator-min-microvolt = <5000000>;
+		regulator-max-microvolt = <5000000>;
+		enable-active-high;
+		hdmi-5v-supply = <&swbst_reg>;
 	};
 
 	gpio-keys {
@@ -278,26 +272,6 @@
 	};
 };
 
-&mipi_csi {
-	status = "okay";
-
-	ipu_id = <0>;
-	csi_id = <1>;
-	v_channel = <0>;
-	lanes = <2>;
-#if 0
-	port@0 {
-		reg = <0>;
-
-		mipi_csi2_in: endpoint {
-			remote-endpoint = <&ov5640_to_mipi_csi2>;
-			clock-lanes = <0>;
-			data-lanes = <1 2>;
-		};
-	};
-#endif
-};
-
 &audmux {
 	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl_audmux_pitx>;
@@ -332,10 +306,6 @@
 	phy-reset-rise-duration = <20>;
 	phy-reset-boot-on;
 	status = "okay";
-};
-
-&gpc {
-	fsl,ldo-bypass = <0>;
 };
 
 &hdmi_audio {
@@ -858,13 +828,11 @@
 			>;
 		};
 
-		keys {
-			pinctrl_keys_pitx: keys-pitx {
-				fsl,pins = <
-						/* special key */
-					MX6QDL_PAD_EIM_D29__GPIO3_IO29				0x80000000	/* PWR_BTN_SNS */
-				>;
-			};
+		pinctrl_keys_pitx: keys-pitx {
+			fsl,pins = <
+					/* special key */
+				MX6QDL_PAD_EIM_D29__GPIO3_IO29				0x80000000	/* PWR_BTN_SNS */
+			>;
 		};
 
 		pinctrl_wdog: wdoggrp {
@@ -874,13 +842,6 @@
 		};
 	};
 
-	gpio_leds {
-		pinctrl_gpio_leds: gpioledsgrp {
-			fsl,pins = <
-				MX6QDL_PAD_GPIO_2__GPIO1_IO02 0x1b0b0
-			>;
-		};
-	};
 };
 
 &ldb {
@@ -952,6 +913,12 @@
 	status = "okay";
 };
 
+&gpc {
+	/* use ldo-enable, u-boot will check it and configure */
+	fsl,ldo-bypass = <0>;
+};
+
+/*
 &reg_arm {
        vin-supply = <&sw1a_reg>;
 };
@@ -963,6 +930,7 @@
 &reg_soc {
        vin-supply = <&sw1c_reg>;
 };
+*/
 
 &reg_vdd1p1 {
 	vin-supply = <&vgen5_reg>;

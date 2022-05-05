@@ -648,6 +648,93 @@ err_unlock:
 }
 EXPORT_SYMBOL_GPL(gpiod_export);
 
+int __gpiod_export_name(struct gpio_desc *desc, bool direction_may_change, const char *name)
+{
+	struct gpio_chip	*chip;
+	struct gpio_device	*gdev;
+	struct gpiod_data	*data;
+	unsigned long		flags;
+	int			status;
+	const char		*ioname = NULL;
+	struct device		*dev;
+	int			offset;
+
+	/* can't export until sysfs is available ... */
+	if (!gpio_class.p) {
+		pr_debug("%s: called too early!\n", __func__);
+		return -ENOENT;
+	}
+
+	if (!desc) {
+		pr_debug("%s: invalid gpio descriptor\n", __func__);
+		return -EINVAL;
+	}
+
+	gdev = desc->gdev;
+	chip = gdev->chip;
+
+	mutex_lock(&sysfs_lock);
+
+	/* check if chip is being removed */
+	if (!chip || !gdev->mockdev) {
+		status = -ENODEV;
+		goto err_unlock;
+	}
+
+	spin_lock_irqsave(&gpio_lock, flags);
+	if (!test_bit(FLAG_REQUESTED, &desc->flags) ||
+	     test_bit(FLAG_EXPORT, &desc->flags)) {
+		spin_unlock_irqrestore(&gpio_lock, flags);
+		gpiod_dbg(desc, "%s: unavailable (requested=%d, exported=%d)\n",
+				__func__,
+				test_bit(FLAG_REQUESTED, &desc->flags),
+				test_bit(FLAG_EXPORT, &desc->flags));
+		status = -EPERM;
+		goto err_unlock;
+	}
+	spin_unlock_irqrestore(&gpio_lock, flags);
+
+	data = kzalloc(sizeof(*data), GFP_KERNEL);
+	if (!data) {
+		status = -ENOMEM;
+		goto err_unlock;
+	}
+
+	data->desc = desc;
+	mutex_init(&data->mutex);
+	if (chip->direction_input && chip->direction_output)
+		data->direction_can_change = direction_may_change;
+	else
+		data->direction_can_change = false;
+
+	offset = gpio_chip_hwgpio(desc);
+	if (chip->names && chip->names[offset])
+		ioname = chip->names[offset];
+	if (name)
+		ioname = name;
+
+	dev = device_create_with_groups(&gpio_class, &gdev->dev,
+					MKDEV(0, 0), data, gpio_groups,
+					ioname ? ioname : "gpio%u",
+					desc_to_gpio(desc));
+	if (IS_ERR(dev)) {
+		status = PTR_ERR(dev);
+		goto err_free_data;
+	}
+
+	set_bit(FLAG_EXPORT, &desc->flags);
+	mutex_unlock(&sysfs_lock);
+	return 0;
+
+err_free_data:
+	kfree(data);
+err_unlock:
+	mutex_unlock(&sysfs_lock);
+	gpiod_dbg(desc, "%s: status %d\n", __func__, status);
+	return status;
+}
+EXPORT_SYMBOL_GPL(__gpiod_export_name);
+
 static int match_export(struct device *dev, const void *desc)
 {
 	struct gpiod_data *data = dev_get_drvdata(dev);

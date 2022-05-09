@@ -463,7 +463,7 @@ static void imx_uart_stop_tx(struct uart_port *port)
 	imx_uart_writel(sport, ucr1 & ~UCR1_TRDYEN, UCR1);
 
 	/* in rs485 mode disable transmitter if shifter is empty */
-	if ( (port->rs485.flags & SER_RS485_ENABLED || (sport->sp339e_mode == 2) ) &&
+	if ( (port->rs485.flags & SER_RS485_ENABLED) &&
 	    imx_uart_readl(sport, USR2) & USR2_TXDC) {
 		u32 ucr2 = imx_uart_readl(sport, UCR2), ucr4;
 		if (port->rs485.flags & SER_RS485_RTS_AFTER_SEND)
@@ -472,10 +472,17 @@ static void imx_uart_stop_tx(struct uart_port *port)
 			imx_uart_rts_inactive(sport, &ucr2);
 		imx_uart_writel(sport, ucr2, UCR2);
 
-		if ( sport->sp339e_gpio_dir )
+		if ( sport->have_sp339e )
 		{
-			gpio_set_value( sport->sp339e_gpio_dir , 1 ) ;
+			if ( sport->sp339e_mode == 2 )
+			{
+				if ( sport->sp339e_gpio_dir )
+				{
+					gpio_set_value( sport->sp339e_gpio_dir , 1 ) ;
+				}
+			}
 		}
+
 		imx_uart_start_rx(port);
 
 		ucr4 = imx_uart_readl(sport, UCR4);
@@ -681,7 +688,7 @@ static void imx_uart_start_tx(struct uart_port *port)
 	if (!sport->port.x_char && uart_circ_empty(&port->state->xmit))
 		return;
 
-	if ((port->rs485.flags & SER_RS485_ENABLED)||(sport->sp339e_mode == 2)) {
+	if ((port->rs485.flags & SER_RS485_ENABLED)) {
 		u32 ucr2;
 
 		ucr2 = imx_uart_readl(sport, UCR2);
@@ -691,12 +698,20 @@ static void imx_uart_start_tx(struct uart_port *port)
 			imx_uart_rts_inactive(sport, &ucr2);
 		imx_uart_writel(sport, ucr2, UCR2);
 
+		if ( sport->have_sp339e )
+		{
+			if ( sport->sp339e_mode == 2 )
+			{
+				if ( sport->sp339e_gpio_dir )
+				{
+					gpio_set_value( sport->sp339e_gpio_dir , 0 ) ;
+				}
+			}
+		}
+
 		if (!(port->rs485.flags & SER_RS485_RX_DURING_TX))
 			imx_uart_stop_rx(port);
-		if ( sport->sp339e_gpio_dir )
-		{
-			gpio_set_value( sport->sp339e_gpio_dir , 0 ) ;
-		}
+
 		/*
 		 * Enable transmitter and shifter empty irq only if DMA is off.
 		 * In the DMA case this is done in the tx-callback.

@@ -307,7 +307,7 @@
 				dynamic_pixel_bit_depth = "12";
 				csi_pixel_bit_depth = "12";
 				mode_type = "bayer";
-				pixel_phase = "rggb";
+				pixel_phase = "grbg";
 
 				active_w = "2048";
 				active_h = "1280";
@@ -330,7 +330,7 @@
 				step_framerate = "1";
 				default_framerate = "30000000";
 				exposure_factor = "1000000";
-				min_exp_time = "49"; /*us, 2 lines*/
+				min_exp_time = "98"; /*us, 2 lines*/
 				max_exp_time = "33333";
 				step_exp_time = "1";
 				default_exp_time = "33333";/* us */
@@ -435,7 +435,7 @@
 				dynamic_pixel_bit_depth = "12";
 				csi_pixel_bit_depth = "12";
 				mode_type = "bayer";
-				pixel_phase = "rggb";
+				pixel_phase = "grbg";
 
 				active_w = "2048";
 				active_h = "1280";
@@ -458,7 +458,7 @@
 				step_framerate = "1";
 				default_framerate = "30000000";
 				exposure_factor = "1000000";
-				min_exp_time = "49"; /*us, 2 lines*/
+				min_exp_time = "98"; /*us, 2 lines*/
 				max_exp_time = "33333";
 				step_exp_time = "1";
 				default_exp_time = "33333";/* us */
@@ -563,7 +563,7 @@
 				dynamic_pixel_bit_depth = "12";
 				csi_pixel_bit_depth = "12";
 				mode_type = "bayer";
-				pixel_phase = "rggb";
+				pixel_phase = "grbg";
 
 				active_w = "2048";
 				active_h = "1280";
@@ -586,7 +586,7 @@
 				step_framerate = "1";
 				default_framerate = "30000000";
 				exposure_factor = "1000000";
-				min_exp_time = "49"; /*us, 2 lines*/
+				min_exp_time = "98"; /*us, 2 lines*/
 				max_exp_time = "33333";
 				step_exp_time = "1";
 				default_exp_time = "33333";/* us */
@@ -691,7 +691,7 @@
 				dynamic_pixel_bit_depth = "12";
 				csi_pixel_bit_depth = "12";
 				mode_type = "bayer";
-				pixel_phase = "rggb";
+				pixel_phase = "grbg";
 
 				active_w = "2048";
 				active_h = "1280";
@@ -714,7 +714,7 @@
 				step_framerate = "1";
 				default_framerate = "30000000";
 				exposure_factor = "1000000";
-				min_exp_time = "49"; /*us, 2 lines*/
+				min_exp_time = "98"; /*us, 2 lines*/
 				max_exp_time = "33333";
 				step_exp_time = "1";
 				default_exp_time = "33333";/* us */
@@ -819,7 +819,7 @@
 				dynamic_pixel_bit_depth = "12";
 				csi_pixel_bit_depth = "12";
 				mode_type = "bayer";
-				pixel_phase = "rggb";
+				pixel_phase = "grbg";
 
 				active_w = "2048";
 				active_h = "1280";
@@ -842,7 +842,7 @@
 				step_framerate = "1";
 				default_framerate = "30000000";
 				exposure_factor = "1000000";
-				min_exp_time = "49"; /*us, 2 lines*/
+				min_exp_time = "98"; /*us, 2 lines*/
 				max_exp_time = "33333";
 				step_exp_time = "1";
 				default_exp_time = "33333";/* us */
@@ -947,7 +947,7 @@
 				dynamic_pixel_bit_depth = "12";
 				csi_pixel_bit_depth = "12";
 				mode_type = "bayer";
-				pixel_phase = "rggb";
+				pixel_phase = "grbg";
 
 				active_w = "2048";
 				active_h = "1280";
@@ -970,7 +970,7 @@
 				step_framerate = "1";
 				default_framerate = "30000000";
 				exposure_factor = "1000000";
-				min_exp_time = "49"; /*us, 2 lines*/
+				min_exp_time = "98"; /*us, 2 lines*/
 				max_exp_time = "33333";
 				step_exp_time = "1";
 				default_exp_time = "33333";/* us */
@@ -1075,7 +1075,7 @@
 				dynamic_pixel_bit_depth = "12";
 				csi_pixel_bit_depth = "12";
 				mode_type = "bayer";
-				pixel_phase = "rggb";
+				pixel_phase = "grbg";
 
 				active_w = "2048";
 				active_h = "1280";
@@ -1098,7 +1098,7 @@
 				step_framerate = "1";
 				default_framerate = "30000000";
 				exposure_factor = "1000000";
-				min_exp_time = "49"; /*us, 2 lines*/
+				min_exp_time = "98"; /*us, 2 lines*/
 				max_exp_time = "33333";
 				step_exp_time = "1";
 				default_exp_time = "33333";/* us */
@@ -1203,7 +1203,7 @@
 				dynamic_pixel_bit_depth = "12";
 				csi_pixel_bit_depth = "12";
 				mode_type = "bayer";
-				pixel_phase = "rggb";
+				pixel_phase = "grbg";
 
 				active_w = "2048";
 				active_h = "1280";
@@ -1226,7 +1226,7 @@
 				step_framerate = "1";
 				default_framerate = "30000000";
 				exposure_factor = "1000000";
-				min_exp_time = "49"; /*us, 2 lines*/
+				min_exp_time = "98"; /*us, 2 lines*/
 				max_exp_time = "33333";
 				step_exp_time = "1";
 				default_exp_time = "33333";/* us */

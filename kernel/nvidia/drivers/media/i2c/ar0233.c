@@ -393,7 +393,6 @@ static int ar0233_set_exposure(struct tegracam_device *tc_dev, s64 val)
 		coarse_time = priv->frame_length;
 		}
 
-	    //coarse_time = (coarse_time / 8) * 10;
 	    if (coarse_time < 2) {
 		coarse_time = 2;
 		}

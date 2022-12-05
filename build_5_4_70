@@ -2,17 +2,21 @@
 
 set -e
 #### Cross compiler ####################################################
+[ -d /media/tom/data1/freescale/cross-compile ] && CROSS_COMPILE_PATH=/media/tom/data1/freescale/cross-compile
+
+if [ -z $CROSS_COMPILE_PATH ];then
 CROSS_COMPILE_PATH=/opt/cross
+fi
 
 #### Target OS #########################################################
-#TARGET_OS="Ubuntu-18.04hf"
-TARGET_OS="Ubuntu-16.04hf"
+TARGET_OS="Ubuntu-18.04hf"
+#~ TARGET_OS="Ubuntu-16.04hf"
 
 #### Target Board ######################################################
 #TARGET_BOARD="IMX8MM_EVK"
 #TARGET_BOARD="IMX8MM_EVK_M4"
-#TARGET_BOARD="IMX8MM_CSE"
-TARGET_BOARD="IMX6_PICO"
+TARGET_BOARD="IMX8MM_CSE"
+#TARGET_BOARD="IMX6_PICO"
 
 #### Default Define ####################################################
 KERNEL_DEFAULT_CONFIG=imx_v8_defconfig
@@ -29,7 +33,7 @@ case "${TARGET_OS}" in
 		# Ubuntu 18.04
 		echo "Build Kernel for Ubuntu 18.04 hf"
 		export ARCH=arm64
-		export CROSS_COMPILE=${CROSS_COMPILE_PATH}/gcc-linaro-7.4.1-2019.02-x86_64_aarch64-linux-gnu/bin/aarch64-linux-gnu-
+		export CROSS_COMPILE=${CROSS_COMPILE_PATH}/arm-gnu-toolchain-11.3.rel1-x86_64-aarch64-none-linux-gnu/bin/aarch64-none-linux-gnu-
 		;;
 	"Ubuntu-16.04hf")
 		# Ubuntu 16.04
@@ -57,7 +61,7 @@ case "${TARGET_BOARD}" in
 	"IMX8MM_CSE" )
 		TARGET_SOC=imx8mm
 		KERNEL_PROJECT_CONFIG=rtx/configs/rtx-imx8mm-cse_defconfig
-		KERNEL_DTB=rtx-imx8mm-cse
+		KERNEL_DTB=uni-imx8mm-evk
 		;;
 	"IMX6_PICO" )
 		KERNEL_DEFAULT_CONFIG=imx_v7_defconfig
@@ -129,6 +133,14 @@ function build_kernel()
 				cp arch/arm64/boot/dts/freescale/$KERNEL_DTB.dtb out/.
 			fi
 			;;
+		"IMX8MM_CSE" )
+			make -j8 
+	
+			if [ -f arch/arm64/boot/Image ] ; then
+				cp -f arch/arm64/boot/Image out/.
+				cp arch/arm64/boot/dts/freescale/$KERNEL_DTB.dtb out/rtx-imx8mm-cse.dtb
+			fi
+			;;
 		"IMX6_PICO" )
 			if [ -z "${KERNEL_LOADADDR}" ] ; then
 				make uImage -j8
@@ -145,7 +157,7 @@ function build_kernel()
 	
 			if [ ! -z "${KERNEL_DTB}" ] ; then
 				make ${KERNEL_DTB}.dtb
-				cp arch/arm/boot/dts/${KERNEL_DTB}.dtb out/.
+				cp arch/arm/boot/dts/${KERNEL_DTB}.dtb out/rtx-imx8mm-cse.dtb
 				if [ ! -z "${KERNEL_VERSION}" ] ; then
 					cp arch/arm/boot/dts/${KERNEL_DTB}.dtb out/${KERNEL_DTB}-${KERNEL_VERSION}.dtb
 				fi
@@ -164,6 +176,12 @@ function build_dtb()
 		"IMX8MM_EVK" )
 			if [ ! -z "${KERNEL_DTB}" ] ; then
 				cp arch/arm64/boot/dts/freescale/$KERNEL_DTB.dtb out/.
+			fi
+			;;
+		"IMX8MM_CSE" )
+			if [ ! -z "${KERNEL_DTB}" ] ; then
+				make ${KERNEL_DTB}.dtb
+				cp arch/arm64/boot/dts/freescale/$KERNEL_DTB.dtb out/rtx-imx8mm-cse.dtb
 			fi
 			;;
 		"IMX6_PICO" )

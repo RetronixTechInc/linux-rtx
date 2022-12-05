@@ -574,14 +574,14 @@ static int busfreq_probe(struct platform_device *pdev)
 	 * Get the supported frequency, normally the lowest frequency point
 	 * is used for low bus & audio bus mode.
 	 */
-	for (i = 0; i < 4; i++) {
-		arm_smccc_smc(FSL_SIP_DDR_DVFS, 0x11, i, 0, 0, 0, 0, 0, &res);
-		err = res.a0;
-		if (err < 0)
-			return -EINVAL;
+	//~ for (i = 0; i < 4; i++) {
+		//~ arm_smccc_smc(FSL_SIP_DDR_DVFS, 0x11, i, 0, 0, 0, 0, 0, &res);
+		//~ err = res.a0;
+		//~ if (err < 0)
+			//~ return -EINVAL;
 
-		fsp_table[i] = res.a0;
-	}
+		//~ fsp_table[i] = res.a0;
+	//~ }
 
 	/* get the lowest fsp index */
 	for (i = 0; i < 4; i++)

@@ -12,6 +12,13 @@
 
 imx6-libs/
 
+*.mod
+*.dtb*
+scripts/
+crypto/
+modules*
+vmlinux*
+
 .*
 *.o
 *.o.*

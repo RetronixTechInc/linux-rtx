@@ -14,7 +14,7 @@
 #include "imx8mm-pinfunc.h"
 
 / {
-	interrupt-parent = <&gic>;
+	interrupt-parent = <&gpc>;
 	#address-cells = <2>;
 	#size-cells = <2>;
 
@@ -331,6 +331,7 @@
 			     <GIC_PPI 10 (GIC_CPU_MASK_SIMPLE(4) | IRQ_TYPE_LEVEL_LOW)>; /* Hypervisor */
 		clock-frequency = <8000000>;
 		arm,no-tick-in-suspend;
+		interrupt-parent = <&gic>;
 	};
 
 	thermal-zones {
@@ -1390,6 +1391,7 @@
 			#interrupt-cells = <3>;
 			interrupt-controller;
 			interrupts = <GIC_PPI 9 IRQ_TYPE_LEVEL_HIGH>;
+			interrupt-parent = <&gic>;
 		};
 
 		ddrc: memory-controller@3d400000 {
@@ -1478,6 +1480,15 @@
 			resets = <&dispmix_mipi_rst IMX8MM_MIPI_M_RESET>;
 		};
 	};
+
+		gpc: gpc@303a0000 {
+			compatible = "fsl,imx8mm-gpc", "fsl,imx8mq-gpc", "syscon";
+			reg = <0x0 0x303a0000 0x0 0x10000>;
+			interrupt-controller;
+			interrupts = <GIC_SPI 87 IRQ_TYPE_LEVEL_HIGH>;
+			#interrupt-cells = <3>;
+			interrupt-parent = <&gic>;
+		};
 
 	vpu_h1: vpu_h1@38320000 {
 		compatible = "nxp,imx8mm-hantro-h1";

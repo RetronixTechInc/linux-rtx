@@ -22,7 +22,7 @@
 
 //~ #define LT_DEBUG
 #ifdef LT_DEBUG
-#define pr_info_tom(fmt, ...) printk(KERN_INFO "===%s[%d]" fmt "\n", __func__, __LINE__, ##__VA_ARGS__)
+#define pr_info_tom(fmt, ...) printk(KERN_INFO "=== %s[%d]" fmt "\n", __func__, __LINE__, ##__VA_ARGS__)
 #else
 #define pr_info_tom(fmt, ...) 
 #endif
@@ -55,7 +55,7 @@ struct lt9611 {
 	struct platform_device *audio_pdev;
 
 	bool ac_mode;
-	bool audio_mode;
+	bool is_hdmi;
 	bool hsync_polarity;
 	bool vsync_polarity;
 
@@ -64,7 +64,6 @@ struct lt9611 {
 
 	bool power_on;
 	bool sleep;
-	bool hdmi_out;
 
 	struct regulator_bulk_data supplies[2];
 
@@ -295,7 +294,7 @@ static int lt9611_pll_setup(struct lt9611 *lt9611, const struct drm_display_mode
   
 	regmap_multi_reg_write(lt9611->regmap, reg_cfg, ARRAY_SIZE(reg_cfg));
 	
-	pr_info_tom("LT9611_PLL: set rx pll = %ld", pclk);
+	pr_info_tom("LT9611_PLL: set rx pll = %d", pclk);
 
 	if (pclk > 150000){
 		regmap_write(lt9611->regmap, 0x812d, 0x88);
@@ -411,8 +410,7 @@ static int lt9611_video_check(struct lt9611 *lt9611)
 		goto end;
 	hactive_b = temp / 3;
 
-	dev_info(lt9611->dev,
-		 "video check: hactive_a=%d, hactive_b=%d, vactive=%d, v_total=%d, h_total_sysclk=%d\n",
+	pr_info_tom("video check: hactive_a=%d, hactive_b=%d, vactive=%d, v_total=%d, h_total_sysclk=%d",
 		 hactive_a, hactive_b, vactive, v_total, h_total_sysclk);
 		 
 	if(vactive > 300)
@@ -470,16 +468,9 @@ static void lt9611_hdmi_tx_digital(struct lt9611 *lt9611, const struct drm_displ
 	}
 	pb0 = (((pb2 + pb4) <= 0x5f)?(0x5f - pb2 - pb4):(0x15f - pb2 - pb4));
 	
-	pr_info_tom("HDMI_TX_Digital is %s mode.", lt9611->audio_mode?"HDMI":"DVI");
-	if(lt9611->audio_mode)
-	{
-		regmap_write(lt9611->regmap, 0x82d6, 0x8e);
-	}
-	else
-	{
-		regmap_write(lt9611->regmap, 0x82d6, 0x0e);
-	}
-	
+	pr_info_tom("HDMI_TX_Digital is %s mode.", lt9611->is_hdmi?"HDMI":"DVI");
+	regmap_write(lt9611->regmap, 0x82d6, lt9611->is_hdmi?0x8e:0x0e);
+
 	regmap_write(lt9611->regmap, 0x8443, pb0);
 	regmap_write(lt9611->regmap, 0x8445, pb2);
 	regmap_write(lt9611->regmap, 0x8447, pb4); /* UD1 infoframe */
@@ -735,6 +726,7 @@ lt9611_connector_detect(struct drm_connector *connector, bool force)
 	unsigned int reg_val = 0;
 	int connected = 0;
 
+	pr_info_tom();
 	regmap_read(lt9611->regmap, 0x825e, &reg_val);
 	connected  = (reg_val & BIT(2));
 
@@ -750,14 +742,11 @@ lt9611_connector_duplicate_state(struct drm_connector *connector)
 	struct lt9611 *lt9611 = connector_to_lt9611(connector);
 	
 	pr_info_tom();
-	
 	if (lt9611->power_on)
 	{
 		if(lt9611_video_check(lt9611) == 0 )
 		{
 			regmap_write(lt9611->regmap, 0x8130, 0xea);
-			
-			lt9611->hdmi_out = true;
 		}
 	}
 
@@ -852,6 +841,7 @@ static int lt9611_connector_get_modes(struct drm_connector *connector)
 	unsigned int count = 0;
 	struct edid *edid;
 
+	pr_info_tom();
 	lt9611_power_on(lt9611);
 	edid = drm_do_get_edid(connector, lt9611_get_edid_block, lt9611);
 	if(!edid){
@@ -867,10 +857,11 @@ static int lt9611_connector_get_modes(struct drm_connector *connector)
 	}else{
 		drm_connector_update_edid_property(connector, edid);
 		count = drm_add_edid_modes(connector, edid);
+		lt9611->is_hdmi = drm_detect_hdmi_monitor(edid);
 		kfree(edid);
 	}
 	
-	pr_info_tom("edid get %s. count = %d",edid=NULL?"fail":"success", count);
+	pr_info_tom("edid get %s. count = %d",edid==NULL?"fail":"success", count);
 	return count;
 }
 
@@ -878,6 +869,7 @@ static enum drm_mode_status
 lt9611_connector_mode_valid(struct drm_connector *connector,
 			    struct drm_display_mode *mode)
 {
+	//~ pr_info_tom(); //mask it because hang-up at startup detect more modes.
 	return MODE_OK;
 }
 
@@ -886,6 +878,7 @@ static void lt9611_bridge_enable(struct drm_bridge *bridge)
 {
 	struct lt9611 *lt9611 = bridge_to_lt9611(bridge);
 
+	pr_info_tom();
 	if (lt9611_power_on(lt9611)) {
 		dev_err(lt9611->dev, "power on failed\n");
 		return;
@@ -902,13 +895,8 @@ static void lt9611_bridge_disable(struct drm_bridge *bridge)
 	struct lt9611 *lt9611 = bridge_to_lt9611(bridge);
 	int ret;
 
+	pr_info_tom();
 	/* Disable HDMI output */
-	ret = regmap_write(lt9611->regmap, 0x8130, 0x6a);
-	if (ret) {
-		dev_err(lt9611->dev, "video on failed\n");
-		return;
-	}
-
 	if (lt9611_power_off(lt9611)) {
 		dev_err(lt9611->dev, "power on failed\n");
 		return;
@@ -969,6 +957,8 @@ static void lt9611_bridge_detach(struct drm_bridge *bridge)
 {
 	struct lt9611 *lt9611 = bridge_to_lt9611(bridge);
 
+	pr_info_tom();
+
 	if (lt9611->dsi1) {
 		mipi_dsi_detach(lt9611->dsi1);
 		mipi_dsi_device_unregister(lt9611->dsi1);
@@ -1008,6 +998,8 @@ static int lt9611_bridge_attach(struct drm_bridge *bridge,
 	struct lt9611 *lt9611 = bridge_to_lt9611(bridge);
 	int ret;
 
+	pr_info_tom();
+
 	if (!(flags & DRM_BRIDGE_ATTACH_NO_CONNECTOR)) {
 		ret = lt9611_connector_init(bridge, lt9611);
 		if (ret < 0)
@@ -1042,12 +1034,16 @@ static enum drm_mode_status lt9611_bridge_mode_valid(struct drm_bridge *bridge,
 						     const struct drm_display_info *info,
 						     const struct drm_display_mode *mode)
 {
+	//~ pr_info_tom(); //mask it because hang-up at startup detect more modes.
+
 	return MODE_OK;
 }
 
 static void lt9611_bridge_pre_enable(struct drm_bridge *bridge)
 {
 	struct lt9611 *lt9611 = bridge_to_lt9611(bridge);
+
+	pr_info_tom();
 
 	if (!lt9611->sleep)
 		return;
@@ -1062,6 +1058,7 @@ static void lt9611_bridge_post_disable(struct drm_bridge *bridge)
 {
 	struct lt9611 *lt9611 = bridge_to_lt9611(bridge);
 
+	pr_info_tom();
 	//~ lt9611_sleep_setup(lt9611);
 
 }
@@ -1071,6 +1068,8 @@ static void lt9611_bridge_mode_set(struct drm_bridge *bridge,
 				   const struct drm_display_mode *adj_mode)
 {
 	struct lt9611 *lt9611 = bridge_to_lt9611(bridge);
+
+	pr_info_tom();
 
 	lt9611_bridge_pre_enable(bridge);
 
@@ -1092,6 +1091,8 @@ static enum drm_connector_status lt9611_bridge_detect(struct drm_bridge *bridge)
 	unsigned int reg_val = 0;
 	int connected;
 
+	pr_info_tom();
+
 	regmap_read(lt9611->regmap, 0x825e, &reg_val);
 	connected  = reg_val & BIT(2);
 
@@ -1106,6 +1107,8 @@ static struct edid *lt9611_bridge_get_edid(struct drm_bridge *bridge,
 {
 	struct lt9611 *lt9611 = bridge_to_lt9611(bridge);
 
+	pr_info_tom();
+
 	lt9611_power_on(lt9611);
 	return drm_do_get_edid(connector, lt9611_get_edid_block, lt9611);
 }
@@ -1113,6 +1116,8 @@ static struct edid *lt9611_bridge_get_edid(struct drm_bridge *bridge,
 static void lt9611_bridge_hpd_enable(struct drm_bridge *bridge)
 {
 	struct lt9611 *lt9611 = bridge_to_lt9611(bridge);
+
+	pr_info_tom();
 
 	lt9611_enable_hpd_interrupts(lt9611);
 }
@@ -1141,7 +1146,6 @@ static int lt9611_parse_dt_modes(struct device_node *np,struct list_head *head)
 	u32 v_front_porch, v_pulse_width, v_back_porch;
 	bool h_active_high, v_active_high;
 	u32 flags = 0;
-	u32 default_mode = 0;
 
 	root_node = of_get_child_by_name(np, "lt,customize-modes");
 	if (!root_node) {
@@ -1151,12 +1155,7 @@ static int lt9611_parse_dt_modes(struct device_node *np,struct list_head *head)
 			goto end;
 		}
 	}
-
-	rc = of_property_read_u32(root_node, "lt,default-mode",	&default_mode);
-	if (rc) {
-		default_mode = 0;
-	}
-					
+				
 	for_each_child_of_node(root_node, node) {
 		rc = 0;
 		mode = kzalloc(sizeof(*mode), GFP_KERNEL);
@@ -1240,9 +1239,6 @@ static int lt9611_parse_dt_modes(struct device_node *np,struct list_head *head)
 		mode->flags = flags;
 
 		if (!rc) {
-			if(default_mode == mode_count){
-				mode->type |= DRM_MODE_TYPE_PREFERRED;
-			}
 			mode_count++;
 			list_add_tail(&mode->head, head);
 		}
@@ -1278,7 +1274,7 @@ static int lt9611_parse_dt(struct device *dev,
 
 	lt9611->ac_mode = of_property_read_bool(dev->of_node, "lt,ac-mode");
 	
-	lt9611->audio_mode = of_property_read_bool(dev->of_node, "#sound-dai-cells");
+	lt9611->is_hdmi = false;
 
 	lt9611->hsync_polarity = of_property_read_bool(dev->of_node, "lt,hsync-active-h-polarity");
 	lt9611->vsync_polarity = of_property_read_bool(dev->of_node, "lt,vsync-active-h-polarity");
@@ -1522,6 +1518,62 @@ static int lt9611_remove(struct i2c_client *client)
 	return 0;
 }
 
+#ifdef CONFIG_PM_SLEEP
+static int lontium_lt9611_suspend(struct device *dev)
+{
+	struct lt9611 *lt9611 = dev_get_drvdata(dev);
+
+	if ( lt9611 )
+	{
+		pr_info_tom();
+	}
+	return 0;
+}
+
+static int lontium_lt9611_suspend_noirq(struct device *dev)
+{
+	struct lt9611 *lt9611 = dev_get_drvdata(dev);
+
+	if ( lt9611 )
+	{
+		pr_info_tom();
+	}
+	return 0;
+}
+
+static int lontium_lt9611_resume(struct device *dev)
+{
+	int error = 0;
+	
+	pr_info_tom();
+	
+	return error;
+}
+
+static int lontium_lt9611_resume_noirq(struct device *dev)
+{
+	int error = 0;
+	
+	pr_info_tom();
+	
+	return error;
+}
+
+static const struct dev_pm_ops lontium_lt9611_pm_ops = {
+	.suspend = lontium_lt9611_suspend,
+	.suspend_noirq = lontium_lt9611_suspend_noirq,
+	.resume = lontium_lt9611_resume,
+	.resume_noirq = lontium_lt9611_resume_noirq,
+};
+
+#define LONTIUM_LT9611_PM_OPS	(&lontium_lt9611_pm_ops)
+
+#else
+
+#define LONTIUM_LT9611_PM_OPS	NULL
+
+#endif
+
 static struct i2c_device_id lt9611_id[] = {
 	{ "lontium,lt9611", 0 },
 	{}
@@ -1538,6 +1590,7 @@ static struct i2c_driver lt9611_driver = {
 	.driver = {
 		.name = "lt9611",
 		.of_match_table = lt9611_match_table,
+		.pm	= LONTIUM_LT9611_PM_OPS,
 	},
 	.probe = lt9611_probe,
 	.remove = lt9611_remove,

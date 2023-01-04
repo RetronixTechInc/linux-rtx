@@ -1,7 +1,9 @@
+# SPDX-License-Identifier: GPL-2.0-only
 PERF-CFLAGS
 PERF-GUI-VARS
 PERF-VERSION-FILE
 FEATURE-DUMP
+perf
 perf-read-vdso32
 perf-read-vdsox32
 perf-help
@@ -18,6 +20,7 @@ perf.data.old
 output.svg
 perf-archive
 perf-with-kcore
+perf-iostat
 tags
 TAGS
 cscope*
@@ -36,3 +39,4 @@ pmu-events/jevents
 feature/
 fixdep
 libtraceevent-dynamic-list
+Documentation/doc.dep

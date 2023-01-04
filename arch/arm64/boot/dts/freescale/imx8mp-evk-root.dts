@@ -23,8 +23,7 @@
 	init-on-array = <IMX8MP_CLK_USDHC3_ROOT
 			 IMX8MP_CLK_NAND_USDHC_BUS
 			 IMX8MP_CLK_HSIO_ROOT
-			 IMX8MP_CLK_UART4_ROOT
-			 IMX8MP_CLK_OCOTP_ROOT>;
+			 IMX8MP_CLK_UART4_ROOT>;
 };
 
 &{/busfreq} {
@@ -63,11 +62,16 @@
 	};
 };
 
+&{/reserved-memory/linux,cma} {
+	size = <0 0x28000000>;
+	alloc-ranges = <0 0x40000000 0 0x60000000>;
+};
+
 &iomuxc {
 	pinctrl_uart4: uart4grp {
 		fsl,pins = <
-			MX8MP_IOMUXC_UART4_RXD__UART4_DCE_RX	0x49
-			MX8MP_IOMUXC_UART4_TXD__UART4_DCE_TX	0x49
+			MX8MP_IOMUXC_UART4_RXD__UART4_DCE_RX	0x140
+			MX8MP_IOMUXC_UART4_TXD__UART4_DCE_TX	0x140
 		>;
 	};
 };

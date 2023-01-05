@@ -2,24 +2,22 @@
 
 set -e
 #### Cross compiler ####################################################
-[ -d /media/tom/data1/freescale/cross-compile ] && CROSS_COMPILE_PATH=/media/tom/data1/freescale/cross-compile
-
+[ -d /opt/freescale/usr/local ] && CROSS_COMPILE_PATH=/opt/freescale/usr/local
 if [ -z $CROSS_COMPILE_PATH ];then
 CROSS_COMPILE_PATH=/opt/cross
 fi
 
 #### Target OS #########################################################
 TARGET_OS="Ubuntu-18.04hf"
-#~ TARGET_OS="Ubuntu-16.04hf"
 
 #### Target Board ######################################################
 #TARGET_BOARD="IMX8MM_EVK"
 #TARGET_BOARD="IMX8MM_EVK_M4"
-TARGET_BOARD="IMX8MM_CSE"
-#TARGET_BOARD="IMX6_PICO"
+#TARGET_BOARD="IMX8MM_CSE"
+TARGET_BOARD="IMX8MM_UNI"
 
 #### Default Define ####################################################
-KERNEL_DEFAULT_CONFIG=imx_v8_defconfig
+KERNEL_DEFAULT_CONFIG=defconfig
 BUILD_GPU_VIV_DRIVER_MODULE="no"
 
 TOP=`pwd`
@@ -33,13 +31,8 @@ case "${TARGET_OS}" in
 		# Ubuntu 18.04
 		echo "Build Kernel for Ubuntu 18.04 hf"
 		export ARCH=arm64
-		export CROSS_COMPILE=${CROSS_COMPILE_PATH}/arm-gnu-toolchain-11.3.rel1-x86_64-aarch64-none-linux-gnu/bin/aarch64-none-linux-gnu-
-		;;
-	"Ubuntu-16.04hf")
-		# Ubuntu 16.04
-		echo "Build Kernel for Ubuntu 16.04 hf"
-		export ARCH=arm
-		export CROSS_COMPILE=${CROSS_COMPILE_PATH}/gcc-linaro-7.4.1-2019.02-x86_64_arm-linux-gnueabihf/bin/arm-linux-gnueabihf-
+#		export CROSS_COMPILE=${CROSS_COMPILE_PATH}/gcc-cross-aarch64-11.3.0/bin/aarch64-poky-linux/aarch64-poky-linux-
+		export CROSS_COMPILE=../fsl-imx-wayland-glibc-x86_64-meta-toolchain-armv8a-imx8mmddr4evk-toolchain-5.15-kirkstone/sysroots/x86_64-pokysdk-linux/usr/bin/aarch64-poky-linux/aarch64-poky-linux-
 		;;
 	*)
 		echo "Please set the target OS."
@@ -50,8 +43,8 @@ esac
 case "${TARGET_BOARD}" in
 	"IMX8MM_EVK" )
 		TARGET_SOC=imx8mm
-		KERNEL_PROJECT_CONFIG=arch/arm64/configs/imx_v8_defconfig
-		KERNEL_DTB=imx8mm-evk
+		KERNEL_PROJECT_CONFIG=rtx/configs/rtx-imx8mm-evk_defconfig
+		KERNEL_DTB=fsl-imx8mm-evk
 		;;
 	"IMX8MM_EVK_M4" )
 		TARGET_SOC=imx8mm
@@ -61,14 +54,12 @@ case "${TARGET_BOARD}" in
 	"IMX8MM_CSE" )
 		TARGET_SOC=imx8mm
 		KERNEL_PROJECT_CONFIG=rtx/configs/rtx-imx8mm-cse_defconfig
-		KERNEL_DTB=uni-imx8mm-evk
+		KERNEL_DTB=rtx-imx8mm-cse
 		;;
-	"IMX6_PICO" )
-		KERNEL_DEFAULT_CONFIG=imx_v7_defconfig
-		TARGET_SOC=imx6q
-		KERNEL_PROJECT_CONFIG=rtx/configs/rtx-imx6q-pitx-b21_defconfig
-		KERNEL_LOADADDR=0x10008000
-		KERNEL_DTB=rtx-imx6q-pitx-b21
+	"IMX8MM_UNI" )
+		TARGET_SOC=imx8mm
+		KERNEL_PROJECT_CONFIG=rtx/configs/rtx-imx8mm-uni_defconfig
+		KERNEL_DTB=uni-imx8mm-evk
 		;;
 	*)
 		echo "Please set the target board."
@@ -124,80 +115,19 @@ function configure()
 
 function build_kernel()
 {
-	case "${TARGET_BOARD}" in
-		"IMX8MM_EVK" )
-			make -j8 
+	make -j8 
 	
-			if [ -f arch/arm64/boot/Image ] ; then
-				cp -f arch/arm64/boot/Image out/.
-				cp arch/arm64/boot/dts/freescale/$KERNEL_DTB.dtb out/.
-			fi
-			;;
-		"IMX8MM_CSE" )
-			make -j8 
-	
-			if [ -f arch/arm64/boot/Image ] ; then
-				cp -f arch/arm64/boot/Image out/.
-				cp arch/arm64/boot/dts/freescale/$KERNEL_DTB.dtb out/rtx-imx8mm-cse.dtb
-			fi
-			;;
-		"IMX6_PICO" )
-			if [ -z "${KERNEL_LOADADDR}" ] ; then
-				make uImage -j8
-			else
-				make uImage -j8 LOADADDR=${KERNEL_LOADADDR}
-			fi
-	
-			if [ -f arch/arm/boot/uImage ] ; then
-				cp -f arch/arm/boot/uImage out/.
-				if [ ! -z "${KERNEL_VERSION}" ] ; then
-					cp -f arch/arm/boot/uImage out/uImage-${KERNEL_VERSION}
-				fi
-			fi
-	
-			if [ ! -z "${KERNEL_DTB}" ] ; then
-				make ${KERNEL_DTB}.dtb
-				cp arch/arm/boot/dts/${KERNEL_DTB}.dtb out/rtx-imx8mm-cse.dtb
-				if [ ! -z "${KERNEL_VERSION}" ] ; then
-					cp arch/arm/boot/dts/${KERNEL_DTB}.dtb out/${KERNEL_DTB}-${KERNEL_VERSION}.dtb
-				fi
-			fi
-			;;
-		*)
-			echo "Please set the target board."
-			exit 1
-			;;
-	esac
+	if [ -f arch/arm64/boot/Image ] ; then
+		cp -f arch/arm64/boot/Image out/.
+		cp arch/arm64/boot/dts/freescale/$KERNEL_DTB.dtb out/.
+	fi
 }
 
 function build_dtb()
 {
-	case "${TARGET_BOARD}" in
-		"IMX8MM_EVK" )
-			if [ ! -z "${KERNEL_DTB}" ] ; then
-				cp arch/arm64/boot/dts/freescale/$KERNEL_DTB.dtb out/.
-			fi
-			;;
-		"IMX8MM_CSE" )
-			if [ ! -z "${KERNEL_DTB}" ] ; then
-				make ${KERNEL_DTB}.dtb
-				cp arch/arm64/boot/dts/freescale/$KERNEL_DTB.dtb out/rtx-imx8mm-cse.dtb
-			fi
-			;;
-		"IMX6_PICO" )
-			if [ ! -z "${KERNEL_DTB}" ] ; then
-				make ${KERNEL_DTB}.dtb
-				cp arch/arm/boot/dts/${KERNEL_DTB}.dtb out/.
-				if [ ! -z "${KERNEL_VERSION}" ] ; then
-					cp arch/arm/boot/dts/${KERNEL_DTB}.dtb out/${KERNEL_DTB}-${KERNEL_VERSION}.dtb
-				fi
-			fi
-			;;
-		*)
-			echo "Please set the target board."
-			exit 1
-			;;
-	esac
+	if [ ! -z "${KERNEL_DTB}" ] ; then
+		cp arch/arm64/boot/dts/freescale/$KERNEL_DTB.dtb out/.
+	fi
 }
 
 function build_imx_firmware()
@@ -288,10 +218,7 @@ case "${1}" in
 		echo "KERNEL_DTB                  = ${KERNEL_DTB}"
 		;;
 	"all")
-		if [ -d out ]; then
-			rm -rf out; sync;
-		fi
-
+		rm -rf out
 		mkdir -p out
 		
 		configure ${2}

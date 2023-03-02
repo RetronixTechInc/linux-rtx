@@ -18,6 +18,7 @@
 #include <linux/usb/otg.h>
 #include <linux/usb/role.h>
 #include <linux/ulpi/interface.h>
+#include <linux/usb/chipidea.h>
 
 /******************************************************************************
  * DEFINE
